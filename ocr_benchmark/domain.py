@@ -83,6 +83,8 @@ class BenchmarkResult:
     input_tokens: int | None = None
     output_tokens: int | None = None
     tokens_per_second: float | None = None
+    raw_response: str | None = None
+    reasoning: str | None = None
     table_score: float | None = None
     table_status: str | None = None
     math_score: float | None = None

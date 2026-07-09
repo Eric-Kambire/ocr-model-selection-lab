@@ -13,6 +13,7 @@ import gradio as gr
 import pandas as pd
 
 import dataset_generator
+from models.ollama_model import DEFAULT_OCR_PROMPT
 from ocr_benchmark.domain import BenchmarkCase
 from ocr_benchmark.dataset_repository import DatasetRepository
 from ocr_benchmark.registry import build_default_registry
@@ -673,6 +674,15 @@ def build_ui() -> gr.Blocks:
                     "- L’exécution reste séquentielle pour comparer les latences.\n"
                     "- La seed reproduit la même sélection aléatoire."
                 )
+                model_prompt = gr.Textbox(
+                    value=DEFAULT_OCR_PROMPT,
+                    label="Prompt envoyé aux modèles génératifs compatibles",
+                    lines=8,
+                    info=(
+                        "Utilisé par Ollama. Les moteurs OCR classiques et les "
+                        "modèles simulés n’utilisent pas de prompt."
+                    ),
+                )
 
             with gr.Tab("3. Graphiques"):
                 gr.Markdown(
@@ -688,6 +698,11 @@ def build_ui() -> gr.Blocks:
                         category_plot = gr.Plot(value=empty_figure(), elem_classes=["dashboard-chart"])
 
             with gr.Tab("4. Résultats détaillés") as details_tab:
+                result_selector = gr.Dropdown(
+                    [],
+                    label="Liste des éléments testés — cliquez pour sélectionner",
+                    info="La liste contient uniquement les évaluations passées par le benchmark.",
+                )
                 with gr.Row():
                     previous_result = gr.Button("← Précédent")
                     result_position = gr.Markdown(
@@ -705,18 +720,43 @@ def build_ui() -> gr.Blocks:
                             "Le document et le modèle apparaîtront ici."
                         )
                     with gr.Column(scale=2):
+                        detail_metrics = gr.Markdown(
+                            "### Mesures\n\nAucun résultat sélectionné."
+                        )
                         with gr.Row():
-                            ground_truth = gr.Textbox(
-                                label="Texte attendu",
-                                lines=12,
-                                interactive=False,
-                            )
-                            extracted = gr.Textbox(
-                                label="Texte extrait",
-                                lines=12,
-                                interactive=False,
-                            )
-                        details = gr.JSON(label="Mesures de ce document")
+                            with gr.Column():
+                                ground_truth = gr.Textbox(
+                                    label="Texte attendu",
+                                    lines=14,
+                                    interactive=False,
+                                )
+                            with gr.Column():
+                                gr.Markdown("**Affichage de la sortie**")
+                                with gr.Tabs():
+                                    with gr.Tab("Texte extrait"):
+                                        extracted = gr.Textbox(
+                                            label="Transcription normalisée",
+                                            lines=12,
+                                            interactive=False,
+                                        )
+                                    with gr.Tab("Sortie brute"):
+                                        raw_output = gr.Textbox(
+                                            label="Réponse brute du fournisseur",
+                                            lines=12,
+                                            interactive=False,
+                                        )
+                                    with gr.Tab("Markdown rendu"):
+                                        markdown_output = gr.Markdown()
+                                    with gr.Tab("HTML source"):
+                                        html_source = gr.Code(
+                                            label=(
+                                                "Source HTML — non exécutée "
+                                                "pour votre sécurité"
+                                            ),
+                                            language="html",
+                                        )
+                        with gr.Accordion("Toutes les mesures techniques", open=False):
+                            details = gr.JSON(label="Mesures de ce document")
 
             with gr.Tab("5. Ajouter des données"):
                 with gr.Row():
@@ -809,6 +849,7 @@ def build_ui() -> gr.Blocks:
             selected_max_errors,
             save_checkpoints,
             update_live_charts,
+            selected_model_prompt,
         ):
             empty = empty_figure()
             if not model_specs or not selected_records:
@@ -863,6 +904,7 @@ def build_ui() -> gr.Blocks:
                     mock_noise=float(selected_noise),
                     timeout_seconds=float(selected_timeout or 0),
                     max_errors=int(selected_max_errors or 0),
+                    model_prompt=selected_model_prompt,
                     trace=lambda event: RunCheckpoint(
                         event["run_id"], RUNS_DIR
                     ).append_trace(event),
@@ -995,22 +1037,69 @@ def build_ui() -> gr.Blocks:
                     _live_result_table(results),
                 )
 
+        def result_choices(results):
+            return [
+                (
+                    f"{position + 1}. {Path(result['image_path']).name} · "
+                    f"{result['model']} · {result['status']}",
+                    position,
+                )
+                for position, result in enumerate(results or [])
+            ]
+
+        def detail_metric_summary(result):
+            input_tokens = result.get("input_tokens")
+            output_tokens = result.get("output_tokens")
+            token_speed = result.get("tokens_per_second")
+            token_speed_text = (
+                f"{float(token_speed):.2f}" if token_speed is not None else "N/A"
+            )
+            return (
+                "### Mesures principales\n\n"
+                f"**Temps :** {float(result.get('latency') or 0):.3f} s · "
+                f"**Score :** {_metric_percent(result.get('accuracy'))} · "
+                f"**CER :** {_metric_percent(result.get('cer'))} · "
+                f"**WER :** {_metric_percent(result.get('wer'))}\n\n"
+                f"**Tokens entrée :** {input_tokens if input_tokens is not None else 'N/A'} · "
+                f"**Tokens sortie :** {output_tokens if output_tokens is not None else 'N/A'} · "
+                f"**Tokens/s :** {token_speed_text}"
+            )
+
+        def rendered_outputs(result):
+            text = str(result.get("extracted_text") or "")
+            raw = str(result.get("raw_response") or text)
+            return text, raw, text, text
+
         def show_detail(index, results, offset=0):
             results = results or []
             if not results:
                 return (
+                    gr.update(choices=[], value=None),
                     0,
                     "**Aucune page testée pour le moment.**",
                     None,
                     "Lancez un benchmark pour alimenter cet onglet.",
+                    "### Mesures\n\nAucun résultat sélectionné.",
+                    "",
+                    "",
+                    "",
                     "",
                     "",
                     {},
                 )
             position = max(0, min(int(index or 0) + offset, len(results) - 1))
             result = results[position]
-            hidden = {"ground_truth", "extracted_text", "description", "image_path"}
+            hidden = {
+                "ground_truth",
+                "extracted_text",
+                "description",
+                "image_path",
+                "raw_response",
+                "reasoning",
+            }
             metrics = {key: value for key, value in result.items() if key not in hidden}
+            if result.get("reasoning"):
+                metrics["reasoning"] = result["reasoning"]
             identity = (
                 f"### {Path(result['image_path']).name}\n\n"
                 f"- **Modèle :** `{result['model']}`\n"
@@ -1018,7 +1107,9 @@ def build_ui() -> gr.Blocks:
                 f"- **Statut :** `{result['status']}`\n"
                 f"- **Description :** {result.get('description') or '—'}"
             )
+            rendered = rendered_outputs(result)
             return (
+                gr.update(choices=result_choices(results), value=position),
                 position,
                 (
                     f"**Page testée {position + 1} / {len(results)}** · "
@@ -1026,8 +1117,9 @@ def build_ui() -> gr.Blocks:
                 ),
                 str(ROOT_DIR / Path(result["image_path"])),
                 identity,
+                detail_metric_summary(result),
                 result.get("ground_truth", ""),
-                result.get("extracted_text", ""),
+                *rendered,
                 metrics,
             )
 
@@ -1039,6 +1131,9 @@ def build_ui() -> gr.Blocks:
 
         def show_next_detail(index, results):
             return show_detail(index, results, 1)
+
+        def select_detail(selection, results):
+            return show_detail(int(selection or 0), results)
 
         def browse_dataset(selection):
             if not selection:
@@ -1109,6 +1204,7 @@ def build_ui() -> gr.Blocks:
                 max_errors,
                 checkpoint_enabled,
                 live_charts_enabled,
+                model_prompt,
             ],
             [
                 summary_table,
@@ -1132,12 +1228,17 @@ def build_ui() -> gr.Blocks:
             cancels=[run_event],
         )
         detail_outputs = [
+            result_selector,
             detail_index,
             result_position,
             source_image,
             result_identity,
+            detail_metrics,
             ground_truth,
             extracted,
+            raw_output,
+            markdown_output,
+            html_source,
             details,
         ]
         details_tab.select(
@@ -1158,6 +1259,11 @@ def build_ui() -> gr.Blocks:
         run_state.change(
             show_current_detail,
             [detail_index, run_state],
+            detail_outputs,
+        )
+        result_selector.input(
+            select_detail,
+            [result_selector, run_state],
             detail_outputs,
         )
         dataset_selector.change(

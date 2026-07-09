@@ -48,6 +48,7 @@ class BenchmarkRunner:
         mock_noise: float = 0.05,
         timeout_seconds: float | None = None,
         max_errors: int | None = None,
+        model_prompt: str | None = None,
         progress: ProgressCallback | None = None,
         trace: TraceCallback | None = None,
     ) -> tuple[str, list[dict[str, Any]]]:
@@ -58,6 +59,7 @@ class BenchmarkRunner:
             mock_noise=mock_noise,
             timeout_seconds=timeout_seconds,
             max_errors=max_errors,
+            model_prompt=model_prompt,
             progress=progress,
             trace=trace,
         )
@@ -78,12 +80,17 @@ class BenchmarkRunner:
         mock_noise: float = 0.05,
         timeout_seconds: float | None = None,
         max_errors: int | None = None,
+        model_prompt: str | None = None,
         progress: ProgressCallback | None = None,
         trace: TraceCallback | None = None,
     ):
         selected_cases = list(cases)
         models = [
-            self.registry.create(spec, mock_noise=mock_noise)
+            self.registry.create(
+                spec,
+                mock_noise=mock_noise,
+                model_prompt=model_prompt,
+            )
             for spec in model_specs
         ]
         run_id = time.strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:8]
@@ -281,6 +288,8 @@ class BenchmarkRunner:
             input_tokens=inference.input_tokens,
             output_tokens=inference.output_tokens,
             tokens_per_second=inference.tokens_per_second,
+            raw_response=inference.raw_response,
+            reasoning=inference.reasoning,
         )
         if inference.status is not InferenceStatus.SUCCESS:
             return BenchmarkResult(accuracy=None, cer=None, wer=None, **common)

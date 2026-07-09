@@ -56,7 +56,10 @@ def build_default_registry() -> ModelRegistry:
     )
     registry.register(
         "ollama",
-        lambda model_name, **_: OllamaOCRModel(model_name=model_name),
+        lambda model_name, model_prompt=None, **_: OllamaOCRModel(
+            model_name=model_name,
+            prompt=model_prompt,
+        ),
     )
 
     try:

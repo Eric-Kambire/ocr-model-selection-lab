@@ -31,9 +31,16 @@ Cliquez sur **Préparer le benchmark** pour vérifier le plan, puis sur
 la qualité, CER, WER, latence, compteurs, progression et ETA sont actualisés.
 **Annuler** interrompt la file et conserve les résultats déjà produits.
 
+Dans **Résultats détaillés**, la liste permet d’ouvrir directement une
+évaluation ou de naviguer avec **Précédent/Suivant**. Le temps, la qualité et
+les compteurs de tokens sont affichés au-dessus du comparatif. La sortie peut
+être consultée comme transcription, réponse fournisseur brute, Markdown rendu
+ou source HTML non exécutée.
+
 L’onglet **Paramètres** permet notamment de fixer le temps maximal par image,
 le nombre maximal d’erreurs, la seed de sélection, le mélange des documents et
-la sauvegarde après chaque résultat. Un appel fournisseur qui dépasse le timeout
+la sauvegarde après chaque résultat. Il expose aussi le prompt envoyé aux
+modèles génératifs compatibles. Un appel fournisseur qui dépasse le timeout
 peut finir en arrière-plan, mais son résultat est ignoré par le benchmark.
 
 ## Docker CPU

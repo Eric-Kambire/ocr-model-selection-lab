@@ -2,12 +2,22 @@ import time
 import os
 from models.base import BaseOCRModel
 
+DEFAULT_OCR_PROMPT = """You are a professional layout-preserving OCR engine.
+Your task is to transcribe all the text, tables, and handwriting in this image.
+Rules:
+1. Output ONLY the transcription. Do NOT add greetings, preamble, explanations, notes, or code blocks.
+2. Preserve the document layout using Markdown where appropriate (e.g., use '|' for table columns).
+3. Format mathematical formulas using LaTeX syntax ($...$ or $$...$$).
+4. Transcribe handwriting exactly as written."""
+
+
 class OllamaOCRModel(BaseOCRModel):
     """
     An OCR model wrapper that uses a local Ollama vision model (e.g., gemma3:1b, llama3.2-vision).
     """
-    def __init__(self, model_name: str):
+    def __init__(self, model_name: str, prompt: str | None = None):
         super().__init__(model_name)
+        self.prompt = prompt.strip() if prompt and prompt.strip() else DEFAULT_OCR_PROMPT
         # Import ollama here to avoid dependency issues if not installed
         try:
             import ollama
@@ -39,16 +49,6 @@ class OllamaOCRModel(BaseOCRModel):
 
         start_time = time.time()
         
-        prompt = (
-            "You are a professional layout-preserving OCR engine.\n"
-            "Your task is to transcribe all the text, tables, and handwriting in this image.\n"
-            "Rules:\n"
-            "1. Output ONLY the transcription. Do NOT add greetings, preamble, explanations, notes, or code blocks.\n"
-            "2. Preserve the document layout using Markdown where appropriate (e.g., use '|' for table columns).\n"
-            "3. Format mathematical formulas using LaTeX syntax ($...$ or $$...$$).\n"
-            "4. Transcribe handwriting exactly as written."
-        )
-
         try:
             # Call Ollama chat API with images
             response = self.client.chat(
@@ -56,7 +56,7 @@ class OllamaOCRModel(BaseOCRModel):
                 messages=[
                     {
                         "role": "user",
-                        "content": prompt,
+                        "content": self.prompt,
                         "images": [image_path]
                     }
                 ],
