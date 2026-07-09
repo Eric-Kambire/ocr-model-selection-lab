@@ -23,7 +23,7 @@ class MockOCRModel(BaseOCRModel):
                     data = json.load(f)
                     # Cache normalized paths to handle slash mismatches
                     for item in data:
-                        normalized_path = os.path.normpath(item["image_path"])
+                        normalized_path = self._normalize_path(item["image_path"])
                         self.ground_truth_cache[normalized_path] = item["ground_truth"]
             except Exception as e:
                 print(f"Error loading dataset in mock model: {e}")
@@ -64,7 +64,7 @@ class MockOCRModel(BaseOCRModel):
         latency = random.uniform(0.3, 1.2)
         time.sleep(latency)
         
-        normalized_img_path = os.path.normpath(image_path)
+        normalized_img_path = self._normalize_path(image_path)
         
         # If cache is empty (dataset hasn't been loaded or created), reload it
         if not self.ground_truth_cache:
@@ -93,3 +93,7 @@ class MockOCRModel(BaseOCRModel):
             "output_tokens": None,
             "tokens_per_second": None,
         }
+
+    @staticmethod
+    def _normalize_path(path: str) -> str:
+        return os.path.normpath(path.replace("\\", os.sep).replace("/", os.sep))

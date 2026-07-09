@@ -28,6 +28,14 @@ class FailingModel:
         }
 
 
+def test_mock_path_normalization_accepts_windows_and_linux_separators():
+    from models.mock_model import MockOCRModel
+
+    assert MockOCRModel._normalize_path(r"dataset\tables\image.png") == (
+        MockOCRModel._normalize_path("dataset/tables/image.png")
+    )
+
+
 def _runner():
     registry = ModelRegistry()
     registry.register("ok", lambda model_name, **options: SuccessfulModel())

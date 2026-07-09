@@ -171,7 +171,11 @@ def load_dataset() -> list[dict[str, Any]]:
         missing = required - item.keys()
         if missing:
             raise ValueError(f"Dataset item {index} is missing: {sorted(missing)}")
-        image_path = ROOT_DIR / item["image_path"]
+        # Catalogs generated on Windows may contain backslashes. Convert both
+        # separator styles before any filesystem access so the same catalog
+        # works inside Linux containers and Colab.
+        item["image_path"] = item["image_path"].replace("\\", "/")
+        image_path = ROOT_DIR / Path(item["image_path"])
         if not image_path.is_file():
             raise FileNotFoundError(f"Dataset image does not exist: {image_path}")
     return data
