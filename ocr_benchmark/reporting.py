@@ -2,10 +2,13 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 from pathlib import Path
 from typing import Any
 
 import pandas as pd
+
+_TRACE_LOCK = threading.Lock()
 
 
 class RunCheckpoint:
@@ -24,6 +27,14 @@ class RunCheckpoint:
         temporary = self.run_dir / "details.csv.tmp"
         pd.DataFrame(results).to_csv(temporary, index=False)
         os.replace(temporary, self.run_dir / "details.csv")
+
+    def append_trace(self, event: dict[str, Any]) -> None:
+        """Append an unfiltered provider response, including late timeout output."""
+        line = json.dumps(event, ensure_ascii=False, default=str) + "\n"
+        with _TRACE_LOCK:
+            with (self.run_dir / "traces.jsonl").open("a", encoding="utf-8") as stream:
+                stream.write(line)
+                stream.flush()
 
     def finalize(
         self,

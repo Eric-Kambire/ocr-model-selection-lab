@@ -35,6 +35,7 @@ class InferenceResult:
     status: InferenceStatus = InferenceStatus.SUCCESS
     error: str | None = None
     raw_response: str | None = None
+    reasoning: str | None = None
     input_tokens: int | None = None
     output_tokens: int | None = None
     tokens_per_second: float | None = None
@@ -54,6 +55,7 @@ class InferenceResult:
             status=status,
             error=str(error) if error else None,
             raw_response=value.get("raw_response"),
+            reasoning=value.get("reasoning") or value.get("thinking"),
             input_tokens=_optional_int(value.get("input_tokens")),
             output_tokens=_optional_int(value.get("output_tokens")),
             tokens_per_second=_optional_float(value.get("tokens_per_second")),

@@ -16,6 +16,7 @@ from .domain import BenchmarkCase, BenchmarkResult, InferenceResult, InferenceSt
 from .registry import ModelRegistry
 
 ProgressCallback = Callable[[int, int, str], None]
+TraceCallback = Callable[[dict[str, Any]], None]
 
 
 @dataclass(frozen=True)
@@ -48,6 +49,7 @@ class BenchmarkRunner:
         timeout_seconds: float | None = None,
         max_errors: int | None = None,
         progress: ProgressCallback | None = None,
+        trace: TraceCallback | None = None,
     ) -> tuple[str, list[dict[str, Any]]]:
         updates = self.iter_run(
             model_specs,
@@ -57,6 +59,7 @@ class BenchmarkRunner:
             timeout_seconds=timeout_seconds,
             max_errors=max_errors,
             progress=progress,
+            trace=trace,
         )
         run_id = ""
         results: list[dict[str, Any]] = []
@@ -76,6 +79,7 @@ class BenchmarkRunner:
         timeout_seconds: float | None = None,
         max_errors: int | None = None,
         progress: ProgressCallback | None = None,
+        trace: TraceCallback | None = None,
     ):
         selected_cases = list(cases)
         models = [
@@ -114,6 +118,15 @@ class BenchmarkRunner:
                         model,
                         case.image_path,
                         timeout_seconds,
+                        late_result=lambda late_raw, late_error: self._emit_trace(
+                            trace,
+                            run_id,
+                            model.model_name,
+                            case,
+                            late_raw,
+                            timing="late_after_timeout",
+                            error=late_error,
+                        ),
                     )
                     inference = (
                         raw
@@ -127,6 +140,14 @@ class BenchmarkRunner:
                         status=InferenceStatus.FAILED,
                         error=f"{type(exc).__name__}: {exc}",
                     )
+                self._emit_trace(
+                    trace,
+                    run_id,
+                    model.model_name,
+                    case,
+                    inference,
+                    timing="on_time",
+                )
                 result = self._evaluate(
                     run_id, model.model_name, case, inference, eval_mode
                 )
@@ -156,7 +177,12 @@ class BenchmarkRunner:
                     return
 
     @staticmethod
-    def _perform_with_timeout(model, image_path: str, timeout_seconds: float | None):
+    def _perform_with_timeout(
+        model,
+        image_path: str,
+        timeout_seconds: float | None,
+        late_result: Callable[[Any | None, str | None], None] | None = None,
+    ):
         if timeout_seconds is None or timeout_seconds <= 0:
             return model.perform_ocr(image_path)
 
@@ -165,7 +191,14 @@ class BenchmarkRunner:
         try:
             return future.result(timeout=timeout_seconds)
         except concurrent.futures.TimeoutError:
-            future.cancel()
+            if late_result:
+                def capture_late(completed_future):
+                    try:
+                        late_result(completed_future.result(), None)
+                    except Exception as exc:
+                        late_result(None, f"{type(exc).__name__}: {exc}")
+
+                future.add_done_callback(capture_late)
             return InferenceResult(
                 text="",
                 latency_seconds=timeout_seconds,
@@ -177,6 +210,52 @@ class BenchmarkRunner:
             # A provider call cannot always be forcefully interrupted. Do not
             # block the benchmark while a timed-out provider releases itself.
             executor.shutdown(wait=False, cancel_futures=True)
+
+    @staticmethod
+    def _emit_trace(
+        trace: TraceCallback | None,
+        run_id: str,
+        model_name: str,
+        case: BenchmarkCase,
+        raw: Any | None,
+        *,
+        timing: str,
+        error: str | None = None,
+    ) -> None:
+        if trace is None:
+            return
+        try:
+            inference = (
+                raw
+                if isinstance(raw, InferenceResult)
+                else InferenceResult.from_legacy_dict(raw)
+                if isinstance(raw, dict)
+                else None
+            )
+            trace(
+                {
+                    "recorded_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+                    "run_id": run_id,
+                    "model": model_name,
+                    "image_path": case.image_path,
+                    "category": case.category,
+                    "timing": timing,
+                    "status": inference.status.value if inference else "failed",
+                    "latency": inference.latency_seconds if inference else None,
+                    "text": inference.text if inference else "",
+                    "reasoning": inference.reasoning if inference else None,
+                    "raw_response": inference.raw_response if inference else None,
+                    "input_tokens": inference.input_tokens if inference else None,
+                    "output_tokens": inference.output_tokens if inference else None,
+                    "tokens_per_second": (
+                        inference.tokens_per_second if inference else None
+                    ),
+                    "error": error or (inference.error if inference else None),
+                }
+            )
+        except Exception:
+            # Trace persistence must never break the benchmark itself.
+            return
 
     @staticmethod
     def _evaluate(

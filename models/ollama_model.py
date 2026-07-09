@@ -68,12 +68,17 @@ class OllamaOCRModel(BaseOCRModel):
             if isinstance(response, dict):
                 message = response.get("message", {})
                 extracted_text = message.get("content", "").strip()
+                reasoning = message.get("thinking") or message.get("reasoning")
                 input_tokens = response.get("prompt_eval_count")
                 output_tokens = response.get("eval_count")
                 eval_duration = response.get("eval_duration")
             else:
                 message = getattr(response, "message", None)
                 extracted_text = str(getattr(message, "content", "")).strip()
+                reasoning = (
+                    getattr(message, "thinking", None)
+                    or getattr(message, "reasoning", None)
+                )
                 input_tokens = getattr(response, "prompt_eval_count", None)
                 output_tokens = getattr(response, "eval_count", None)
                 eval_duration = getattr(response, "eval_duration", None)
@@ -96,6 +101,7 @@ class OllamaOCRModel(BaseOCRModel):
             return {
                 "text": extracted_text,
                 "raw_response": str(response),
+                "reasoning": str(reasoning) if reasoning else None,
                 "latency": latency,
                 "status": "success",
                 "error": None,

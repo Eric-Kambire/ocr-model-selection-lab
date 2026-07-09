@@ -1,3 +1,6 @@
+import threading
+import time
+
 from ocr_benchmark.domain import BenchmarkCase
 from ocr_benchmark.registry import ModelRegistry
 from ocr_benchmark.runner import BenchmarkRunner, summarize_results
@@ -24,6 +27,21 @@ class FailingModel:
             "latency": 0.1,
             "status": "failed",
             "error": "provider unavailable",
+            "device": "cpu",
+        }
+
+
+class SlowThinkingModel:
+    model_name = "slow-thinking"
+
+    def perform_ocr(self, image_path):
+        time.sleep(0.08)
+        return {
+            "text": "late transcription",
+            "thinking": "internal model trace",
+            "raw_response": "complete raw provider response",
+            "latency": 0.08,
+            "status": "success",
             "device": "cpu",
         }
 
@@ -65,3 +83,31 @@ def test_stream_reports_processing_before_completion():
     assert [update.stage for update in updates] == ["processing", "completed"]
     assert updates[0].result is None
     assert updates[1].result["accuracy"] == 1
+
+
+def test_timeout_keeps_late_output_in_trace():
+    registry = ModelRegistry()
+    registry.register("slow", lambda model_name, **options: SlowThinkingModel())
+    runner = BenchmarkRunner(registry)
+    traces = []
+    late_received = threading.Event()
+
+    def capture(event):
+        traces.append(event)
+        if event["timing"] == "late_after_timeout":
+            late_received.set()
+
+    case = BenchmarkCase("image.png", "late transcription", "test")
+    _, results = runner.run(
+        ["slow:model"],
+        [case],
+        timeout_seconds=0.01,
+        trace=capture,
+    )
+
+    assert results[0]["status"] == "timeout"
+    assert late_received.wait(1)
+    late = next(item for item in traces if item["timing"] == "late_after_timeout")
+    assert late["text"] == "late transcription"
+    assert late["reasoning"] == "internal model trace"
+    assert late["raw_response"] == "complete raw provider response"

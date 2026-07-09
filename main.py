@@ -847,6 +847,9 @@ def build_ui() -> gr.Blocks:
                     mock_noise=float(selected_noise),
                     timeout_seconds=float(selected_timeout or 0),
                     max_errors=int(selected_max_errors or 0),
+                    trace=lambda event: RunCheckpoint(
+                        event["run_id"], RUNS_DIR
+                    ).append_trace(event),
                 )
                 for update in updates:
                     latest_update = update

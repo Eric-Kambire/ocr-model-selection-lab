@@ -80,7 +80,14 @@ Chaque exécution produit un répertoire `runs/<run_id>/` contenant :
 - `results.json` : résultats complets et typés ;
 - `summary.csv` : comparaison par modèle ;
 - `details.csv` : résultat par document ;
+- `traces.jsonl` : sorties fournisseur brutes, texte et raisonnement exposé, y
+  compris les réponses arrivées après un timeout ;
 - `report.md` : synthèse et définitions.
+
+Une réponse reçue après le timeout reste exclue des scores et conserve le statut
+`timeout`. Elle est néanmoins ajoutée à `traces.jsonl` avec
+`timing: "late_after_timeout"` afin de permettre l’audit et un nettoyage
+ultérieur.
 
 ## Ajouter des données
 
