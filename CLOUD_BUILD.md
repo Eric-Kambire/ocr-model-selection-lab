@@ -4,6 +4,12 @@ Le workflow `.github/workflows/publish-container.yml` construit l’image sur un
 runner GitHub, la publie dans GitHub Container Registry, puis teste l’image
 publiée par son digest.
 
+Il publie également la même image publique dans Docker Hub :
+
+```text
+erickambire/ocr-model-selection-lab
+```
+
 ## Prérequis
 
 1. placer ce projet dans un dépôt GitHub ;
@@ -12,7 +18,8 @@ publiée par son digest.
    **Settings > Actions > General > Workflow permissions > Read and write**.
 
 Le workflow utilise uniquement le `GITHUB_TOKEN` automatique. Aucun mot de passe
-Docker ou token personnel n’est nécessaire pour publier dans GHCR.
+Docker ou token personnel n’est nécessaire pour publier dans GHCR. Docker Hub
+requiert deux secrets Actions : `DOCKERHUB_USERNAME` et `DOCKERHUB_TOKEN`.
 
 ## Premier build manuel
 
@@ -37,6 +44,8 @@ Cela publie notamment :
 ghcr.io/<owner>/<repository>:1.0.0
 ghcr.io/<owner>/<repository>:1.0
 ghcr.io/<owner>/<repository>:sha-<commit>
+erickambire/ocr-model-selection-lab:1.0.0
+erickambire/ocr-model-selection-lab:1.0
 ```
 
 Le digest affiché par le workflow est la référence la plus reproductible.

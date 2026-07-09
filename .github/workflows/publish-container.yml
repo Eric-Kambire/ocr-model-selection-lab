@@ -38,11 +38,30 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Validate Docker Hub credentials
+        shell: bash
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: |
+          if [[ -z "$DOCKERHUB_USERNAME" || -z "$DOCKERHUB_TOKEN" ]]; then
+            echo "::error::Add DOCKERHUB_USERNAME and DOCKERHUB_TOKEN in repository Actions secrets."
+            exit 1
+          fi
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
       - name: Generate immutable image tags
         id: metadata
         uses: docker/metadata-action@v5
         with:
-          images: ${{ steps.image.outputs.name }}
+          images: |
+            ${{ steps.image.outputs.name }}
+            erickambire/ocr-model-selection-lab
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
@@ -93,7 +112,8 @@ jobs:
           {
             echo "## Container"
             echo
-            echo "- Image: \`${{ steps.image.outputs.name }}\`"
+            echo "- GHCR: \`${{ steps.image.outputs.name }}\`"
+            echo "- Docker Hub: \`erickambire/ocr-model-selection-lab\`"
             echo "- Digest: \`${{ steps.build.outputs.digest }}\`"
             echo "- Tags: \`${{ steps.metadata.outputs.tags }}\`"
           } >> "$GITHUB_STEP_SUMMARY"
