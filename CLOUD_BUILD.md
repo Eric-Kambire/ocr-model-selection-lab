@@ -66,7 +66,7 @@ ghcr.io` avec un token autorisé à lire les packages.
 Copier `.env.deploy.example` vers `.env`, puis remplacer :
 
 ```dotenv
-OCR_BENCHMARK_IMAGE=ghcr.io/<owner>/<repository>:1.0.0
+OCR_BENCHMARK_IMAGE=erickambire/ocr-model-selection-lab:1.0.1
 ```
 
 Lancer :
