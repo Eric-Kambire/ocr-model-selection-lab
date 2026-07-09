@@ -57,3 +57,11 @@ def test_summary_separates_quality_and_reliability():
     summary = summarize_results(results).set_index("Model")
     assert summary.loc["successful", "Success rate"] == 1
     assert summary.loc["failing", "Success rate"] == 0
+
+
+def test_stream_reports_processing_before_completion():
+    case = BenchmarkCase("image.png", "expected text", "test")
+    updates = list(_runner().iter_run(["ok:model"], [case]))
+    assert [update.stage for update in updates] == ["processing", "completed"]
+    assert updates[0].result is None
+    assert updates[1].result["accuracy"] == 1

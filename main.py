@@ -4,6 +4,8 @@ import argparse
 import html
 import json
 import os
+import random
+import time
 from pathlib import Path
 from typing import Any
 
@@ -14,7 +16,7 @@ import dataset_generator
 from ocr_benchmark.domain import BenchmarkCase
 from ocr_benchmark.dataset_repository import DatasetRepository
 from ocr_benchmark.registry import build_default_registry
-from ocr_benchmark.reporting import save_run
+from ocr_benchmark.reporting import RunCheckpoint, save_run
 from ocr_benchmark.runner import BenchmarkRunner, summarize_results
 from ocr_benchmark.visualization import (
     category_quality_chart,
@@ -126,6 +128,13 @@ APP_CSS = """
 .dashboard-chart > div {
     height: 100% !important;
 }
+#live-image,
+#live-metrics {
+    min-height: 360px !important;
+}
+#live-metrics {
+    overflow: auto !important;
+}
 #metrics-pane {
     max-height: 70vh !important;
     overflow-y: auto !important;
@@ -156,6 +165,145 @@ APP_CSS = """
 .hero h1 { margin: 0 0 8px 0; font-size: 32px; }
 .hero p { margin: 0; opacity: .9; }
 """
+
+
+def select_dataset_items(
+    dataset: list[dict[str, Any]],
+    mode: str,
+    global_quantity: int | float | None,
+    category_quantities,
+    *,
+    shuffle: bool,
+    seed: int,
+) -> list[dict[str, Any]]:
+    rng = random.Random(int(seed))
+
+    def take(items: list[dict[str, Any]], quantity: int) -> list[dict[str, Any]]:
+        quantity = max(0, min(quantity, len(items)))
+        if shuffle:
+            return rng.sample(items, quantity)
+        return items[:quantity]
+
+    if mode == "Tout le dataset":
+        selected = list(dataset)
+        if shuffle:
+            rng.shuffle(selected)
+        return selected
+
+    if mode == "Quantité globale":
+        quantity = int(global_quantity or 0)
+        if quantity <= 0:
+            raise ValueError("La quantité globale doit être supérieure à zéro.")
+        return take(dataset, quantity)
+
+    if isinstance(category_quantities, pd.DataFrame):
+        rows = category_quantities.values.tolist()
+    else:
+        rows = category_quantities or []
+
+    selected: list[dict[str, Any]] = []
+    for row in rows:
+        if len(row) < 3:
+            continue
+        category = str(row[0])
+        quantity = int(float(row[2] or 0))
+        available = [item for item in dataset if item["category"] == category]
+        selected.extend(take(available, quantity))
+    if not selected:
+        raise ValueError("Sélectionnez au moins un document dans une catégorie.")
+    if shuffle:
+        rng.shuffle(selected)
+    return selected
+
+
+def build_run_preview(
+    selected_models: list[str],
+    selected_items: list[dict[str, Any]],
+    eval_mode: str,
+    timeout_seconds: float,
+    seed: int,
+) -> str:
+    counts: dict[str, int] = {}
+    for item in selected_items:
+        counts[item["category"]] = counts.get(item["category"], 0) + 1
+    distribution = ", ".join(f"`{name}`={count}" for name, count in sorted(counts.items()))
+    evaluations = len(selected_models) * len(selected_items)
+    return (
+        "### Plan d’exécution\n\n"
+        f"- **Modèles :** {len(selected_models)}\n"
+        f"- **Documents :** {len(selected_items)}\n"
+        f"- **Évaluations prévues :** {evaluations}\n"
+        f"- **Répartition :** {distribution}\n"
+        f"- **Mode :** {eval_mode}\n"
+        f"- **Timeout :** {timeout_seconds:.0f} s par image\n"
+        f"- **Seed :** {seed}\n\n"
+        "Vérifiez ce plan puis cliquez sur **Confirmer et lancer**."
+    )
+
+
+def format_duration(seconds: float | None) -> str:
+    if seconds is None:
+        return "—"
+    seconds = max(0, int(seconds))
+    minutes, seconds = divmod(seconds, 60)
+    hours, minutes = divmod(minutes, 60)
+    return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+
+
+def _metric_percent(value: Any) -> str:
+    if value is None or pd.isna(value):
+        return "N/A"
+    return f"{float(value) * 100:.2f} %"
+
+
+def _live_metrics_markdown(result: dict[str, Any], next_label: str) -> str:
+    expected = html.escape(str(result.get("ground_truth", "")))
+    extracted = html.escape(str(result.get("extracted_text", "")))
+    token_speed = result.get("tokens_per_second")
+    token_text = (
+        f"{float(token_speed):.2f} tokens/s" if token_speed is not None else "N/A"
+    )
+    error = (
+        f"\n- **Erreur :** {html.escape(str(result['error']))}"
+        if result.get("error")
+        else ""
+    )
+    return (
+        "### Dernier résultat\n\n"
+        f"- **Modèle :** `{result['model']}`\n"
+        f"- **Statut :** `{result['status']}`\n"
+        f"- **Score :** {_metric_percent(result.get('accuracy'))}\n"
+        f"- **CER :** {_metric_percent(result.get('cer'))}\n"
+        f"- **WER :** {_metric_percent(result.get('wer'))}\n"
+        f"- **Latence :** {float(result.get('latency') or 0):.3f} s\n"
+        f"- **Vitesse tokens :** {token_text}\n"
+        f"- **Device :** `{result.get('device', 'unknown')}`\n"
+        f"- **Prochaine évaluation :** {next_label}"
+        f"{error}\n\n"
+        "<details><summary>Texte attendu</summary>"
+        f"<pre>{expected}</pre></details>"
+        "<details><summary>Texte extrait</summary>"
+        f"<pre>{extracted}</pre></details>"
+    )
+
+
+def _live_result_table(results: list[dict[str, Any]]) -> pd.DataFrame:
+    rows = []
+    for index, result in enumerate(results[-25:], start=max(1, len(results) - 24)):
+        rows.append(
+            {
+                "#": index,
+                "Modèle": result["model"],
+                "Image": Path(result["image_path"]).name,
+                "Catégorie": result["category"],
+                "Statut": result["status"],
+                "Score": _metric_percent(result.get("accuracy")),
+                "CER": _metric_percent(result.get("cer")),
+                "WER": _metric_percent(result.get("wer")),
+                "Latence (s)": round(float(result.get("latency") or 0), 3),
+            }
+        )
+    return pd.DataFrame(rows)
 
 
 def load_dataset() -> list[dict[str, Any]]:
@@ -339,6 +487,15 @@ def build_ui() -> gr.Blocks:
             *(item["category"] for item in dataset),
         }
     )
+    category_rows = [
+        [
+            name,
+            sum(1 for item in dataset if item["category"] == name),
+            sum(1 for item in dataset if item["category"] == name),
+        ]
+        for name in category_choices
+        if any(item["category"] == name for item in dataset)
+    ]
 
     with gr.Blocks(title="OCR Model Selection Lab", fill_height=True) as app:
         gr.HTML(
@@ -346,10 +503,11 @@ def build_ui() -> gr.Blocks:
             "<p>Comparez qualité, vitesse et fiabilité sur CPU ou GPU avec un protocole traçable.</p></div>"
         )
         run_state = gr.State([])
+        selection_state = gr.State([])
 
         with gr.Tabs(elem_id="main-tabs"):
             with gr.Tab("1. Benchmark"):
-                with gr.Row(elem_id="benchmark-layout"):
+                with gr.Row():
                     with gr.Column(scale=1):
                         models = gr.CheckboxGroup(
                             model_choices,
@@ -357,30 +515,141 @@ def build_ui() -> gr.Blocks:
                             label="Modèles",
                             elem_id="models-list",
                         )
-                        category = gr.Dropdown(
-                            ["All", *category_choices],
-                            value="All",
-                            label="Catégorie",
+                        selection_mode = gr.Radio(
+                            ["Tout le dataset", "Quantité globale", "Par catégorie"],
+                            value="Quantité globale",
+                            label="Sélection des documents",
                         )
+                        global_quantity = gr.Number(
+                            value=min(10, len(dataset)),
+                            minimum=1,
+                            maximum=len(dataset),
+                            precision=0,
+                            label=f"Quantité globale — {len(dataset)} disponibles",
+                        )
+                        category_quantities = gr.Dataframe(
+                            value=category_rows,
+                            headers=["Catégorie", "Disponibles", "Quantité"],
+                            datatype=["str", "number", "number"],
+                            column_count=(3, "fixed"),
+                            interactive=True,
+                            label="Quantité par catégorie",
+                        )
+                        prepare_run = gr.Button("Préparer le benchmark")
+                    with gr.Column(scale=2, elem_id="summary-panel"):
+                        run_preview = gr.Markdown(
+                            "### Plan d’exécution\n\nConfigurez puis cliquez sur **Préparer**."
+                        )
+                        with gr.Row():
+                            launch = gr.Button("Confirmer et lancer", variant="primary")
+                            stop = gr.Button("Annuler", variant="stop")
+                        status = gr.Textbox("Prêt.", label="État", interactive=False)
+                        progress_bar = gr.Slider(
+                            0,
+                            100,
+                            value=0,
+                            step=0.1,
+                            interactive=False,
+                            label="Progression générale (%)",
+                        )
+                        live_counters = gr.Markdown(
+                            "**Traité :** 0 / 0 · **Succès :** 0 · "
+                            "**Erreurs :** 0 · **ETA :** —"
+                        )
+
+                gr.Markdown("### Analyse en direct")
+                with gr.Row(elem_id="benchmark-layout"):
+                    with gr.Column(scale=1):
+                        live_image = gr.Image(
+                            label="Image analysée",
+                            type="filepath",
+                            elem_id="live-image",
+                            height=360,
+                        )
+                    with gr.Column(scale=1, elem_id="live-metrics"):
+                        live_metrics = gr.Markdown(
+                            "Les mesures du document apparaîtront ici."
+                        )
+                live_table = gr.Dataframe(
+                    headers=[
+                        "#",
+                        "Modèle",
+                        "Image",
+                        "Catégorie",
+                        "Statut",
+                        "Score",
+                        "CER",
+                        "WER",
+                        "Latence (s)",
+                    ],
+                    interactive=False,
+                    label="Derniers résultats",
+                )
+                summary_table = gr.Dataframe(
+                    label="Synthèse comparative courante",
+                    interactive=False,
+                )
+                recommendation = gr.Markdown(
+                    "### Recommandation\n\nDisponible après les premiers résultats."
+                )
+
+            with gr.Tab("2. Paramètres"):
+                gr.Markdown(
+                    "Paramètres appliqués au prochain benchmark. Un appel fournisseur "
+                    "ayant dépassé le timeout peut terminer en arrière-plan."
+                )
+                with gr.Row():
+                    with gr.Column():
                         eval_mode = gr.Radio(
                             ["Standard", "Bankmark"],
                             value="Standard",
                             label="Mode d’évaluation",
                         )
                         noise = gr.Slider(
-                            0.0, 0.30, value=0.05, step=0.01, label="Bruit du modèle simulé"
+                            0.0,
+                            0.30,
+                            value=0.05,
+                            step=0.01,
+                            label="Bruit du modèle simulé",
                         )
-                        launch = gr.Button("Lancer le benchmark", variant="primary")
-                        status = gr.Textbox("Prêt.", label="État", interactive=False)
-                    with gr.Column(scale=3, elem_id="summary-panel"):
-                        summary_table = gr.Dataframe(
-                            label="Synthèse comparative", interactive=False
+                        randomize = gr.Checkbox(
+                            value=True,
+                            label="Mélanger les documents",
                         )
-                        recommendation = gr.Markdown(
-                            "### Recommandation\n\nLancez un benchmark pour comparer les modèles."
+                        seed = gr.Number(
+                            value=42,
+                            precision=0,
+                            label="Seed reproductible",
                         )
+                    with gr.Column():
+                        timeout_seconds = gr.Number(
+                            value=300,
+                            minimum=1,
+                            maximum=7200,
+                            precision=0,
+                            label="Temps maximum par image (secondes)",
+                        )
+                        max_errors = gr.Number(
+                            value=0,
+                            minimum=0,
+                            precision=0,
+                            label="Arrêter après N erreurs — 0 = illimité",
+                        )
+                        checkpoint_enabled = gr.Checkbox(
+                            value=True,
+                            label="Sauvegarder après chaque document",
+                        )
+                        live_charts_enabled = gr.Checkbox(
+                            value=True,
+                            label="Actualiser les graphiques en direct",
+                        )
+                gr.Markdown(
+                    "- Les résultats partiels sont conservés après annulation.\n"
+                    "- L’exécution reste séquentielle pour comparer les latences.\n"
+                    "- La seed reproduit la même sélection aléatoire."
+                )
 
-            with gr.Tab("2. Graphiques"):
+            with gr.Tab("3. Graphiques"):
                 gr.Markdown(
                     "Les bulles du premier graphique représentent les modèles. "
                     "Le coin supérieur droit correspond au meilleur compromis qualité/vitesse."
@@ -393,7 +662,7 @@ def build_ui() -> gr.Blocks:
                         reliability_plot = gr.Plot(value=empty_figure(), elem_classes=["dashboard-chart"])
                         category_plot = gr.Plot(value=empty_figure(), elem_classes=["dashboard-chart"])
 
-            with gr.Tab("3. Résultats détaillés"):
+            with gr.Tab("4. Résultats détaillés"):
                 with gr.Row(elem_id="explorer-layout"):
                     with gr.Column():
                         result_image = gr.Dropdown(
@@ -410,7 +679,7 @@ def build_ui() -> gr.Blocks:
                             extracted = gr.Textbox(label="Texte extrait", lines=12)
                         details = gr.JSON(label="Mesures de ce document")
 
-            with gr.Tab("4. Ajouter des données"):
+            with gr.Tab("5. Ajouter des données"):
                 with gr.Row():
                     with gr.Column(scale=1):
                         upload_image = gr.File(
@@ -441,10 +710,10 @@ def build_ui() -> gr.Blocks:
                         add_data_status = gr.Markdown()
                 gr.Markdown(DATA_FORMAT_HELP)
 
-            with gr.Tab("5. Comprendre les métriques"):
+            with gr.Tab("6. Comprendre les métriques"):
                 gr.Markdown(METRICS_HELP, elem_id="metrics-pane")
 
-            with gr.Tab("6. Dataset"):
+            with gr.Tab("7. Dataset"):
                 with gr.Row(elem_id="dataset-layout"):
                     with gr.Column(scale=1):
                         dataset_selector = gr.Dropdown(
@@ -460,46 +729,228 @@ def build_ui() -> gr.Blocks:
                     with gr.Column(scale=2, elem_id="dataset-catalog"):
                         catalog_component = gr.HTML(_catalog_html(dataset))
 
-        def on_run(model_specs, selected_category, selected_noise, selected_mode):
+        def on_prepare(
+            model_specs,
+            mode,
+            quantity,
+            quantities_by_category,
+            shuffle,
+            selected_seed,
+            selected_eval_mode,
+            selected_timeout,
+        ):
             if not model_specs:
-                return (
+                return "### Plan d’exécution\n\n❌ Sélectionnez un modèle.", []
+            try:
+                selected = select_dataset_items(
+                    dataset,
+                    mode,
+                    quantity,
+                    quantities_by_category,
+                    shuffle=bool(shuffle),
+                    seed=int(selected_seed or 0),
+                )
+                preview = build_run_preview(
+                    model_specs,
+                    selected,
+                    selected_eval_mode,
+                    float(selected_timeout or 0),
+                    int(selected_seed or 0),
+                )
+                return preview, selected
+            except Exception as exc:
+                return f"### Plan d’exécution\n\n❌ {exc}", []
+
+        def on_run(
+            model_specs,
+            selected_records,
+            selected_noise,
+            selected_eval_mode,
+            selected_timeout,
+            selected_max_errors,
+            save_checkpoints,
+            update_live_charts,
+        ):
+            empty = empty_figure()
+            if not model_specs or not selected_records:
+                yield (
                     pd.DataFrame(),
-                    "Sélectionnez au moins un modèle.",
-                    "### Recommandation\n\nAucun modèle sélectionné.",
+                    "Préparez et validez d’abord le plan d’exécution.",
+                    "### Recommandation\n\nAucune exécution.",
                     [],
                     gr.update(choices=[]),
-                    empty_figure(),
-                    empty_figure(),
-                    empty_figure(),
-                    empty_figure(),
+                    empty,
+                    empty,
+                    empty,
+                    empty,
+                    None,
+                    "Aucun document sélectionné.",
+                    0,
+                    "**Traité :** 0 / 0",
+                    pd.DataFrame(),
                 )
+                return
+
+            cases = [BenchmarkCase.from_dict(item) for item in selected_records]
+            runner = BenchmarkRunner(build_default_registry())
+            results: list[dict[str, Any]] = []
+            checkpoint: RunCheckpoint | None = None
+            summary = pd.DataFrame()
+            quality_figure = latency_figure = reliability_figure = category_figure = empty
+            latest_update = None
+
+            yield (
+                summary,
+                "Initialisation des modèles…",
+                "### Recommandation\n\nCalcul en cours.",
+                results,
+                gr.update(choices=[]),
+                quality_figure,
+                latency_figure,
+                reliability_figure,
+                category_figure,
+                None,
+                "Chargement du premier modèle…",
+                0,
+                f"**Traité :** 0 / {len(model_specs) * len(cases)} · **ETA :** calcul en cours",
+                pd.DataFrame(),
+            )
+
             try:
-                summary, results, run_id = run_benchmark(
-                    model_specs, selected_category, selected_noise, selected_mode
+                updates = runner.iter_run(
+                    model_specs,
+                    cases,
+                    eval_mode=selected_eval_mode,
+                    mock_noise=float(selected_noise),
+                    timeout_seconds=float(selected_timeout or 0),
+                    max_errors=int(selected_max_errors or 0),
                 )
-                tested = list(dict.fromkeys(result["model"] for result in results))
-                return (
+                for update in updates:
+                    latest_update = update
+                    if checkpoint is None:
+                        checkpoint = RunCheckpoint(update.run_id, RUNS_DIR)
+                    image_path = str(ROOT_DIR / Path(update.case.image_path))
+                    percentage = (
+                        update.completed / update.total * 100 if update.total else 0
+                    )
+                    successes = update.completed - update.error_count
+
+                    if update.stage == "processing":
+                        next_text = (
+                            "### Traitement en cours\n\n"
+                            f"- **Modèle :** `{update.model_name}`\n"
+                            f"- **Image :** `{Path(update.case.image_path).name}`\n"
+                            f"- **Catégorie :** `{update.case.category}`\n"
+                            f"- **Timeout :** {float(selected_timeout):.0f} s\n\n"
+                            "Le résultat apparaîtra dès que le modèle aura terminé."
+                        )
+                        yield (
+                            _display_summary(summary),
+                            f"Analyse de {Path(update.case.image_path).name}…",
+                            explain_recommendation(summary),
+                            results,
+                            gr.update(),
+                            quality_figure,
+                            latency_figure,
+                            reliability_figure,
+                            category_figure,
+                            image_path,
+                            next_text,
+                            percentage,
+                            (
+                                f"**Traité :** {update.completed} / {update.total} · "
+                                f"**Succès :** {successes} · **Erreurs :** {update.error_count} · "
+                                f"**Écoulé :** {format_duration(update.elapsed_seconds)} · "
+                                f"**ETA :** {format_duration(update.estimated_remaining_seconds)}"
+                            ),
+                            _live_result_table(results),
+                        )
+                        continue
+
+                    if update.result is None:
+                        continue
+                    results.append(update.result)
+                    if save_checkpoints and checkpoint:
+                        checkpoint.write(results)
+                    summary = summarize_results(results)
+                    if update_live_charts:
+                        quality_figure = quality_speed_chart(summary)
+                        latency_figure = latency_chart(summary)
+                        reliability_figure = reliability_chart(summary)
+                        category_figure = category_quality_chart(results)
+                    tested = list(dict.fromkeys(result["model"] for result in results))
+                    result = update.result
+                    next_position = update.completed
+                    next_label = (
+                        f"{next_position + 1}/{update.total}"
+                        if next_position < update.total
+                        else "terminé"
+                    )
+                    metrics_text = _live_metrics_markdown(result, next_label)
+                    yield (
+                        _display_summary(summary),
+                        f"Résultat reçu : {Path(update.case.image_path).name}",
+                        explain_recommendation(summary),
+                        results,
+                        gr.update(
+                            choices=tested,
+                            value=tested[0] if tested else None,
+                        ),
+                        quality_figure,
+                        latency_figure,
+                        reliability_figure,
+                        category_figure,
+                        image_path,
+                        metrics_text,
+                        update.completed / update.total * 100,
+                        (
+                            f"**Traité :** {update.completed} / {update.total} · "
+                            f"**Succès :** {update.completed - update.error_count} · "
+                            f"**Erreurs :** {update.error_count} · "
+                            f"**Écoulé :** {format_duration(update.elapsed_seconds)} · "
+                            f"**ETA :** {format_duration(update.estimated_remaining_seconds)}"
+                        ),
+                        _live_result_table(results),
+                    )
+            finally:
+                if results:
+                    if checkpoint is None:
+                        checkpoint = RunCheckpoint(results[0]["run_id"], RUNS_DIR)
+                    summary = summarize_results(results)
+                    checkpoint.finalize(summary, results)
+
+            if results and latest_update:
+                if not update_live_charts:
+                    quality_figure = quality_speed_chart(summary)
+                    latency_figure = latency_chart(summary)
+                    reliability_figure = reliability_chart(summary)
+                    category_figure = category_quality_chart(results)
+                stopped = latest_update.completed < latest_update.total
+                final_status = (
+                    f"Arrêt anticipé après {latest_update.error_count} erreur(s)."
+                    if stopped
+                    else f"Terminé : {len(results)} évaluations."
+                )
+                yield (
                     _display_summary(summary),
-                    f"Terminé : {len(results)} évaluations. Run ID : {run_id}",
+                    f"{final_status} Run ID : {results[0]['run_id']}",
                     explain_recommendation(summary),
                     results,
-                    gr.update(choices=tested, value=tested[0] if tested else None),
-                    quality_speed_chart(summary),
-                    latency_chart(summary),
-                    reliability_chart(summary),
-                    category_quality_chart(results),
-                )
-            except Exception as exc:
-                return (
-                    pd.DataFrame(),
-                    f"Échec : {type(exc).__name__}: {exc}",
-                    "### Recommandation\n\nLe benchmark a échoué.",
-                    [],
-                    gr.update(choices=[]),
-                    empty_figure("Benchmark failed."),
-                    empty_figure("Benchmark failed."),
-                    empty_figure("Benchmark failed."),
-                    empty_figure("Benchmark failed."),
+                    gr.update(),
+                    quality_figure,
+                    latency_figure,
+                    reliability_figure,
+                    category_figure,
+                    str(ROOT_DIR / Path(latest_update.case.image_path)),
+                    "### Benchmark terminé\n\nLes résultats et rapports ont été sauvegardés.",
+                    latest_update.completed / latest_update.total * 100,
+                    (
+                        f"**Traité :** {latest_update.completed} / {latest_update.total} · "
+                        f"**Succès :** {latest_update.completed - latest_update.error_count} · "
+                        f"**Erreurs :** {latest_update.error_count} · "
+                        f"**Durée :** {format_duration(latest_update.elapsed_seconds)}"
+                    ),
+                    _live_result_table(results),
                 )
 
         def explore(selection, model_name, results):
@@ -578,9 +1029,32 @@ def build_ui() -> gr.Blocks:
                     _catalog_html(dataset),
                 )
 
-        launch.click(
+        prepare_run.click(
+            on_prepare,
+            [
+                models,
+                selection_mode,
+                global_quantity,
+                category_quantities,
+                randomize,
+                seed,
+                eval_mode,
+                timeout_seconds,
+            ],
+            [run_preview, selection_state],
+        )
+        run_event = launch.click(
             on_run,
-            [models, category, noise, eval_mode],
+            [
+                models,
+                selection_state,
+                noise,
+                eval_mode,
+                timeout_seconds,
+                max_errors,
+                checkpoint_enabled,
+                live_charts_enabled,
+            ],
             [
                 summary_table,
                 status,
@@ -591,7 +1065,16 @@ def build_ui() -> gr.Blocks:
                 latency_plot,
                 reliability_plot,
                 category_plot,
+                live_image,
+                live_metrics,
+                progress_bar,
+                live_counters,
+                live_table,
             ],
+        )
+        stop.click(
+            fn=None,
+            cancels=[run_event],
         )
         result_image.change(
             explore,

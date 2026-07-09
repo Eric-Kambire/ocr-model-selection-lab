@@ -8,6 +8,39 @@ from typing import Any
 import pandas as pd
 
 
+class RunCheckpoint:
+    """Incrementally persists results so cancellation never loses completed work."""
+
+    def __init__(self, run_id: str, output_root: str | Path = "runs") -> None:
+        self.run_id = run_id
+        self.run_dir = Path(output_root) / run_id
+        self.run_dir.mkdir(parents=True, exist_ok=True)
+
+    def write(self, results: list[dict[str, Any]]) -> None:
+        _atomic_text(
+            self.run_dir / "results.json",
+            json.dumps(results, indent=2, ensure_ascii=False),
+        )
+        temporary = self.run_dir / "details.csv.tmp"
+        pd.DataFrame(results).to_csv(temporary, index=False)
+        os.replace(temporary, self.run_dir / "details.csv")
+
+    def finalize(
+        self,
+        summary: pd.DataFrame,
+        results: list[dict[str, Any]],
+    ) -> Path:
+        self.write(results)
+        temporary = self.run_dir / "summary.csv.tmp"
+        summary.to_csv(temporary, index=False)
+        os.replace(temporary, self.run_dir / "summary.csv")
+        _atomic_text(
+            self.run_dir / "report.md",
+            render_markdown(self.run_id, summary, results),
+        )
+        return self.run_dir
+
+
 def save_run(
     run_id: str,
     summary: pd.DataFrame,

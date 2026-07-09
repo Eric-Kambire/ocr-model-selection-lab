@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import math
+import concurrent.futures
 import time
 import uuid
 from collections.abc import Callable, Iterable
+from dataclasses import dataclass
 from typing import Any
 
 import pandas as pd
@@ -14,6 +16,20 @@ from .domain import BenchmarkCase, BenchmarkResult, InferenceResult, InferenceSt
 from .registry import ModelRegistry
 
 ProgressCallback = Callable[[int, int, str], None]
+
+
+@dataclass(frozen=True)
+class RunnerProgress:
+    run_id: str
+    completed: int
+    total: int
+    model_name: str
+    case: BenchmarkCase
+    result: dict[str, Any] | None
+    stage: str
+    elapsed_seconds: float
+    estimated_remaining_seconds: float | None
+    error_count: int
 
 
 class BenchmarkRunner:
@@ -29,8 +45,38 @@ class BenchmarkRunner:
         *,
         eval_mode: str = "Standard",
         mock_noise: float = 0.05,
+        timeout_seconds: float | None = None,
+        max_errors: int | None = None,
         progress: ProgressCallback | None = None,
     ) -> tuple[str, list[dict[str, Any]]]:
+        updates = self.iter_run(
+            model_specs,
+            cases,
+            eval_mode=eval_mode,
+            mock_noise=mock_noise,
+            timeout_seconds=timeout_seconds,
+            max_errors=max_errors,
+            progress=progress,
+        )
+        run_id = ""
+        results: list[dict[str, Any]] = []
+        for update in updates:
+            run_id = update.run_id
+            if update.stage == "completed" and update.result is not None:
+                results.append(update.result)
+        return run_id, results
+
+    def iter_run(
+        self,
+        model_specs: Iterable[str],
+        cases: Iterable[BenchmarkCase],
+        *,
+        eval_mode: str = "Standard",
+        mock_noise: float = 0.05,
+        timeout_seconds: float | None = None,
+        max_errors: int | None = None,
+        progress: ProgressCallback | None = None,
+    ):
         selected_cases = list(cases)
         models = [
             self.registry.create(spec, mock_noise=mock_noise)
@@ -39,15 +85,36 @@ class BenchmarkRunner:
         run_id = time.strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:8]
         total = len(models) * len(selected_cases)
         completed = 0
-        results: list[dict[str, Any]] = []
+        errors = 0
+        started_at = time.monotonic()
 
         for model in models:
             for case in selected_cases:
-                completed += 1
                 if progress:
                     progress(completed, total, f"{model.model_name}: {case.image_path}")
+                elapsed_before = time.monotonic() - started_at
+                yield RunnerProgress(
+                    run_id=run_id,
+                    completed=completed,
+                    total=total,
+                    model_name=model.model_name,
+                    case=case,
+                    result=None,
+                    stage="processing",
+                    elapsed_seconds=elapsed_before,
+                    estimated_remaining_seconds=(
+                        (elapsed_before / completed) * (total - completed)
+                        if completed
+                        else None
+                    ),
+                    error_count=errors,
+                )
                 try:
-                    raw = model.perform_ocr(case.image_path)
+                    raw = self._perform_with_timeout(
+                        model,
+                        case.image_path,
+                        timeout_seconds,
+                    )
                     inference = (
                         raw
                         if isinstance(raw, InferenceResult)
@@ -63,9 +130,53 @@ class BenchmarkRunner:
                 result = self._evaluate(
                     run_id, model.model_name, case, inference, eval_mode
                 )
-                results.append(result.to_dict())
+                completed += 1
+                result_dict = result.to_dict()
+                if inference.status is not InferenceStatus.SUCCESS:
+                    errors += 1
+                elapsed = time.monotonic() - started_at
+                remaining = (
+                    (elapsed / completed) * (total - completed)
+                    if completed and completed < total
+                    else 0.0
+                )
+                yield RunnerProgress(
+                    run_id=run_id,
+                    completed=completed,
+                    total=total,
+                    model_name=model.model_name,
+                    case=case,
+                    result=result_dict,
+                    stage="completed",
+                    elapsed_seconds=elapsed,
+                    estimated_remaining_seconds=remaining,
+                    error_count=errors,
+                )
+                if max_errors is not None and max_errors > 0 and errors >= max_errors:
+                    return
 
-        return run_id, results
+    @staticmethod
+    def _perform_with_timeout(model, image_path: str, timeout_seconds: float | None):
+        if timeout_seconds is None or timeout_seconds <= 0:
+            return model.perform_ocr(image_path)
+
+        executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+        future = executor.submit(model.perform_ocr, image_path)
+        try:
+            return future.result(timeout=timeout_seconds)
+        except concurrent.futures.TimeoutError:
+            future.cancel()
+            return InferenceResult(
+                text="",
+                latency_seconds=timeout_seconds,
+                status=InferenceStatus.TIMEOUT,
+                error=f"Timeout after {timeout_seconds:.1f} seconds",
+                device=getattr(model, "device_name", "unknown"),
+            )
+        finally:
+            # A provider call cannot always be forcefully interrupted. Do not
+            # block the benchmark while a timed-out provider releases itself.
+            executor.shutdown(wait=False, cancel_futures=True)
 
     @staticmethod
     def _evaluate(

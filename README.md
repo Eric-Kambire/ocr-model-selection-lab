@@ -18,6 +18,24 @@ L’interface est disponible sur `http://127.0.0.1:7860`.
 Pour utiliser Ollama, lancez Ollama localement et installez au moins un modèle
 vision. Les modèles détectés apparaissent automatiquement dans l’interface.
 
+## Utiliser l’interface
+
+Dans **Benchmark**, choisissez les modèles puis la quantité de documents :
+
+- tout le dataset ;
+- une quantité globale, répartie entre les catégories ;
+- une quantité différente pour chaque catégorie.
+
+Cliquez sur **Préparer le benchmark** pour vérifier le plan, puis sur
+**Confirmer et lancer**. Pendant l’exécution, l’image courante, le résultat OCR,
+la qualité, CER, WER, latence, compteurs, progression et ETA sont actualisés.
+**Annuler** interrompt la file et conserve les résultats déjà produits.
+
+L’onglet **Paramètres** permet notamment de fixer le temps maximal par image,
+le nombre maximal d’erreurs, la seed de sélection, le mélange des documents et
+la sauvegarde après chaque résultat. Un appel fournisseur qui dépasse le timeout
+peut finir en arrière-plan, mais son résultat est ignoré par le benchmark.
+
 ## Docker CPU
 
 ```bash
