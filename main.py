@@ -110,13 +110,12 @@ APP_CSS = """
     align-items: stretch !important;
 }
 #models-list .wrap {
-    max-height: 220px !important;
+    max-height: 145px !important;
     overflow-y: auto !important;
     scrollbar-width: thin;
 }
 #summary-panel {
-    height: 100% !important;
-    overflow: auto !important;
+    min-height: 0 !important;
 }
 .dashboard-grid {
     height: 100% !important;
@@ -130,10 +129,27 @@ APP_CSS = """
 }
 #live-image,
 #live-metrics {
-    min-height: 360px !important;
+    min-height: 270px !important;
 }
 #live-metrics {
+    max-height: 300px !important;
     overflow: auto !important;
+}
+#category-quantities .wrap {
+    max-height: 185px !important;
+    overflow-y: auto !important;
+}
+#benchmark-config {
+    gap: 8px !important;
+}
+#benchmark-config .form {
+    gap: 6px !important;
+}
+#benchmark-config .block {
+    margin: 0 !important;
+}
+#live-section-title h3 {
+    margin: 4px 0 0 !important;
 }
 #metrics-pane {
     max-height: 70vh !important;
@@ -159,11 +175,11 @@ APP_CSS = """
 .gradio-container td {
     border-color: var(--border-color-primary) !important;
 }
-.hero { padding: 24px; border-radius: 18px; color: white;
+.hero { padding: 14px 20px; border-radius: 16px; color: white;
         background: linear-gradient(135deg, #312e81 0%, #4f46e5 50%, #0f766e 100%);
-        box-shadow: 0 18px 40px rgba(49,46,129,.28); margin-bottom: 14px; }
-.hero h1 { margin: 0 0 8px 0; font-size: 32px; }
-.hero p { margin: 0; opacity: .9; }
+        box-shadow: 0 12px 28px rgba(49,46,129,.24); margin-bottom: 8px; }
+.hero h1 { margin: 0 0 3px 0; font-size: 26px; line-height: 1.15; }
+.hero p { margin: 0; opacity: .9; font-size: 14px; }
 """
 
 
@@ -507,8 +523,8 @@ def build_ui() -> gr.Blocks:
 
         with gr.Tabs(elem_id="main-tabs"):
             with gr.Tab("1. Benchmark"):
-                with gr.Row():
-                    with gr.Column(scale=1):
+                with gr.Row(equal_height=False):
+                    with gr.Column(scale=1, elem_id="benchmark-config"):
                         models = gr.CheckboxGroup(
                             model_choices,
                             value=["mock:MockOCR-V1"],
@@ -527,14 +543,19 @@ def build_ui() -> gr.Blocks:
                             precision=0,
                             label=f"Quantité globale — {len(dataset)} disponibles",
                         )
-                        category_quantities = gr.Dataframe(
-                            value=category_rows,
-                            headers=["Catégorie", "Disponibles", "Quantité"],
-                            datatype=["str", "number", "number"],
-                            column_count=(3, "fixed"),
-                            interactive=True,
-                            label="Quantité par catégorie",
-                        )
+                        with gr.Accordion(
+                            "Quantités par catégorie — ouvrir pour personnaliser",
+                            open=False,
+                        ):
+                            category_quantities = gr.Dataframe(
+                                value=category_rows,
+                                headers=["Catégorie", "Disponibles", "Quantité"],
+                                datatype=["str", "number", "number"],
+                                column_count=(3, "fixed"),
+                                interactive=True,
+                                label="Quantité par catégorie",
+                                elem_id="category-quantities",
+                            )
                         prepare_run = gr.Button("Préparer le benchmark")
                     with gr.Column(scale=2, elem_id="summary-panel"):
                         run_preview = gr.Markdown(
@@ -556,42 +577,44 @@ def build_ui() -> gr.Blocks:
                             "**Traité :** 0 / 0 · **Succès :** 0 · "
                             "**Erreurs :** 0 · **ETA :** —"
                         )
-
-                gr.Markdown("### Analyse en direct")
-                with gr.Row(elem_id="benchmark-layout"):
-                    with gr.Column(scale=1):
-                        live_image = gr.Image(
-                            label="Image analysée",
-                            type="filepath",
-                            elem_id="live-image",
-                            height=360,
+                        gr.Markdown(
+                            "### Analyse en direct", elem_id="live-section-title"
                         )
-                    with gr.Column(scale=1, elem_id="live-metrics"):
-                        live_metrics = gr.Markdown(
-                            "Les mesures du document apparaîtront ici."
-                        )
-                live_table = gr.Dataframe(
-                    headers=[
-                        "#",
-                        "Modèle",
-                        "Image",
-                        "Catégorie",
-                        "Statut",
-                        "Score",
-                        "CER",
-                        "WER",
-                        "Latence (s)",
-                    ],
-                    interactive=False,
-                    label="Derniers résultats",
-                )
-                summary_table = gr.Dataframe(
-                    label="Synthèse comparative courante",
-                    interactive=False,
-                )
-                recommendation = gr.Markdown(
-                    "### Recommandation\n\nDisponible après les premiers résultats."
-                )
+                        with gr.Row(elem_id="benchmark-layout"):
+                            with gr.Column(scale=1):
+                                live_image = gr.Image(
+                                    label="Image analysée",
+                                    type="filepath",
+                                    elem_id="live-image",
+                                    height=270,
+                                )
+                            with gr.Column(scale=1, elem_id="live-metrics"):
+                                live_metrics = gr.Markdown(
+                                    "Les mesures du document apparaîtront ici."
+                                )
+                with gr.Accordion("Résultats et recommandation", open=False):
+                    live_table = gr.Dataframe(
+                        headers=[
+                            "#",
+                            "Modèle",
+                            "Image",
+                            "Catégorie",
+                            "Statut",
+                            "Score",
+                            "CER",
+                            "WER",
+                            "Latence (s)",
+                        ],
+                        interactive=False,
+                        label="Derniers résultats",
+                    )
+                    summary_table = gr.Dataframe(
+                        label="Synthèse comparative courante",
+                        interactive=False,
+                    )
+                    recommendation = gr.Markdown(
+                        "### Recommandation\n\nDisponible après les premiers résultats."
+                    )
 
             with gr.Tab("2. Paramètres"):
                 gr.Markdown(
