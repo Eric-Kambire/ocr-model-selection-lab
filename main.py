@@ -520,6 +520,8 @@ def build_ui() -> gr.Blocks:
         )
         run_state = gr.State([])
         selection_state = gr.State([])
+        detail_index = gr.State(0)
+        result_model = gr.Dropdown([], visible=False)
 
         with gr.Tabs(elem_id="main-tabs"):
             with gr.Tab("1. Benchmark"):
@@ -685,21 +687,35 @@ def build_ui() -> gr.Blocks:
                         reliability_plot = gr.Plot(value=empty_figure(), elem_classes=["dashboard-chart"])
                         category_plot = gr.Plot(value=empty_figure(), elem_classes=["dashboard-chart"])
 
-            with gr.Tab("4. Résultats détaillés"):
+            with gr.Tab("4. Résultats détaillés") as details_tab:
+                with gr.Row():
+                    previous_result = gr.Button("← Précédent")
+                    result_position = gr.Markdown(
+                        "**Aucune page testée pour le moment.**"
+                    )
+                    next_result = gr.Button("Suivant →")
                 with gr.Row(elem_id="explorer-layout"):
                     with gr.Column():
-                        result_image = gr.Dropdown(
-                            image_choices,
-                            value=image_choices[0] if image_choices else None,
-                            label="Document",
+                        source_image = gr.Image(
+                            label="Document testé",
+                            type="filepath",
+                            height=430,
                         )
-                        result_model = gr.Dropdown([], label="Modèle")
-                        source_image = gr.Image(label="Document source", type="filepath")
-                        result_description = gr.Textbox(label="Description", interactive=False)
+                        result_identity = gr.Markdown(
+                            "Le document et le modèle apparaîtront ici."
+                        )
                     with gr.Column(scale=2):
                         with gr.Row():
-                            ground_truth = gr.Textbox(label="Texte attendu", lines=12)
-                            extracted = gr.Textbox(label="Texte extrait", lines=12)
+                            ground_truth = gr.Textbox(
+                                label="Texte attendu",
+                                lines=12,
+                                interactive=False,
+                            )
+                            extracted = gr.Textbox(
+                                label="Texte extrait",
+                                lines=12,
+                                interactive=False,
+                            )
                         details = gr.JSON(label="Mesures de ce document")
 
             with gr.Tab("5. Ajouter des données"):
@@ -979,34 +995,50 @@ def build_ui() -> gr.Blocks:
                     _live_result_table(results),
                 )
 
-        def explore(selection, model_name, results):
-            if not selection:
-                return None, "", "", "", {}
-            index = int(selection.split(":", 1)[0])
-            item = dataset[index]
-            match = next(
-                (
-                    result
-                    for result in (results or [])
-                    if result["model"] == model_name
-                    and os.path.normpath(result["image_path"])
-                    == os.path.normpath(item["image_path"])
-                ),
-                None,
+        def show_detail(index, results, offset=0):
+            results = results or []
+            if not results:
+                return (
+                    0,
+                    "**Aucune page testée pour le moment.**",
+                    None,
+                    "Lancez un benchmark pour alimenter cet onglet.",
+                    "",
+                    "",
+                    {},
+                )
+            position = max(0, min(int(index or 0) + offset, len(results) - 1))
+            result = results[position]
+            hidden = {"ground_truth", "extracted_text", "description", "image_path"}
+            metrics = {key: value for key, value in result.items() if key not in hidden}
+            identity = (
+                f"### {Path(result['image_path']).name}\n\n"
+                f"- **Modèle :** `{result['model']}`\n"
+                f"- **Catégorie :** `{result['category']}`\n"
+                f"- **Statut :** `{result['status']}`\n"
+                f"- **Description :** {result.get('description') or '—'}"
             )
-            metrics = {}
-            text = "Aucun résultat pour ce modèle et ce document."
-            if match:
-                text = match["extracted_text"]
-                hidden = {"ground_truth", "extracted_text", "description", "image_path"}
-                metrics = {key: value for key, value in match.items() if key not in hidden}
             return (
-                str(ROOT_DIR / item["image_path"]),
-                item.get("description", ""),
-                item["ground_truth"],
-                text,
+                position,
+                (
+                    f"**Page testée {position + 1} / {len(results)}** · "
+                    f"{len(results)} évaluation(s) disponible(s)"
+                ),
+                str(ROOT_DIR / Path(result["image_path"])),
+                identity,
+                result.get("ground_truth", ""),
+                result.get("extracted_text", ""),
                 metrics,
             )
+
+        def show_current_detail(index, results):
+            return show_detail(index, results)
+
+        def show_previous_detail(index, results):
+            return show_detail(index, results, -1)
+
+        def show_next_detail(index, results):
+            return show_detail(index, results, 1)
 
         def browse_dataset(selection):
             if not selection:
@@ -1024,7 +1056,6 @@ def build_ui() -> gr.Blocks:
             if not image_path:
                 return (
                     "❌ Sélectionnez une image.",
-                    gr.update(),
                     gr.update(),
                     _catalog_html(dataset),
                 )
@@ -1044,13 +1075,11 @@ def build_ui() -> gr.Blocks:
                 return (
                     "✅ Donnée validée et ajoutée. Elle est immédiatement disponible.",
                     gr.update(choices=updated_choices, value=selected),
-                    gr.update(choices=updated_choices, value=selected),
                     _catalog_html(dataset),
                 )
             except Exception as exc:
                 return (
                     f"❌ {type(exc).__name__}: {exc}",
-                    gr.update(),
                     gr.update(),
                     _catalog_html(dataset),
                 )
@@ -1102,15 +1131,34 @@ def build_ui() -> gr.Blocks:
             fn=None,
             cancels=[run_event],
         )
-        result_image.change(
-            explore,
-            [result_image, result_model, run_state],
-            [source_image, result_description, ground_truth, extracted, details],
+        detail_outputs = [
+            detail_index,
+            result_position,
+            source_image,
+            result_identity,
+            ground_truth,
+            extracted,
+            details,
+        ]
+        details_tab.select(
+            show_current_detail,
+            [detail_index, run_state],
+            detail_outputs,
         )
-        result_model.change(
-            explore,
-            [result_image, result_model, run_state],
-            [source_image, result_description, ground_truth, extracted, details],
+        previous_result.click(
+            show_previous_detail,
+            [detail_index, run_state],
+            detail_outputs,
+        )
+        next_result.click(
+            show_next_detail,
+            [detail_index, run_state],
+            detail_outputs,
+        )
+        run_state.change(
+            show_current_detail,
+            [detail_index, run_state],
+            detail_outputs,
         )
         dataset_selector.change(
             browse_dataset,
@@ -1120,7 +1168,7 @@ def build_ui() -> gr.Blocks:
         add_data_button.click(
             add_labeled_data,
             [upload_image, upload_label, upload_category, upload_description],
-            [add_data_status, result_image, dataset_selector, catalog_component],
+            [add_data_status, dataset_selector, catalog_component],
         )
     return app
 
