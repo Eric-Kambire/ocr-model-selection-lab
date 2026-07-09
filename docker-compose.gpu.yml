@@ -1,0 +1,8 @@
+services:
+  ocr-benchmark:
+    build:
+      context: .
+      dockerfile: Dockerfile.gpu
+    gpus: all
+    environment:
+      NVIDIA_VISIBLE_DEVICES: all

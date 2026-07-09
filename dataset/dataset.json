@@ -1,0 +1,740 @@
+[
+  {
+    "image_path": "dataset\\tables\\real_table_1.png",
+    "ground_truth": "| Date | Description | Amount |\n| --- | --- | --- |\n| 2014-04-01 | Invoice #1001 | 120.00 |\n| 2014-04-02 | Invoice #1002 | 240.00 |\n| 2014-04-03 | Invoice #1003 | 360.00 |",
+    "category": "tables",
+    "description": "Real-world printed table containing dates, invoice descriptions, and amounts."
+  },
+  {
+    "image_path": "dataset\\handwritten\\real_handwriting_1.png",
+    "ground_truth": "or work on line level",
+    "category": "handwritten",
+    "description": "Real handwritten text line from the SimpleHTR / IAM database."
+  },
+  {
+    "image_path": "dataset\\handwritten\\real_handwriting_2.jpg",
+    "ground_truth": "Four score and seven years ago our fathers brought forth, upon this continent, a new nation, conceived in Liberty, and dedicated to the proposition that all men are created equal.\n\nNow we are engaged in a great civil war, testing whether that nation, or any nation so conceived, and so dedicated, can long endure. We are met on a great battle-field of that war. We have come to dedicate a portion of it, as a final resting place for those who died here, that the nation might live. This we may, in all propriety do.",
+    "category": "handwritten",
+    "description": "Real historical handwriting: Abraham Lincoln's Gettysburg Address (Hay Copy page 1)."
+  },
+  {
+    "image_path": "dataset\\tables\\synthetic_table_1.png",
+    "ground_truth": "| ID | Product | Qty | Price |\n| --- | --- | --- | --- |\n| 01 | Laptop | 1 | $999 |\n| 02 | Mouse | 2 | $25 |\n| 03 | Keyboard | 1 | $75 |\n| 04 | Monitor | 1 | $150 |",
+    "category": "tables",
+    "description": "Programmatically generated clean printed table."
+  },
+  {
+    "image_path": "dataset\\complex_layout\\synthetic_layout_1.png",
+    "ground_truth": "COMPARATIVE ANALYSIS OF OCR SYSTEMS\n\nSECTION 1: INTRODUCTION\nOptical Character Recognition (OCR) is a technology that enables the conversion of different types of documents, such as scanned paper documents, PDF files or images captured by a digital camera into editable and searchable data. The main objective is to automate data entry tasks and improve document access.\n\nSECTION 2: METHODOLOGY\nOur benchmark methodology evaluates OCR engines on accuracy and speed. We calculate Word Error Rate (WER) and Character Error Rate (CER). We also assess how well models preserve document structure like tables and mathematical equations in the output format.\n\nIMPORTANT NOTICE:\nRunning models on CPU will take longer.\nEnsure that Ollama is active on localhost.\n\nPage 1 of 1 - Benchmark Suite",
+    "category": "complex_layout",
+    "description": "Programmatically generated 2-column printed layout with title and callout box."
+  },
+  {
+    "image_path": "dataset\\complex_layout\\bank_receipt_1.png",
+    "ground_truth": "GLOBAL BANKING CORP\nOFFICIAL TRANSFER RECEIPT\n\nDate: 2026-07-08\nStatus: COMPLETED\nTransaction Reference: GBC-TXN-20260708-A9\n\nSENDER DETAILS\nAccount Holder: JOHN DOE\nDebit Account (IBAN): FR21 3000 6101 2001 2345 6789 089\n\nBENEFICIARY DETAILS\nBeneficiary Name: ACME SOLUTIONS\nCredit Account (IBAN): FR69 1000 7204 5098 7654 3210 142\n\nTRANSFER DETAILS\nAmount: 1250.00 EUR\nReason: Invoice #87654-A\n\nSECURITY VALIDATION STAMP - CONFIRMED\nVerified Beneficiary. No suspicious behavior patterns detected.\nDocument generated electronically. Page 1/1.",
+    "category": "bank",
+    "description": "Synthetic official bank receipt with sender IBAN (FR21 3000 6101 2001 2345 6789 089) and beneficiary IBAN (FR69 1000 7204 5098 7654 3210 142)."
+  },
+  {
+    "image_path": "dataset\\complex_layout\\bank_receipt_2.png",
+    "ground_truth": "GLOBAL BANKING CORP\nOFFICIAL TRANSFER RECEIPT\n\nDate: 2026-07-09\nStatus: COMPLETED\nTransaction Reference: GBC-TXN-20260709-B2\n\nSENDER DETAILS\nAccount Holder: JOHN DOE\nDebit Account (IBAN): FR21 3000 6101 2001 2345 6789 089\n\nBENEFICIARY DETAILS\nBeneficiary Name: SARL TRANS-RAPIDE\nCredit Account (IBAN): FR82 2004 1010 0511 1222 3334 407\n\nTRANSFER DETAILS\nAmount: 450.00 EUR\nReason: Deliveries June 2026\n\nSECURITY VALIDATION STAMP - CONFIRMED\nVerified Beneficiary. No suspicious behavior patterns detected.\nDocument generated electronically. Page 1/1.",
+    "category": "bank",
+    "description": "Second synthetic bank receipt with sender IBAN (FR21 3000 6101 2001 2345 6789 089) and beneficiary IBAN (FR82 2004 1010 0511 1222 3334 407)."
+  },
+  {
+    "image_path": "dataset\\tables\\synthetic_table_2.png",
+    "ground_truth": "| Quarter | Revenue | Operating Expenses | Net Profit |\n| --- | --- | --- | --- |\n| Q1 2026 | $1,250,000 | $950,000 | $300,000 |\n| Q2 2026 | $1,420,000 | $980,000 | $440,000 |\n| Q3 2026 | $1,380,000 | $960,000 | $420,000 |\n| Q4 2026 | $1,650,000 | $1,020,000 | $630,000 |",
+    "category": "tables",
+    "description": "Programmatically generated clean printed corporate financial table."
+  },
+  {
+    "image_path": "dataset\\complex_layout\\bank_receipt_1_blurry.png",
+    "ground_truth": "GLOBAL BANKING CORP\nOFFICIAL TRANSFER RECEIPT\n\nDate: 2026-07-08\nStatus: COMPLETED\nTransaction Reference: GBC-TXN-20260708-A9\n\nSENDER DETAILS\nAccount Holder: JOHN DOE\nDebit Account (IBAN): FR21 3000 6101 2001 2345 6789 089\n\nBENEFICIARY DETAILS\nBeneficiary Name: ACME SOLUTIONS\nCredit Account (IBAN): FR69 1000 7204 5098 7654 3210 142\n\nTRANSFER DETAILS\nAmount: 1250.00 EUR\nReason: Invoice #87654-A\n\nSECURITY VALIDATION STAMP - CONFIRMED\nVerified Beneficiary. No suspicious behavior patterns detected.\nDocument generated electronically. Page 1/1.",
+    "category": "bank",
+    "description": "Noisy variation: Blurry bank receipt to test OCR resilience to camera defocus."
+  },
+  {
+    "image_path": "dataset\\complex_layout\\bank_receipt_1_skewed.png",
+    "ground_truth": "GLOBAL BANKING CORP\nOFFICIAL TRANSFER RECEIPT\n\nDate: 2026-07-08\nStatus: COMPLETED\nTransaction Reference: GBC-TXN-20260708-A9\n\nSENDER DETAILS\nAccount Holder: JOHN DOE\nDebit Account (IBAN): FR21 3000 6101 2001 2345 6789 089\n\nBENEFICIARY DETAILS\nBeneficiary Name: ACME SOLUTIONS\nCredit Account (IBAN): FR69 1000 7204 5098 7654 3210 142\n\nTRANSFER DETAILS\nAmount: 1250.00 EUR\nReason: Invoice #87654-A\n\nSECURITY VALIDATION STAMP - CONFIRMED\nVerified Beneficiary. No suspicious behavior patterns detected.\nDocument generated electronically. Page 1/1.",
+    "category": "bank",
+    "description": "Noisy variation: Rotated bank receipt (2 degrees skew) to test deskew capability."
+  },
+  {
+    "image_path": "dataset\\tables\\synthetic_table_1_blurry.png",
+    "ground_truth": "| ID | Product | Qty | Price |\n| --- | --- | --- | --- |\n| 01 | Laptop | 1 | $999 |\n| 02 | Mouse | 2 | $25 |\n| 03 | Keyboard | 1 | $75 |\n| 04 | Monitor | 1 | $150 |",
+    "category": "tables",
+    "description": "Noisy variation: Blurry synthetic table."
+  },
+  {
+    "image_path": "dataset\\tables\\synthetic_table_1_skewed_neg.png",
+    "ground_truth": "| ID | Product | Qty | Price |\n| --- | --- | --- | --- |\n| 01 | Laptop | 1 | $999 |\n| 02 | Mouse | 2 | $25 |\n| 03 | Keyboard | 1 | $75 |\n| 04 | Monitor | 1 | $150 |",
+    "category": "tables",
+    "description": "Noisy variation: Rotated synthetic table (-2 degrees skew)."
+  },
+  {
+    "image_path": "dataset\\complex_layout\\bank_receipt_handwritten.png",
+    "ground_truth": "GLOBAL BANKING CORP\nOFFICIAL TRANSFER REQUEST FORM\n\nDate: 2026-07-10\nStatus: APPROVED\nRequest Reference: GBC-REQ-20260710-X5\n\nSENDER DETAILS\nAccount Holder: MARIE DUBOIS\nDebit Account (IBAN): FR63 3000 6101 2098 7654 3210 912\n\nBENEFICIARY DETAILS\nBeneficiary Name: PIERRE MARTIN\nCredit Account (IBAN): FR40 1000 7204 5001 2345 6789 055\n\nTRANSFER DETAILS\nAmount: 950.00 EUR\nReason: Rent July 2026\n\nAuthorized Signature:\nMarie Dubois\nDocument scanned via mobile banking application. Page 1/1.",
+    "category": "bank",
+    "description": "Synthetic handwritten bank receipt with sender IBAN (FR63 3000 6101 2098 7654 3210 912) and beneficiary IBAN (FR40 1000 7204 5001 2345 6789 055) written in Caveat script."
+  },
+  {
+    "image_path": "dataset\\tables\\financial_table_handwritten.png",
+    "ground_truth": "| Quarter | Revenue | Operating Expenses | Net Profit |\n| --- | --- | --- | --- |\n| Q1 2026 | $1,250,000 | $950,000 | $300,000 |\n| Q2 2026 | $1,420,000 | $980,000 | $440,000 |\n| Q3 2026 | $1,380,000 | $960,000 | $420,000 |\n| Q4 2026 | $1,650,000 | $1,020,000 | $630,000 |",
+    "category": "tables",
+    "description": "Synthetic handwritten corporate financial table written in Caveat script."
+  },
+  {
+    "image_path": "dataset\\handwritten\\hw_note_1.png",
+    "ground_truth": "Dear Mum,\nI arrived safely in Paris.\nThe weather is lovely today.\nI will call you tonight.\nLove, Sophie",
+    "category": "handwritten",
+    "description": "Handwritten personal letter note."
+  },
+  {
+    "image_path": "dataset\\handwritten\\hw_note_2.png",
+    "ground_truth": "Meeting Notes - July 9, 2026\nAttendees: Alice, Bob, Clara\nTopic: Q3 Budget Review\nAction: Submit reports by Friday\nNext meeting: July 16, 2026",
+    "category": "handwritten",
+    "description": "Handwritten meeting notes."
+  },
+  {
+    "image_path": "dataset\\handwritten\\hw_note_3.png",
+    "ground_truth": "Shopping List\n- Milk (2 liters)\n- Bread (whole wheat)\n- Eggs (12 pack)\n- Butter\n- Apples (1 kg)\n- Rice (basmati)\n- Chicken breast (500g)",
+    "category": "handwritten",
+    "description": "Handwritten shopping list."
+  },
+  {
+    "image_path": "dataset\\handwritten\\hw_note_4.png",
+    "ground_truth": "Dr. Martin Leclerc\n42 Rue de la Paix\n75002 Paris, France\nTel: +33 1 42 56 78 90\nEmail: m.leclerc@cabinet.fr",
+    "category": "handwritten",
+    "description": "Handwritten contact/address card."
+  },
+  {
+    "image_path": "dataset\\handwritten\\hw_note_5.png",
+    "ground_truth": "To Do - Monday\n1. Send invoice #4521\n2. Call Mr. Dupont at 14h\n3. Review contract draft\n4. Order office supplies\n5. Prepare presentation slides",
+    "category": "handwritten",
+    "description": "Handwritten to-do list."
+  },
+  {
+    "image_path": "dataset\\handwritten\\hw_note_6.png",
+    "ground_truth": "MEMO\nFrom: Director of Operations\nTo: All Department Heads\nDate: July 9, 2026\nSubject: Office Closure\n\nThe office will be closed on\nJuly 14 for Bastille Day.\nPlease plan accordingly.",
+    "category": "handwritten",
+    "description": "Handwritten office memo."
+  },
+  {
+    "image_path": "dataset\\handwritten\\hw_note_7.png",
+    "ground_truth": "Recipe: Crepes\nIngredients:\n250g flour\n4 eggs\n500ml milk\n50g melted butter\n1 pinch of salt\nMix until smooth.\nCook 2 min each side.",
+    "category": "handwritten",
+    "description": "Handwritten recipe."
+  },
+  {
+    "image_path": "dataset\\handwritten\\hw_note_8.png",
+    "ground_truth": "Patient: Jean Dupuis\nDOB: 15/03/1985\nBlood Pressure: 130/85\nHeart Rate: 72 bpm\nWeight: 78 kg\nPrescription: Amlodipine 5mg\nFollow-up: 2 weeks",
+    "category": "handwritten",
+    "description": "Handwritten medical notes."
+  },
+  {
+    "image_path": "dataset\\handwritten\\hw_note_9.png",
+    "ground_truth": "Delivery Note #7842\nFrom: Warehouse Lyon\nTo: Store Paris 12e\nItems: 24 boxes (fragile)\nWeight: 156 kg total\nCarrier: DHL Express\nTracking: FR789456123",
+    "category": "handwritten",
+    "description": "Handwritten delivery note."
+  },
+  {
+    "image_path": "dataset\\handwritten\\hw_note_10.png",
+    "ground_truth": "Bank Deposit Slip\nAccount: 4456 7890 1234\nName: Claire Moreau\nCash: 350.00 EUR\nCheque: 1,200.00 EUR\nTotal: 1,550.00 EUR\nDate: 09/07/2026\nBranch: Agence Centrale",
+    "category": "handwritten",
+    "description": "Handwritten bank deposit slip."
+  },
+  {
+    "image_path": "dataset\\handwritten\\hw_table_attendance.png",
+    "ground_truth": "| Name | Mon | Tue | Wed | Thu | Fri |\n| --- | --- | --- | --- | --- | --- |\n| Alice B. | P | P | A | P | P |\n| Bob C. | P | P | P | P | A |\n| Clara D. | A | P | P | P | P |\n| David E. | P | A | P | P | P |",
+    "category": "handwritten",
+    "description": "Handwritten weekly attendance sheet."
+  },
+  {
+    "image_path": "dataset\\handwritten\\hw_table_grades.png",
+    "ground_truth": "| Student | Midterm | Final | Grade |\n| --- | --- | --- | --- |\n| Martin L. | 15/20 | 17/20 | A |\n| Sophie R. | 12/20 | 14/20 | B |\n| Hugo T. | 18/20 | 16/20 | A |\n| Emma V. | 10/20 | 11/20 | C |\n| Lucas M. | 14/20 | 15/20 | B |",
+    "category": "handwritten",
+    "description": "Handwritten student exam grades table."
+  },
+  {
+    "image_path": "dataset\\handwritten\\hw_table_budget.png",
+    "ground_truth": "| Category | Planned | Actual |\n| --- | --- | --- |\n| Rent | 850 EUR | 850 EUR |\n| Groceries | 400 EUR | 435 EUR |\n| Transport | 75 EUR | 62 EUR |\n| Utilities | 120 EUR | 118 EUR |\n| Savings | 300 EUR | 250 EUR |",
+    "category": "handwritten",
+    "description": "Handwritten personal monthly budget."
+  },
+  {
+    "image_path": "dataset\\handwritten\\hw_table_inventory.png",
+    "ground_truth": "| Item | Stock | Min | Reorder |\n| --- | --- | --- | --- |\n| Paper A4 | 24 | 10 | No |\n| Ink Black | 3 | 5 | Yes |\n| Pens Blue | 48 | 20 | No |\n| Folders | 7 | 15 | Yes |\n| Staples | 12 | 5 | No |",
+    "category": "handwritten",
+    "description": "Handwritten office inventory count."
+  },
+  {
+    "image_path": "dataset\\handwritten\\hw_table_schedule.png",
+    "ground_truth": "| Time | Monday | Tuesday | Wednesday |\n| --- | --- | --- | --- |\n| 09:00 | Math | French | History |\n| 10:00 | Physics | Math | English |\n| 11:00 | Break | Break | Break |\n| 11:30 | English | Art | Math |\n| 14:00 | Sport | Music | Science |",
+    "category": "handwritten",
+    "description": "Handwritten school weekly schedule."
+  },
+  {
+    "image_path": "dataset\\handwritten\\hw_table_expenses.png",
+    "ground_truth": "| Date | Description | Amount |\n| --- | --- | --- |\n| 07/01 | Train ticket | 89.00 EUR |\n| 07/01 | Hotel 2 nights | 240.00 EUR |\n| 07/02 | Restaurant | 45.50 EUR |\n| 07/02 | Metro pass | 16.90 EUR |\n| 07/03 | Taxi airport | 52.00 EUR |",
+    "category": "handwritten",
+    "description": "Handwritten travel expense report."
+  },
+  {
+    "image_path": "dataset\\handwritten\\hw_table_contacts.png",
+    "ground_truth": "| Name | Relation | Phone |\n| --- | --- | --- |\n| Marie D. | Mother | 06 12 34 56 78 |\n| Paul D. | Father | 06 98 76 54 32 |\n| Dr. Simon | Doctor | 01 42 56 78 90 |\n| Pompiers | Fire | 18 |",
+    "category": "handwritten",
+    "description": "Handwritten emergency contacts list."
+  },
+  {
+    "image_path": "dataset\\handwritten\\hw_table_bank_txn.png",
+    "ground_truth": "| Date | Label | Debit | Credit |\n| --- | --- | --- | --- |\n| 01/06 | Salary |  | 2850.00 |\n| 03/06 | Rent | 850.00 |  |\n| 05/06 | Groceries | 67.30 |  |\n| 12/06 | EDF | 95.00 |  |\n| 15/06 | Transfer |  | 200.00 |\n| 28/06 | Insurance | 145.00 |  |",
+    "category": "handwritten",
+    "description": "Handwritten bank transaction ledger."
+  },
+  {
+    "image_path": "dataset\\handwritten\\hw_table_workout.png",
+    "ground_truth": "| Exercise | Sets | Reps | Weight |\n| --- | --- | --- | --- |\n| Squat | 4 | 10 | 80 kg |\n| Bench Press | 3 | 8 | 60 kg |\n| Deadlift | 3 | 6 | 100 kg |\n| Pull-ups | 3 | 12 | BW |\n| Plank | 3 | 60s | - |",
+    "category": "handwritten",
+    "description": "Handwritten gym workout log."
+  },
+  {
+    "image_path": "dataset\\handwritten\\hw_table_recipe.png",
+    "ground_truth": "| Ingredient | Qty | Unit |\n| --- | --- | --- |\n| Eggplant | 2 | pieces |\n| Zucchini | 3 | pieces |\n| Tomatoes | 4 | pieces |\n| Bell pepper | 2 | pieces |\n| Onion | 1 | large |\n| Garlic | 3 | cloves |\n| Olive oil | 4 | tbsp |",
+    "category": "handwritten",
+    "description": "Handwritten recipe ingredients table."
+  },
+  {
+    "image_path": "dataset\\handwritten\\kaggle_check_1.png",
+    "ground_truth": "BANK OF AMERICA\nMICHAEL J. DAVIS\n123 OAK ST\nANYTOWN, FL 12345\n\nCheck No: 1001\nDate: Jan 15, 2024\nPay to the Order of: City Utilities\nAmount: $174.50\nAmount in words: One hundred seventy-four and 50/100\nMemo: Electricity Bill - Dec\nSignature: Michael J. Davis\nMICR: 123456789 1234567890 1001",
+    "category": "bank",
+    "description": "Kaggle real handwritten Bank of America check."
+  },
+  {
+    "image_path": "dataset\\handwritten\\kaggle_check_2.png",
+    "ground_truth": "CITIBANK, N.A.\nROBERT K. SINGH\n\nCheck No: 179\nDate: 11/29/21\nPay to the Order of: Elijah Davis\nAmount: $4,850.00\nAmount in words: Four thousand eight hundred fifty and 00/100\nMemo: Freelance Services\nSignature: Olivia Moreno\nMICR: 021272655 9344408999 0179",
+    "category": "bank",
+    "description": "Kaggle real handwritten Citibank check."
+  },
+  {
+    "image_path": "dataset\\clearocr\\test\\images/00000.jpg",
+    "ground_truth": "**Invoice no: 97159829**\nDate of issue: 09/18/2015\n\n**Seller:**\nBradley-Andrade\n9879 Elizabeth Common\nLake Jonathan, RI 12335\nTax Id: 985-73-8194\nIBAN: GB81LZWO32519172531418\n\n**Client:**\nCastro PLC\nUnit 9678 Box 9664\nDPO AP 69387\nTax Id: 994-72-1270\n\n**ITEMS**\n\n<table>\n  <thead>\n    <tr>\n      <th>No.</th>\n      <th>Description</th>\n      <th>Qty</th>\n      <th>UM</th>\n      <th>Net price</th>\n      <th>Net worth</th>\n      <th>VAT [%]</th>\n      <th>Gross worth</th>\n    </tr>\n  </thead>\n  <tbody>\n    <tr>\n      <td>1.</td>\n      <td>12\" Marble Lapis Inlay Chess<br>Table Top With 2\" Pieces & 15\"<br>Wooden Stand W537</td>\n      <td>2,00</td>\n      <td>each</td>\n      <td>444,60</td>\n      <td>889,20</td>\n      <td>10%</td>\n      <td>978,12</td>\n    </tr>\n  </tbody>\n</table>\n\n**SUMMARY**\n\n<table>\n  <thead>\n    <tr>\n      <th></th>\n      <th>VAT [%]</th>\n      <th>Net worth</th>\n      <th>VAT</th>\n      <th>Gross worth</th>\n    </tr>\n  </thead>\n  <tbody>\n    <tr>\n      <td></td>\n      <td>10%</td>\n      <td>889,20</td>\n      <td>88,92</td>\n      <td>978,12</td>\n    </tr>\n    <tr>\n      <td>Total</td>\n      <td></td>\n      <td>$ 889,20</td>\n      <td>$ 88,92</td>\n      <td>$ 978,12</td>\n    </tr>\n  </tbody>\n</table>",
+    "category": "bank",
+    "description": "Kaggle clearOCR Real Invoice (Source: test:0)."
+  },
+  {
+    "image_path": "dataset\\clearocr\\test\\images/00002.jpg",
+    "ground_truth": "**Invoice no: 62517865**\nDate of issue: 06/02/2015\n\n**Seller:**\nTrujillo-Hunt\n430 Mark Ferry Suite 495\nMaxside, DC 65686\nTax Id: 992-71-8540\nIBAN: GB73HCPH34959888432899\n\n**Client:**\nLee and Sons\n8552 Karen Islands\nEast Roger, ID 40416\nTax Id: 929-86-0601\n\n**ITEMS**\n\n<table>\n<thead>\n<tr>\n<th>No.</th>\n<th>Description</th>\n<th>Qty</th>\n<th>UM</th>\n<th>Net price</th>\n<th>Net worth</th>\n<th>VAT [%]</th>\n<th>Gross worth</th>\n</tr>\n</thead>\n<tbody>\n<tr>\n<td>1.</td>\n<td>Care & Repair of Furniture</td>\n<td>2,00</td>\n<td>each</td>\n<td>4,25</td>\n<td>8,50</td>\n<td>10%</td>\n<td>9,35</td>\n</tr>\n</tbody>\n</table>\n\n**SUMMARY**\n\n<table>\n<thead>\n<tr>\n<th>VAT [%]</th>\n<th>Net worth</th>\n<th>VAT</th>\n<th>Gross worth</th>\n</tr>\n</thead>\n<tbody>\n<tr>\n<td>10%</td>\n<td>8,50</td>\n<td>0,85</td>\n<td>9,35</td>\n</tr>\n<tr>\n<td>Total</td>\n<td>$ 8,50</td>\n<td>$ 0,85</td>\n<td>$ 9,35</td>\n</tr>\n</tbody>\n</table>",
+    "category": "bank",
+    "description": "Kaggle clearOCR Real Invoice (Source: test:2)."
+  },
+  {
+    "image_path": "dataset\\clearocr\\test\\images/00004.jpg",
+    "ground_truth": "**Invoice no: 16662010**\nDate of issue: 08/28/2016\n\n**Seller:**\nSmith-Cook\n174 Justin Causeway\nWest Michaelmouth, ME 69894\nTax Id: 959-84-2124\nIBAN: GB20BAKH22085364527355\n\n**Client:**\nSnyder-Johnson\n05173 Heather Mill\nJenniferfort, WV 79662\nTax Id: 938-85-4960\n\n**ITEMS**\n\n<table>\n  <thead>\n    <tr>\n      <th>No.</th>\n      <th>Description</th>\n      <th>Qty</th>\n      <th>UM</th>\n      <th>Net price</th>\n      <th>Net worth</th>\n      <th>VAT [%]</th>\n      <th>Gross worth</th>\n    </tr>\n  </thead>\n  <tbody>\n    <tr>\n      <td>1.</td>\n      <td>Nintendo Gameboy Pocket Console Green with Box MGB-001 Japan Tested Working 59</td>\n      <td>1,00</td>\n      <td>each</td>\n      <td>65,00</td>\n      <td>65,00</td>\n      <td>10%</td>\n      <td>71,50</td>\n    </tr>\n    <tr>\n      <td>2.</td>\n      <td>New Sony Playstation 4 Slim 1TB 3 Game Bundle Console. Sealed!!!</td>\n      <td>3,00</td>\n      <td>each</td>\n      <td>399,99</td>\n      <td>1 199,97</td>\n      <td>10%</td>\n      <td>1 319,97</td>\n    </tr>\n    <tr>\n      <td>3.</td>\n      <td>Atari Flashback 4 Classic Game Console 75 built in games Space Invaders Asteroid</td>\n      <td>4,00</td>\n      <td>each</td>\n      <td>8,50</td>\n      <td>34,00</td>\n      <td>10%</td>\n      <td>37,40</td>\n    </tr>\n    <tr>\n      <td>4.</td>\n      <td>Sony PlayStation 1 PS1 Console model scph-7501</td>\n      <td>4,00</td>\n      <td>each</td>\n      <td>14,99</td>\n      <td>59,96</td>\n      <td>10%</td>\n      <td>65,96</td>\n    </tr>\n    <tr>\n      <td>5.</td>\n      <td>Nintendo Wii Console - 2 Remotes w/ Covers, Nunchucks, Sensor Sega Game Bundle</td>\n      <td>1,00</td>\n      <td>each</td>\n      <td>85,00</td>\n      <td>85,00</td>\n      <td>10%</td>\n      <td>93,50</td>\n    </tr>\n    <tr>\n      <td>6.</td>\n      <td>Sony PlayStation 3 PS3 Super Slim Black Console 20 GB *Tested* Console & Cables</td>\n      <td>4,00</td>\n      <td>each</td>\n      <td>99,95</td>\n      <td>399,80</td>\n      <td>10%</td>\n      <td>439,78</td>\n    </tr>\n    <tr>\n      <td>7.</td>\n      <td>Nintendo Gameboy Pocket Console Green with Box MGB-001 Japan Tested Working 55</td>\n      <td>3,00</td>\n      <td>each</td>\n      <td>70,00</td>\n      <td>210,00</td>\n      <td>10%</td>\n      <td>231,00</td>\n    </tr>\n  </tbody>\n</table>\n\n**SUMMARY**\n\n<table>\n  <thead>\n    <tr>\n      <th></th>\n      <th>VAT [%]</th>\n      <th>Net worth</th>\n      <th>VAT</th>\n      <th>Gross worth</th>\n    </tr>\n  </thead>\n  <tbody>\n    <tr>\n      <td></td>\n      <td>10%</td>\n      <td>2 053,73</td>\n      <td>205,37</td>\n      <td>2 259,10</td>\n    </tr>\n    <tr>\n      <td><b>Total</b></td>\n      <td></td>\n      <td><b>$ 2 053,73</b></td>\n      <td><b>$ 205,37</b></td>\n      <td><b>$ 2 259,10</b></td>\n    </tr>\n  </tbody>\n</table>",
+    "category": "bank",
+    "description": "Kaggle clearOCR Real Invoice (Source: test:4)."
+  },
+  {
+    "image_path": "dataset\\clearocr\\test\\images/00006.jpg",
+    "ground_truth": "**Invoice no: 26343874**\n\nDate of issue: 07/17/2013\n\n**Seller:**\nSmith Ltd\n290 Jodi Gardens\nCharlesview, TN 10958\nTax Id: 916-97-6743\nIBAN: GB78TZMX55978564099007\n\n**Client:**\nHerring-Floyd\n8113 Hansen Cliff Apt. 826\nPort Alice, ID 99663\nTax Id: 913-80-4636\n\n**ITEMS**\n\n<table>\n  <thead>\n    <tr>\n      <th>No.</th>\n      <th>Description</th>\n      <th>Qty</th>\n      <th>UM</th>\n      <th>Net price</th>\n      <th>Net worth</th>\n      <th>VAT [%]</th>\n      <th>Gross worth</th>\n    </tr>\n  </thead>\n  <tbody>\n    <tr>\n      <td>1.</td>\n      <td>Microsoft Xbox One X 1TB 4k<br>Ultra HD Console black<br>controller works great 1787</td>\n      <td>5,00</td>\n      <td>each</td>\n      <td>249,00</td>\n      <td>1 245,00</td>\n      <td>10%</td>\n      <td>1 369,50</td>\n    </tr>\n    <tr>\n      <td>2.</td>\n      <td>Cables 500gb,Sony PlayStation<br>4 PS4 CUH 1215A Jet Black<br>Console w/ Controller</td>\n      <td>5,00</td>\n      <td>each</td>\n      <td>100,00</td>\n      <td>500,00</td>\n      <td>10%</td>\n      <td>550,00</td>\n    </tr>\n    <tr>\n      <td>3.</td>\n      <td>PS2 Slim Console System<br>SCPH-77000 PINK Playstation 2<br>Tested</td>\n      <td>4,00</td>\n      <td>each</td>\n      <td>252,00</td>\n      <td>1 008,00</td>\n      <td>10%</td>\n      <td>1 108,80</td>\n    </tr>\n    <tr>\n      <td>4.</td>\n      <td>Nintendo Game Boy Micro<br>Console - Black (OXYSFBB)</td>\n      <td>2,00</td>\n      <td>each</td>\n      <td>130,00</td>\n      <td>260,00</td>\n      <td>10%</td>\n      <td>286,00</td>\n    </tr>\n    <tr>\n      <td>5.</td>\n      <td>Nintendo GameCube System<br>Console Bundle Mario Sunshine<br>+ Genuine controller LOT</td>\n      <td>1,00</td>\n      <td>each</td>\n      <td>159,99</td>\n      <td>159,99</td>\n      <td>10%</td>\n      <td>175,99</td>\n    </tr>\n  </tbody>\n</table>\n\n**SUMMARY**\n\n<table>\n  <thead>\n    <tr>\n      <th></th>\n      <th>VAT [%]</th>\n      <th>Net worth</th>\n      <th>VAT</th>\n      <th>Gross worth</th>\n    </tr>\n  </thead>\n  <tbody>\n    <tr>\n      <td></td>\n      <td>10%</td>\n      <td>3 172,99</td>\n      <td>317,30</td>\n      <td>3 490,29</td>\n    </tr>\n    <tr>\n      <td><b>Total</b></td>\n      <td></td>\n      <td><b>$ 3 172,99</b></td>\n      <td><b>$ 317,30</b></td>\n      <td><b>$ 3 490,29</b></td>\n    </tr>\n  </tbody>\n</table>",
+    "category": "bank",
+    "description": "Kaggle clearOCR Real Invoice (Source: test:6)."
+  },
+  {
+    "image_path": "dataset\\clearocr\\test\\images/00007.jpg",
+    "ground_truth": "**Invoice no:** 12222347\n**Date of issue:** 03/18/2017\n\n**Seller:**\nGregory, Patterson and Fischer\n439 Hunter Land\nSouth Jameschester, MT 09091\nTax Id: 958-94-6606\nIBAN: GB10YCPS61791374226282\n\n**Client:**\nWilson PLC\n667 Wu Ports\nMarshallmouth, AK 03373\nTax Id: 928-91-2431\n\n**ITEMS**\n\n<table>\n<thead>\n<tr>\n<th>No.</th>\n<th>Description</th>\n<th>Qty</th>\n<th>UM</th>\n<th>Net price</th>\n<th>Net worth</th>\n<th>VAT [%]</th>\n<th>Gross worth</th>\n</tr>\n</thead>\n<tbody>\n<tr>\n<td>1.</td>\n<td>Zara Yellow Shift Dress XS</td>\n<td>5,00</td>\n<td>each</td>\n<td>24,75</td>\n<td>123,75</td>\n<td>10%</td>\n<td>136,13</td>\n</tr>\n</tbody>\n</table>\n\n**SUMMARY**\n\n<table>\n<thead>\n<tr>\n<th></th>\n<th>VAT [%]</th>\n<th>Net worth</th>\n<th>VAT</th>\n<th>Gross worth</th>\n</tr>\n</thead>\n<tbody>\n<tr>\n<td></td>\n<td>10%</td>\n<td>123,75</td>\n<td>12,38</td>\n<td>136,13</td>\n</tr>\n<tr>\n<td><b>Total</b></td>\n<td></td>\n<td><b>$ 123,75</b></td>\n<td><b>$ 12,38</b></td>\n<td><b>$ 136,13</b></td>\n</tr>\n</tbody>\n</table>",
+    "category": "bank",
+    "description": "Kaggle clearOCR Real Invoice (Source: test:7)."
+  },
+  {
+    "image_path": "dataset\\clearocr\\test\\images/00010.jpg",
+    "ground_truth": "**Invoice no: 72455228**\nDate of issue: 05/11/2021\n\n**Seller:**\nPotts, Reed and Miller\nUSCGC Weeks\nFPO AA 06868\nTax Id: 913-82-5781\nIBAN: GB54RDGK95400103726634\n\n**Client:**\nBrady LLC\n26039 Anita Stravenue\nNorth Peter, WA 22187\nTax Id: 953-75-0545\n\n**ITEMS**\n\n<table>\n  <thead>\n    <tr>\n      <th>No.</th>\n      <th>Description</th>\n      <th>Qty</th>\n      <th>UM</th>\n      <th>Net price</th>\n      <th>Net worth</th>\n      <th>VAT [%]</th>\n      <th>Gross worth</th>\n    </tr>\n  </thead>\n  <tbody>\n    <tr>\n      <td>1.</td>\n      <td>PlayStation 5 Console Disc Version<br>**PREORDER**[REDACTED]</td>\n      <td>1,00</td>\n      <td>each</td>\n      <td>899,99</td>\n      <td>899,99</td>\n      <td>10%</td>\n      <td>989,99</td>\n    </tr>\n    <tr>\n      <td>2.</td>\n      <td>Sony PlayStation 4 Slim 1TB (Upgraded to SSD) Black Game Console</td>\n      <td>2,00</td>\n      <td>each</td>\n      <td>150,00</td>\n      <td>300,00</td>\n      <td>10%</td>\n      <td>330,00</td>\n    </tr>\n    <tr>\n      <td>3.</td>\n      <td>Nintendo Gameboy Pocket Console Clear Purple with Box MGB-001 Japan Tested 53</td>\n      <td>1,00</td>\n      <td>each</td>\n      <td>85,00</td>\n      <td>85,00</td>\n      <td>10%</td>\n      <td>93,50</td>\n    </tr>\n    <tr>\n      <td>4.</td>\n      <td>NEC PC Engine INTERFACE UNIT IFU-30 CD ROM Console PI-TG001 Tested Japan</td>\n      <td>1,00</td>\n      <td>each</td>\n      <td>159,99</td>\n      <td>159,99</td>\n      <td>10%</td>\n      <td>175,99</td>\n    </tr>\n    <tr>\n      <td>5.</td>\n      <td>SONY Playstation2 Slim Console set \" SCPH-90000 / White \" / TESTED Working 11194</td>\n      <td>4,00</td>\n      <td>each</td>\n      <td>90,00</td>\n      <td>360,00</td>\n      <td>10%</td>\n      <td>396,00</td>\n    </tr>\n    <tr>\n      <td>6.</td>\n      <td>Magnavox Odyssey 2 Microprocessor Console System w Joy Sticks & 15 Games - 1978</td>\n      <td>1,00</td>\n      <td>each</td>\n      <td>155,00</td>\n      <td>155,00</td>\n      <td>10%</td>\n      <td>170,50</td>\n    </tr>\n  </tbody>\n</table>\n\n**SUMMARY**\n\n<table>\n  <thead>\n    <tr>\n      <th>VAT [%]</th>\n      <th>Net worth</th>\n      <th>VAT</th>\n      <th>Gross worth</th>\n    </tr>\n  </thead>\n  <tbody>\n    <tr>\n      <td>10%</td>\n      <td>1 959,98</td>\n      <td>196,00</td>\n      <td>2 155,98</td>\n    </tr>\n    <tr>\n      <td><b>Total</b></td>\n      <td><b>$ 1 959,98</b></td>\n      <td><b>$ 196,00</b></td>\n      <td><b>$ 2 155,98</b></td>\n    </tr>\n  </tbody>\n</table>",
+    "category": "bank",
+    "description": "Kaggle clearOCR Real Invoice (Source: test:10)."
+  },
+  {
+    "image_path": "dataset\\clearocr\\test\\images/00011.jpg",
+    "ground_truth": "**Invoice no: 58478169**\nDate of issue: 07/04/2016\n\n**Seller:**\nConley Ltd\n262 Jeffrey Underpass\nJamesview, WA 14945\nTax Id: 919-79-8417\nIBAN: GB23MPYI18052629547218\n\n**Client:**\nWells-Avery\n7065 Alejandro Forks\nLake Jeffrey, ME 59849\nTax Id: 965-90-7208\n\n**ITEMS**\n\n<table>\n  <thead>\n    <tr>\n      <th>No.</th>\n      <th>Description</th>\n      <th>Qty</th>\n      <th>UM</th>\n      <th>Net price</th>\n      <th>Net worth</th>\n      <th>VAT [%]</th>\n      <th>Gross worth</th>\n    </tr>\n  </thead>\n  <tbody>\n    <tr>\n      <td>1.</td>\n      <td>30 Inches Marble Patio Table<br>Top Malachite Stone Inlaid<br>Coffee Table Home Decor</td>\n      <td>3,00</td>\n      <td>each</td>\n      <td>1 023,75</td>\n      <td>3 071,25</td>\n      <td>10%</td>\n      <td>3 378,37</td>\n    </tr>\n    <tr>\n      <td>2.</td>\n      <td>48 Inch Marble Restaurant Table<br>Inlay with Lapis Lazuli Stone<br>Dinning Table Top</td>\n      <td>3,00</td>\n      <td>each</td>\n      <td>2 692,00</td>\n      <td>8 076,00</td>\n      <td>10%</td>\n      <td>8 883,60</td>\n    </tr>\n  </tbody>\n</table>\n\n**SUMMARY**\n\n<table>\n  <thead>\n    <tr>\n      <th></th>\n      <th>VAT [%]</th>\n      <th>Net worth</th>\n      <th>VAT</th>\n      <th>Gross worth</th>\n    </tr>\n  </thead>\n  <tbody>\n    <tr>\n      <td></td>\n      <td>10%</td>\n      <td>11 147,25</td>\n      <td>1 114,73</td>\n      <td>12 261,98</td>\n    </tr>\n    <tr>\n      <td><b>Total</b></td>\n      <td></td>\n      <td><b>$ 11 147,25</b></td>\n      <td><b>$ 1 114,73</b></td>\n      <td><b>$ 12 261,98</b></td>\n    </tr>\n  </tbody>\n</table>",
+    "category": "bank",
+    "description": "Kaggle clearOCR Real Invoice (Source: test:11)."
+  },
+  {
+    "image_path": "dataset\\clearocr\\test\\images/00012.jpg",
+    "ground_truth": "**Invoice no: 90508672**\n\nDate of issue: 04/16/2020\n\n**Seller:**\nStone-Waller\n53428 Peter Dale Apt. 293\nAmberchester, IA 57427\n\nTax Id: 994-99-6683\nIBAN: GB61GZVZ46496690777484\n\n**Client:**\nShaw Group\n58420 John Turnpike Suite 767\nNorth Ricardo, NV 32611\n\nTax Id: 914-79-8228\n\n**ITEMS**\n\n<table>\n  <thead>\n    <tr>\n      <th>No.</th>\n      <th>Description</th>\n      <th>Qty</th>\n      <th>UM</th>\n      <th>Net price</th>\n      <th>Net worth</th>\n      <th>VAT [%]</th>\n      <th>Gross worth</th>\n    </tr>\n  </thead>\n  <tbody>\n    <tr>\n      <td>1.</td>\n      <td>SOFA SET</td>\n      <td>2,00</td>\n      <td>each</td>\n      <td>250,00</td>\n      <td>500,00</td>\n      <td>10%</td>\n      <td>550,00</td>\n    </tr>\n    <tr>\n      <td>2.</td>\n      <td>Real Madrid Inflatable Chair (SG16136)</td>\n      <td>3,00</td>\n      <td>each</td>\n      <td>43,95</td>\n      <td>131,85</td>\n      <td>10%</td>\n      <td>145,04</td>\n    </tr>\n    <tr>\n      <td>3.</td>\n      <td>13 Inch Marble Coffee Table Stone Game Table Mother of Pearl with Check Pattern</td>\n      <td>4,00</td>\n      <td>each</td>\n      <td>301,75</td>\n      <td>1 207,00</td>\n      <td>10%</td>\n      <td>1 327,70</td>\n    </tr>\n    <tr>\n      <td>4.</td>\n      <td>Carnelian Stone Floral Pattern Dinette Table Top Marble Coffee Table 30 Inches</td>\n      <td>2,00</td>\n      <td>each</td>\n      <td>993,75</td>\n      <td>1 987,50</td>\n      <td>10%</td>\n      <td>2 186,25</td>\n    </tr>\n    <tr>\n      <td>5.</td>\n      <td>3'x2' Black Marvels Top Dining Table Italian Handmade Floral Art Christmas Gift</td>\n      <td>1,00</td>\n      <td>each</td>\n      <td>2 585,00</td>\n      <td>2 585,00</td>\n      <td>10%</td>\n      <td>2 843,50</td>\n    </tr>\n  </tbody>\n</table>\n\n**SUMMARY**\n\n<table>\n  <thead>\n    <tr>\n      <th>VAT [%]</th>\n      <th>Net worth</th>\n      <th>VAT</th>\n      <th>Gross worth</th>\n    </tr>\n  </thead>\n  <tbody>\n    <tr>\n      <td>10%</td>\n      <td>6 411,35</td>\n      <td>641,14</td>\n      <td>7 052,49</td>\n    </tr>\n    <tr>\n      <td><b>Total</b></td>\n      <td><b>$ 6 411,35</b></td>\n      <td><b>$ 641,14</b></td>\n      <td><b>$ 7 052,49</b></td>\n    </tr>\n  </tbody>\n</table>",
+    "category": "bank",
+    "description": "Kaggle clearOCR Real Invoice (Source: test:12)."
+  },
+  {
+    "image_path": "dataset\\clearocr\\test\\images/00013.jpg",
+    "ground_truth": "**Invoice no:** 96051364\n**Date of issue:** 04/28/2020\n\n**Seller:**\nJackson Ltd\n134 Catherine Valley Apt. 756\nLake Jennifer, NE 09531\nTax Id: 914-85-0938\nIBAN: GB61XXNT90578783067262\n\n**Client:**\nWilliams, Fowler and Phillips\n115 Mccormick Knolls\nNorth Kevin, TN 27580\nTax Id: 963-87-9620\n\n**ITEMS**\n\n<table>\n  <thead>\n    <tr>\n      <th>No.</th>\n      <th>Description</th>\n      <th>Qty</th>\n      <th>UM</th>\n      <th>Net price</th>\n      <th>Net worth</th>\n      <th>VAT [%]</th>\n      <th>Gross worth</th>\n    </tr>\n  </thead>\n  <tbody>\n    <tr>\n      <td>1.</td>\n      <td>49\"x22\" Marble Top Center Table Carnelian Mosaic Italian Art Christmas Gift Arts</td>\n      <td>4,00</td>\n      <td>each</td>\n      <td>2 400,00</td>\n      <td>9 600,00</td>\n      <td>10%</td>\n      <td>10 560,00</td>\n    </tr>\n    <tr>\n      <td>2.</td>\n      <td>6'x3' Marble Dining Center Table With Black Top Floral Collectible Inlaid E963</td>\n      <td>3,00</td>\n      <td>each</td>\n      <td>6 040,40</td>\n      <td>18 121,20</td>\n      <td>10%</td>\n      <td>19 933,32</td>\n    </tr>\n    <tr>\n      <td>3.</td>\n      <td>7'x4' Blue Random Marble Dining Hallway Table Top Lapis Lazuli Inlay Decor E947A</td>\n      <td>5,00</td>\n      <td>each</td>\n      <td>8 194,09</td>\n      <td>40 970,45</td>\n      <td>10%</td>\n      <td>45 067,50</td>\n    </tr>\n    <tr>\n      <td>4.</td>\n      <td>36\" Marble White Top Counter Table Lapis Inlaid Pietradura Art Christmas Gifts</td>\n      <td>3,00</td>\n      <td>each</td>\n      <td>3 200,00</td>\n      <td>9 600,00</td>\n      <td>10%</td>\n      <td>10 560,00</td>\n    </tr>\n    <tr>\n      <td>5.</td>\n      <td>6'x3' White Marble Dining Table Top Multi Inlay Floral Elephant Art Decor H4952</td>\n      <td>5,00</td>\n      <td>each</td>\n      <td>6 408,49</td>\n      <td>32 042,45</td>\n      <td>10%</td>\n      <td>35 246,69</td>\n    </tr>\n    <tr>\n      <td>6.</td>\n      <td>6'x3' Marble Dining Center Table Marquetry Inlay Italian Mosaic Patio Arts H3112</td>\n      <td>5,00</td>\n      <td>each</td>\n      <td>6 647,61</td>\n      <td>33 238,05</td>\n      <td>10%</td>\n      <td>36 561,85</td>\n    </tr>\n  </tbody>\n</table>\n\n**SUMMARY**\n\n<table>\n  <thead>\n    <tr>\n      <th></th>\n      <th>VAT [%]</th>\n      <th>Net worth</th>\n      <th>VAT</th>\n      <th>Gross worth</th>\n    </tr>\n  </thead>\n  <tbody>\n    <tr>\n      <td></td>\n      <td>10%</td>\n      <td>143 572,15</td>\n      <td>14 357,22</td>\n      <td>157 929,37</td>\n    </tr>\n    <tr>\n      <td><b>Total</b></td>\n      <td></td>\n      <td>$ 143 572,15</td>\n      <td>$ 14 357,22</td>\n      <td>$ 157 929,37</td>\n    </tr>\n  </tbody>\n</table>",
+    "category": "bank",
+    "description": "Kaggle clearOCR Real Invoice (Source: test:13)."
+  },
+  {
+    "image_path": "dataset\\clearocr\\test\\images/00017.jpg",
+    "ground_truth": "**Invoice no: 14878236**\n\nDate of issue: 04/26/2015\n\n**Seller:**\nHernandez, Coleman and Alvarado\n6080 Justin Fort Suite 152\nBrownburgh, NC 87582\nTax Id: 988-79-4495\nIBAN: GB17VARZ09653710676977\n\n**Client:**\nTurner-Green\n7245 Stephens Orchard\nLake Mitchellview, MI 50388\nTax Id: 950-70-5065\n\n**ITEMS**\n\n<table>\n  <thead>\n    <tr>\n      <th>No.</th>\n      <th>Description</th>\n      <th>Qty</th>\n      <th>UM</th>\n      <th>Net price</th>\n      <th>Net worth</th>\n      <th>VAT [%]</th>\n      <th>Gross worth</th>\n    </tr>\n  </thead>\n  <tbody>\n    <tr>\n      <td>1.</td>\n      <td>Cabi 5610 Striped White Blue Launch Maxi Dress Womens Sz M</td>\n      <td>3,00</td>\n      <td>each</td>\n      <td>48,99</td>\n      <td>146,97</td>\n      <td>10%</td>\n      <td>161,67</td>\n    </tr>\n    <tr>\n      <td>2.</td>\n      <td>Boden black blue floral short sleeve dress size 6</td>\n      <td>2,00</td>\n      <td>each</td>\n      <td>36,99</td>\n      <td>73,98</td>\n      <td>10%</td>\n      <td>81,38</td>\n    </tr>\n    <tr>\n      <td>3.</td>\n      <td>Ann Taylor LOFT 3/4 Knit Sleeve Dress Size 0</td>\n      <td>4,00</td>\n      <td>each</td>\n      <td>8,00</td>\n      <td>32,00</td>\n      <td>10%</td>\n      <td>35,20</td>\n    </tr>\n    <tr>\n      <td>4.</td>\n      <td>Divided Black Asymmetrical Dress -size 8 - NWT</td>\n      <td>2,00</td>\n      <td>each</td>\n      <td>7,99</td>\n      <td>15,98</td>\n      <td>10%</td>\n      <td>17,58</td>\n    </tr>\n    <tr>\n      <td>5.</td>\n      <td>Women Elegant Fashion O-Neck Knee Length Short Sleeve Retro Floral Print Dress</td>\n      <td>4,00</td>\n      <td>each</td>\n      <td>12,00</td>\n      <td>48,00</td>\n      <td>10%</td>\n      <td>52,80</td>\n    </tr>\n    <tr>\n      <td>6.</td>\n      <td>Vintage 90s Sostanza Plus Size Dress 22W Floral Cottagecore</td>\n      <td>3,00</td>\n      <td>each</td>\n      <td>49,96</td>\n      <td>149,88</td>\n      <td>10%</td>\n      <td>164,87</td>\n    </tr>\n    <tr>\n      <td>7.</td>\n      <td>Matilda Jane Women's Light Rising High Low Green Floral Dress Size L Pockets</td>\n      <td>1,00</td>\n      <td>each</td>\n      <td>50,00</td>\n      <td>50,00</td>\n      <td>10%</td>\n      <td>55,00</td>\n    </tr>\n  </tbody>\n</table>\n\n**SUMMARY**\n\n<table>\n  <thead>\n    <tr>\n      <th>VAT [%]</th>\n      <th>Net worth</th>\n      <th>VAT</th>\n      <th>Gross worth</th>\n    </tr>\n  </thead>\n  <tbody>\n    <tr>\n      <td>10%</td>\n      <td>516,81</td>\n      <td>51,68</td>\n      <td>568,49</td>\n    </tr>\n    <tr>\n      <td>Total</td>\n      <td>$ 516,81</td>\n      <td>$ 51,68</td>\n      <td>$ 568,49</td>\n    </tr>\n  </tbody>\n</table>",
+    "category": "bank",
+    "description": "Kaggle clearOCR Real Invoice (Source: test:17)."
+  },
+  {
+    "image_path": "dataset\\clearocr\\test\\images/00018.jpg",
+    "ground_truth": "**Invoice no: 84777898**\n\nDate of issue: 06/02/2017\n\n**Seller:**\nByrd PLC\n5954 Stewart Isle Suite 748\nSouth Sarahshire, DC 77638\nTax Id: 991-72-8541\nIBAN: GB55NFWY80188862802477\n\n**Client:**\nPalmer LLC\n321 Sarah Forge\nNorth Elizabeth, KY 13557\nTax Id: 947-73-4805\n\n**ITEMS**\n\n<table>\n  <thead>\n    <tr>\n      <th>No.</th>\n      <th>Description</th>\n      <th>Qty</th>\n      <th>UM</th>\n      <th>Net price</th>\n      <th>Net worth</th>\n      <th>VAT [%]</th>\n      <th>Gross worth</th>\n    </tr>\n  </thead>\n  <tbody>\n    <tr>\n      <td>1.</td>\n      <td>Vintage Cobalt Blue Spiral Stemmed Wine Glasses - Pair</td>\n      <td>1,00</td>\n      <td>each</td>\n      <td>30,00</td>\n      <td>30,00</td>\n      <td>10%</td>\n      <td>33,00</td>\n    </tr>\n    <tr>\n      <td>2.</td>\n      <td>1PC Tricycle Shape Red Wine Rack Cocktail Holder Wine Display Rack for Home Bar</td>\n      <td>5,00</td>\n      <td>each</td>\n      <td>32,13</td>\n      <td>160,65</td>\n      <td>10%</td>\n      <td>176,72</td>\n    </tr>\n    <tr>\n      <td>3.</td>\n      <td>Wine Glass European Style Wine Glass Rack for Home Kitchen Bar Restaurant</td>\n      <td>3,00</td>\n      <td>each</td>\n      <td>31,79</td>\n      <td>95,37</td>\n      <td>10%</td>\n      <td>104,91</td>\n    </tr>\n  </tbody>\n</table>\n\n**SUMMARY**\n\n<table>\n  <thead>\n    <tr>\n      <th></th>\n      <th>VAT [%]</th>\n      <th>Net worth</th>\n      <th>VAT</th>\n      <th>Gross worth</th>\n    </tr>\n  </thead>\n  <tbody>\n    <tr>\n      <td></td>\n      <td>10%</td>\n      <td>286,02</td>\n      <td>28,60</td>\n      <td>314,62</td>\n    </tr>\n    <tr>\n      <td><b>Total</b></td>\n      <td></td>\n      <td><b>$ 286,02</b></td>\n      <td><b>$ 28,60</b></td>\n      <td><b>$ 314,62</b></td>\n    </tr>\n  </tbody>\n</table>",
+    "category": "bank",
+    "description": "Kaggle clearOCR Real Invoice (Source: test:18)."
+  },
+  {
+    "image_path": "dataset\\clearocr\\test\\images/00019.jpg",
+    "ground_truth": "**Invoice no: 57338979**\n\nDate of issue: 05/10/2021\n\n**Seller:**\nEstrada and Sons\n70379 Brooks Heights Apt. 110\nLake Megan, WI 84417\nTax Id: 926-74-0874\nIBAN: GB90ALYU92362601688809\n\n**Client:**\nSantana-Sherman\n4195 Sutton Plaza Suite 750\nChristopherfort, MS 70499\nTax Id: 939-81-4695\n\n**ITEMS**\n\n<table>\n  <thead>\n    <tr>\n      <th>No.</th>\n      <th>Description</th>\n      <th>Qty</th>\n      <th>UM</th>\n      <th>Net price</th>\n      <th>Net worth</th>\n      <th>VAT [%]</th>\n      <th>Gross worth</th>\n    </tr>\n  </thead>\n  <tbody>\n    <tr>\n      <td>1.</td>\n      <td>3'x2' Black Marvels Top Dining Table Italian Handmade Floral Art Christmas Gift</td>\n      <td>5,00</td>\n      <td>each</td>\n      <td>2 585,00</td>\n      <td>12 925,00</td>\n      <td>10%</td>\n      <td>14 217,50</td>\n    </tr>\n    <tr>\n      <td>2.</td>\n      <td>12\" Marble Coffee Table Top Multi Stone Peacock & Floral Inlay Home Decors W364</td>\n      <td>3,00</td>\n      <td>each</td>\n      <td>264,27</td>\n      <td>792,81</td>\n      <td>10%</td>\n      <td>872,09</td>\n    </tr>\n  </tbody>\n</table>\n\n**SUMMARY**\n\n<table>\n  <thead>\n    <tr>\n      <th></th>\n      <th>VAT [%]</th>\n      <th>Net worth</th>\n      <th>VAT</th>\n      <th>Gross worth</th>\n    </tr>\n  </thead>\n  <tbody>\n    <tr>\n      <td></td>\n      <td>10%</td>\n      <td>13 717,81</td>\n      <td>1 371,78</td>\n      <td>15 089,59</td>\n    </tr>\n    <tr>\n      <td><b>Total</b></td>\n      <td></td>\n      <td><b>$ 13 717,81</b></td>\n      <td><b>$ 1 371,78</b></td>\n      <td><b>$ 15 089,59</b></td>\n    </tr>\n  </tbody>\n</table>",
+    "category": "bank",
+    "description": "Kaggle clearOCR Real Invoice (Source: test:19)."
+  },
+  {
+    "image_path": "dataset\\clearocr\\test\\images/00020.jpg",
+    "ground_truth": "**Invoice no: 54394190**\n\nDate of issue: 02/23/2021\n\n**Seller:**\nNelson, Bird and Mendoza\n48426 John Village Suite 517\nBoydstad, ID 55416\nTax Id: 976-76-5964\nIBAN: GB63GDHN20059173458044\n\n**Client:**\nAllen Inc\nUSS Smith\nFPO AP 40020\nTax Id: 925-90-1124\n\n**ITEMS**\n\n<table>\n  <thead>\n    <tr>\n      <th>No.</th>\n      <th>Description</th>\n      <th>Qty</th>\n      <th>UM</th>\n      <th>Net price</th>\n      <th>Net worth</th>\n      <th>VAT [%]</th>\n      <th>Gross worth</th>\n    </tr>\n  </thead>\n  <tbody>\n    <tr>\n      <td>1.</td>\n      <td>Microsoft Xbox One S 1TB<br>Console System Model 1681 w/<br>One Controller & Cables</td>\n      <td>1,00</td>\n      <td>each</td>\n      <td>219,99</td>\n      <td>219,99</td>\n      <td>10%</td>\n      <td>241,99</td>\n    </tr>\n    <tr>\n      <td>2.</td>\n      <td>Nintendo 64 N64 Console<br>Complete in Box Mint Beautiful!<br>From Japan!</td>\n      <td>1,00</td>\n      <td>each</td>\n      <td>269,99</td>\n      <td>269,99</td>\n      <td>10%</td>\n      <td>296,99</td>\n    </tr>\n    <tr>\n      <td>3.</td>\n      <td>Pre Order New Sony PlayStation<br>5 Console Disk Version Ships<br>Fast 11/12 Confirmed</td>\n      <td>3,00</td>\n      <td>each</td>\n      <td>850,00</td>\n      <td>2 550,00</td>\n      <td>10%</td>\n      <td>2 805,00</td>\n    </tr>\n    <tr>\n      <td>4.</td>\n      <td>Sony SCPH-30001R PlayStation<br>2 Fat Console System w/<br>Network Adapter</td>\n      <td>4,00</td>\n      <td>each</td>\n      <td>79,99</td>\n      <td>319,96</td>\n      <td>10%</td>\n      <td>351,96</td>\n    </tr>\n  </tbody>\n</table>\n\n**SUMMARY**\n\n<table>\n  <thead>\n    <tr>\n      <th></th>\n      <th>VAT [%]</th>\n      <th>Net worth</th>\n      <th>VAT</th>\n      <th>Gross worth</th>\n    </tr>\n  </thead>\n  <tbody>\n    <tr>\n      <td></td>\n      <td>10%</td>\n      <td>3 359,94</td>\n      <td>335,99</td>\n      <td>3 695,93</td>\n    </tr>\n    <tr>\n      <td><b>Total</b></td>\n      <td></td>\n      <td><b>$ 3 359,94</b></td>\n      <td><b>$ 335,99</b></td>\n      <td><b>$ 3 695,93</b></td>\n    </tr>\n  </tbody>\n</table>",
+    "category": "bank",
+    "description": "Kaggle clearOCR Real Invoice (Source: test:20)."
+  },
+  {
+    "image_path": "dataset\\clearocr\\test\\images/00021.jpg",
+    "ground_truth": "**Invoice no: 77404624**\n\nDate of issue: 10/20/2014\n\n**Seller:**\nHayes-Mcdonald\n6220 Hughes Isle\nEast Charlesmouth, NM 82727\nTax Id: 906-99-8086\nIBAN: GB91DIDO06197597108680\n\n**Client:**\nSheppard, Guerrero and Castillo\n8846 Bryan Turnpike\nWallaceborough, WI 93615\nTax Id: 960-84-4731\n\n**ITEMS**\n\n<table>\n  <thead>\n    <tr>\n      <th>No.</th>\n      <th>Description</th>\n      <th>Qty</th>\n      <th>UM</th>\n      <th>Net price</th>\n      <th>Net worth</th>\n      <th>VAT [%]</th>\n      <th>Gross worth</th>\n    </tr>\n  </thead>\n  <tbody>\n    <tr>\n      <td>1.</td>\n      <td>HP Desktop Computer 400 G1<br>Core i3 3.4GHz 8GB 256GB SSD<br>19\" LCD Windows 10 PC</td>\n      <td>2,00</td>\n      <td>each</td>\n      <td>139,95</td>\n      <td>279,90</td>\n      <td>10%</td>\n      <td>307,89</td>\n    </tr>\n    <tr>\n      <td>2.</td>\n      <td>Lenovo C20-00...all in one<br>desktop computer ...with<br>Wireless Mouse.....</td>\n      <td>5,00</td>\n      <td>each</td>\n      <td>277,64</td>\n      <td>1 388,20</td>\n      <td>10%</td>\n      <td>1 527,02</td>\n    </tr>\n    <tr>\n      <td>3.</td>\n      <td>AMD Quad Core Custom Built<br>Gaming PC Computer Desktop<br>16GB 2TB Blue LED</td>\n      <td>4,00</td>\n      <td>each</td>\n      <td>509,99</td>\n      <td>2 039,96</td>\n      <td>10%</td>\n      <td>2 243,96</td>\n    </tr>\n    <tr>\n      <td>4.</td>\n      <td>CUSTOM BUILT AMD RYZEN<br>THREADRIPPER GAMING<br>COMPUTER , 32 GB RAM,</td>\n      <td>3,00</td>\n      <td>each</td>\n      <td>1 400,00</td>\n      <td>4 200,00</td>\n      <td>10%</td>\n      <td>4 620,00</td>\n    </tr>\n    <tr>\n      <td>5.</td>\n      <td>Dell Desktop Computer Optiplex<br>790 Tower PC Core i5 8GB<br>500GB Windows 10 Pro</td>\n      <td>5,00</td>\n      <td>each</td>\n      <td>149,95</td>\n      <td>749,75</td>\n      <td>10%</td>\n      <td>824,73</td>\n    </tr>\n    <tr>\n      <td>6.</td>\n      <td>Intel Compute Stick PC (32GB,<br>1.33GHz, 2GB) -<br>BOXSTCK1A32WFC + Wireless<br>Keyboard</td>\n      <td>1,00</td>\n      <td>each</td>\n      <td>29,99</td>\n      <td>29,99</td>\n      <td>10%</td>\n      <td>32,99</td>\n    </tr>\n  </tbody>\n</table>\n\n**SUMMARY**\n\n<table>\n  <thead>\n    <tr>\n      <th></th>\n      <th>VAT [%]</th>\n      <th>Net worth</th>\n      <th>VAT</th>\n      <th>Gross worth</th>\n    </tr>\n  </thead>\n  <tbody>\n    <tr>\n      <td></td>\n      <td>10%</td>\n      <td>8 687,80</td>\n      <td>868,78</td>\n      <td>9 556,58</td>\n    </tr>\n    <tr>\n      <td><b>Total</b></td>\n      <td></td>\n      <td><b>$ 8 687,80</b></td>\n      <td><b>$ 868,78</b></td>\n      <td><b>$ 9 556,58</b></td>\n    </tr>\n  </tbody>\n</table>",
+    "category": "bank",
+    "description": "Kaggle clearOCR Real Invoice (Source: test:21)."
+  },
+  {
+    "image_path": "dataset\\clearocr\\test\\images/00022.jpg",
+    "ground_truth": "**Invoice no: 32830026**\n\nDate of issue: 12/20/2014\n\n**Seller:**\nGeorge, Casey and Harris\n0943 Justin Branch Apt. 233\nIngramberg, DE 59102\n\nTax Id: 907-77-8965\nIBAN: GB81OUZN44807763808287\n\n**Client:**\nStewart, Fields and Scott\n07095 Robert Cape\nMarquezburgh, DC 81706\n\nTax Id: 995-83-6792\n\n**ITEMS**\n\n<table>\n  <thead>\n    <tr>\n      <th>No.</th>\n      <th>Description</th>\n      <th>Qty</th>\n      <th>UM</th>\n      <th>Net price</th>\n      <th>Net worth</th>\n      <th>VAT [%]</th>\n      <th>Gross worth</th>\n    </tr>\n  </thead>\n  <tbody>\n    <tr>\n      <td>1.</td>\n      <td>SONY Playstation2 Console<br>SCPH-50000 \" Peal Color \" /<br>TESTED 11176</td>\n      <td>5,00</td>\n      <td>each</td>\n      <td>45,00</td>\n      <td>225,00</td>\n      <td>10%</td>\n      <td>247,50</td>\n    </tr>\n    <tr>\n      <td>2.</td>\n      <td>Nintendo Switch Lite Gray<br>CONSOLE ONLY - No<br>Accessories or Charger [B5-2]</td>\n      <td>1,00</td>\n      <td>each</td>\n      <td>135,00</td>\n      <td>135,00</td>\n      <td>10%</td>\n      <td>148,50</td>\n    </tr>\n    <tr>\n      <td>3.</td>\n      <td>Nintendo Wii Console RVL-001<br>Complete Hookups W/<br>Mario&Sonic; Tested / Working</td>\n      <td>3,00</td>\n      <td>each</td>\n      <td>78,88</td>\n      <td>236,64</td>\n      <td>10%</td>\n      <td>260,30</td>\n    </tr>\n    <tr>\n      <td>4.</td>\n      <td>B351 Nintendo new 3DS console<br>White Japan w/stylus pen</td>\n      <td>4,00</td>\n      <td>each</td>\n      <td>79,99</td>\n      <td>319,96</td>\n      <td>10%</td>\n      <td>351,96</td>\n    </tr>\n    <tr>\n      <td>5.</td>\n      <td>Sega Saturn Console Gray<br>HST-3200 HST-3210 Japanese</td>\n      <td>1,00</td>\n      <td>each</td>\n      <td>119,98</td>\n      <td>119,98</td>\n      <td>10%</td>\n      <td>131,98</td>\n    </tr>\n  </tbody>\n</table>\n\n**SUMMARY**\n\n<table>\n  <thead>\n    <tr>\n      <th></th>\n      <th>VAT [%]</th>\n      <th>Net worth</th>\n      <th>VAT</th>\n      <th>Gross worth</th>\n    </tr>\n  </thead>\n  <tbody>\n    <tr>\n      <td></td>\n      <td>10%</td>\n      <td>1 036,58</td>\n      <td>103,66</td>\n      <td>1 140,24</td>\n    </tr>\n    <tr>\n      <td><b>Total</b></td>\n      <td></td>\n      <td><b>$ 1 036,58</b></td>\n      <td><b>$ 103,66</b></td>\n      <td><b>$ 1 140,24</b></td>\n    </tr>\n  </tbody>\n</table>",
+    "category": "bank",
+    "description": "Kaggle clearOCR Real Invoice (Source: test:22)."
+  },
+  {
+    "image_path": "dataset\\clearocr\\test\\images/00023.jpg",
+    "ground_truth": "**Invoice no: 71748307**\n\nDate of issue: 12/24/2011\n\n**Seller:**\nVelasquez, Ward and Ballard\n87336 Payne Way Suite 716\nParkerton, FL 76330\n\nTax Id: 950-74-4484\nIBAN: GB48EAPQ46997886926034\n\n**Client:**\nLewis Group\n537 Wilson Parkways\nNorth Mary, AL 69775\n\nTax Id: 996-86-8087\n\n**ITEMS**\n\n<table>\n  <thead>\n    <tr>\n      <th>No.</th>\n      <th>Description</th>\n      <th>Qty</th>\n      <th>UM</th>\n      <th>Net price</th>\n      <th>Net worth</th>\n      <th>VAT [%]</th>\n      <th>Gross worth</th>\n    </tr>\n  </thead>\n  <tbody>\n    <tr>\n      <td>1.</td>\n      <td>2pcs baby boys clothes cotton hoodied top+pants baby boys Outfits gentleman</td>\n      <td>5,00</td>\n      <td>each</td>\n      <td>10,99</td>\n      <td>54,95</td>\n      <td>10%</td>\n      <td>60,45</td>\n    </tr>\n    <tr>\n      <td>2.</td>\n      <td>fire los angeles dress Medium</td>\n      <td>2,00</td>\n      <td>each</td>\n      <td>6,50</td>\n      <td>13,00</td>\n      <td>10%</td>\n      <td>14,30</td>\n    </tr>\n    <tr>\n      <td>3.</td>\n      <td>PAS DE CALAIS DRESS WOMENS SIZE 36</td>\n      <td>3,00</td>\n      <td>each</td>\n      <td>9,95</td>\n      <td>29,85</td>\n      <td>10%</td>\n      <td>32,83</td>\n    </tr>\n    <tr>\n      <td>4.</td>\n      <td>Zara Yellow Shift Dress XS</td>\n      <td>5,00</td>\n      <td>each</td>\n      <td>24,75</td>\n      <td>123,75</td>\n      <td>10%</td>\n      <td>136,13</td>\n    </tr>\n    <tr>\n      <td>5.</td>\n      <td>miley cyrus Bubble Dress</td>\n      <td>2,00</td>\n      <td>each</td>\n      <td>16,00</td>\n      <td>32,00</td>\n      <td>10%</td>\n      <td>35,20</td>\n    </tr>\n    <tr>\n      <td>6.</td>\n      <td>NWT $1200 J.Crew Silk Chiffon Ivory Wedding Dress with Beading</td>\n      <td>4,00</td>\n      <td>each</td>\n      <td>295,00</td>\n      <td>1 180,00</td>\n      <td>10%</td>\n      <td>1 298,00</td>\n    </tr>\n  </tbody>\n</table>\n\n**SUMMARY**\n\n<table>\n  <thead>\n    <tr>\n      <th>VAT [%]</th>\n      <th>Net worth</th>\n      <th>VAT</th>\n      <th>Gross worth</th>\n    </tr>\n  </thead>\n  <tbody>\n    <tr>\n      <td>10%</td>\n      <td>1 433,55</td>\n      <td>143,35</td>\n      <td>1 576,90</td>\n    </tr>\n    <tr>\n      <td><b>Total</b></td>\n      <td><b>$ 1 433,55</b></td>\n      <td><b>$ 143,35</b></td>\n      <td><b>$ 1 576,90</b></td>\n    </tr>\n  </tbody>\n</table>",
+    "category": "bank",
+    "description": "Kaggle clearOCR Real Invoice (Source: test:23)."
+  },
+  {
+    "image_path": "dataset\\clearocr\\test\\images/00025.jpg",
+    "ground_truth": "**Invoice no: 12681565**\n\nDate of issue: 09/07/2015\n\n**Seller:**\nClay-Koch\n2467 John Knolls Apt. 099\nMarkside, MT 79068\nTax Id: 915-72-3800\nIBAN: GB20IFBT89821062114124\n\n**Client:**\nThompson-Baker\nUSNV Kennedy\nFPO AA 01185\nTax Id: 971-96-6933\n\n**ITEMS**\n\n<table>\n  <thead>\n    <tr>\n      <th>No.</th>\n      <th>Description</th>\n      <th>Qty</th>\n      <th>UM</th>\n      <th>Net price</th>\n      <th>Net worth</th>\n      <th>VAT [%]</th>\n      <th>Gross worth</th>\n    </tr>\n  </thead>\n  <tbody>\n    <tr>\n      <td>1.</td>\n      <td>N64 Nintendo System Console<br>Lot Bundle W/ 2 Games 1<br>Controller Tested Working</td>\n      <td>5,00</td>\n      <td>each</td>\n      <td>95,99</td>\n      <td>479,95</td>\n      <td>10%</td>\n      <td>527,95</td>\n    </tr>\n    <tr>\n      <td>2.</td>\n      <td>Original Nintendo Gaming<br>Console with Robot, 9 games &<br>extras</td>\n      <td>5,00</td>\n      <td>each</td>\n      <td>475,00</td>\n      <td>2 375,00</td>\n      <td>10%</td>\n      <td>2 612,50</td>\n    </tr>\n    <tr>\n      <td>3.</td>\n      <td>Nintendo BLUE Wii System<br>Game Console Complete with 2<br>Motion Remotes Tested Work</td>\n      <td>2,00</td>\n      <td>each</td>\n      <td>99,98</td>\n      <td>199,96</td>\n      <td>10%</td>\n      <td>219,96</td>\n    </tr>\n    <tr>\n      <td>4.</td>\n      <td>Nintendo Gameboy Pocket<br>Console Clear Purple with Box<br>MGB-001 Japan Tested 53</td>\n      <td>4,00</td>\n      <td>each</td>\n      <td>85,00</td>\n      <td>340,00</td>\n      <td>10%</td>\n      <td>374,00</td>\n    </tr>\n    <tr>\n      <td>5.</td>\n      <td>Playstation 2 Slim console white<br>SCPH-90000 boxed Japan PS2<br>System</td>\n      <td>3,00</td>\n      <td>each</td>\n      <td>199,00</td>\n      <td>597,00</td>\n      <td>10%</td>\n      <td>656,70</td>\n    </tr>\n  </tbody>\n</table>\n\n**SUMMARY**\n\n<table>\n  <thead>\n    <tr>\n      <th></th>\n      <th>VAT [%]</th>\n      <th>Net worth</th>\n      <th>VAT</th>\n      <th>Gross worth</th>\n    </tr>\n  </thead>\n  <tbody>\n    <tr>\n      <td></td>\n      <td>10%</td>\n      <td>3 991,91</td>\n      <td>399,19</td>\n      <td>4 391,10</td>\n    </tr>\n    <tr>\n      <td><b>Total</b></td>\n      <td></td>\n      <td><b>$ 3 991,91</b></td>\n      <td><b>$ 399,19</b></td>\n      <td><b>$ 4 391,10</b></td>\n    </tr>\n  </tbody>\n</table>",
+    "category": "bank",
+    "description": "Kaggle clearOCR Real Invoice (Source: test:25)."
+  },
+  {
+    "image_path": "dataset\\handwritten\\kaggle_hw_TEST_0001.jpg",
+    "ground_truth": "KEVIN",
+    "category": "handwritten",
+    "description": "Kaggle real handwritten word: 'KEVIN' (source: ssarkar445/handwriting-recognitionocr)."
+  },
+  {
+    "image_path": "dataset\\handwritten\\kaggle_hw_TEST_0002.jpg",
+    "ground_truth": "CLOTAIRE",
+    "category": "handwritten",
+    "description": "Kaggle real handwritten word: 'CLOTAIRE' (source: ssarkar445/handwriting-recognitionocr)."
+  },
+  {
+    "image_path": "dataset\\handwritten\\kaggle_hw_TEST_0003.jpg",
+    "ground_truth": "LENA",
+    "category": "handwritten",
+    "description": "Kaggle real handwritten word: 'LENA' (source: ssarkar445/handwriting-recognitionocr)."
+  },
+  {
+    "image_path": "dataset\\handwritten\\kaggle_hw_TEST_0004.jpg",
+    "ground_truth": "JULES",
+    "category": "handwritten",
+    "description": "Kaggle real handwritten word: 'JULES' (source: ssarkar445/handwriting-recognitionocr)."
+  },
+  {
+    "image_path": "dataset\\handwritten\\kaggle_hw_TEST_0005.jpg",
+    "ground_truth": "CHERPIN",
+    "category": "handwritten",
+    "description": "Kaggle real handwritten word: 'CHERPIN' (source: ssarkar445/handwriting-recognitionocr)."
+  },
+  {
+    "image_path": "dataset\\handwritten\\kaggle_hw_TEST_0006.jpg",
+    "ground_truth": "MARTIN",
+    "category": "handwritten",
+    "description": "Kaggle real handwritten word: 'MARTIN' (source: ssarkar445/handwriting-recognitionocr)."
+  },
+  {
+    "image_path": "dataset\\handwritten\\kaggle_hw_TEST_0007.jpg",
+    "ground_truth": "VALENTINE",
+    "category": "handwritten",
+    "description": "Kaggle real handwritten word: 'VALENTINE' (source: ssarkar445/handwriting-recognitionocr)."
+  },
+  {
+    "image_path": "dataset\\handwritten\\kaggle_hw_TEST_0008.jpg",
+    "ground_truth": "LORAS",
+    "category": "handwritten",
+    "description": "Kaggle real handwritten word: 'LORAS' (source: ssarkar445/handwriting-recognitionocr)."
+  },
+  {
+    "image_path": "dataset\\handwritten\\kaggle_hw_TEST_0009.jpg",
+    "ground_truth": "THIBAULT",
+    "category": "handwritten",
+    "description": "Kaggle real handwritten word: 'THIBAULT' (source: ssarkar445/handwriting-recognitionocr)."
+  },
+  {
+    "image_path": "dataset\\handwritten\\kaggle_hw_TEST_0010.jpg",
+    "ground_truth": "AZABI",
+    "category": "handwritten",
+    "description": "Kaggle real handwritten word: 'AZABI' (source: ssarkar445/handwriting-recognitionocr)."
+  },
+  {
+    "image_path": "dataset\\handwritten\\kaggle_hw_TEST_0011.jpg",
+    "ground_truth": "GORTCHAKOFF",
+    "category": "handwritten",
+    "description": "Kaggle real handwritten word: 'GORTCHAKOFF' (source: ssarkar445/handwriting-recognitionocr)."
+  },
+  {
+    "image_path": "dataset\\handwritten\\kaggle_hw_TEST_0012.jpg",
+    "ground_truth": "MAHENTHIRAN",
+    "category": "handwritten",
+    "description": "Kaggle real handwritten word: 'MAHENTHIRAN' (source: ssarkar445/handwriting-recognitionocr)."
+  },
+  {
+    "image_path": "dataset\\handwritten\\kaggle_hw_TEST_0013.jpg",
+    "ground_truth": "FRANSOISSISEPH",
+    "category": "handwritten",
+    "description": "Kaggle real handwritten word: 'FRANSOISSISEPH' (source: ssarkar445/handwriting-recognitionocr)."
+  },
+  {
+    "image_path": "dataset\\handwritten\\kaggle_hw_TEST_0014.jpg",
+    "ground_truth": "JEANNE",
+    "category": "handwritten",
+    "description": "Kaggle real handwritten word: 'JEANNE' (source: ssarkar445/handwriting-recognitionocr)."
+  },
+  {
+    "image_path": "dataset\\handwritten\\kaggle_hw_TEST_0015.jpg",
+    "ground_truth": "DEBORAH",
+    "category": "handwritten",
+    "description": "Kaggle real handwritten word: 'DEBORAH' (source: ssarkar445/handwriting-recognitionocr)."
+  },
+  {
+    "image_path": "dataset\\handwritten\\kaggle_hw_TEST_0016.jpg",
+    "ground_truth": "DROUCS",
+    "category": "handwritten",
+    "description": "Kaggle real handwritten word: 'DROUCS' (source: ssarkar445/handwriting-recognitionocr)."
+  },
+  {
+    "image_path": "dataset\\handwritten\\kaggle_hw_TEST_0017.jpg",
+    "ground_truth": "JADE",
+    "category": "handwritten",
+    "description": "Kaggle real handwritten word: 'JADE' (source: ssarkar445/handwriting-recognitionocr)."
+  },
+  {
+    "image_path": "dataset\\handwritten\\kaggle_hw_TEST_0018.jpg",
+    "ground_truth": "CORNIL FRERROT",
+    "category": "handwritten",
+    "description": "Kaggle real handwritten word: 'CORNIL FRERROT' (source: ssarkar445/handwriting-recognitionocr)."
+  },
+  {
+    "image_path": "dataset\\handwritten\\kaggle_hw_TEST_0019.jpg",
+    "ground_truth": "CLEMET",
+    "category": "handwritten",
+    "description": "Kaggle real handwritten word: 'CLEMET' (source: ssarkar445/handwriting-recognitionocr)."
+  },
+  {
+    "image_path": "dataset\\handwritten\\kaggle_hw_TEST_0020.jpg",
+    "ground_truth": "RELIS",
+    "category": "handwritten",
+    "description": "Kaggle real handwritten word: 'RELIS' (source: ssarkar445/handwriting-recognitionocr)."
+  },
+  {
+    "image_path": "dataset/kaggle_forms/0000971160.png",
+    "ground_truth": "R&D\nR&D QUALITY IMPROVEMENT SUGGESTION/ SOLUTION FORM\nName / Phone Ext. : | M. Hamann P. Harper, P. Martinez | Date: | 9/ 3/ 92\nSupervisor / Manager | : | J. S. Wigand | R&D Group: | Licensee\nDiscontinue coal retention analyses on licensee submitted product samples (Note : Coal Retention testing is not performed by most licensees. Other B&W physical measurements as ends stability and inspection for soft spots in ciparettes are thought to be sufficient measures to assure cigarette physical integrity. The proposed action will increase laboratory productivity . )\nSuggestion:\nDelete coal retention from the list of standard analyses performed on licensee submitted product samples. Special requests for coal retention testing could still be submitted on an exception basis.\nSuggested Solutions (s) :\nHave you contacted your Manager/ Supervisor? | Yes | No\nManager Comments: | Manager, please contact suggester and forward\ncomments to the Quality Council.\nqip . wp\n597005708",
+    "category": "handwritten_form",
+    "description": "Formulaire FUNSD rempli manuellement, avec transcription humaine. Source Kaggle MIT: senju14/ocr-dataset-of-multi-type-documents.",
+    "source": "kaggle",
+    "source_id": "kaggle:senju14/ocr-dataset-of-multi-type-documents:0000971160",
+    "license": "MIT",
+    "annotation_path": "dataset/kaggle_forms/0000971160.json"
+  },
+  {
+    "image_path": "dataset/kaggle_forms/0000989556.png",
+    "ground_truth": "Page 1 of 10\nRESTRICTED BROWN & WILLIAMSON INTERNATIONAL TOBACCO PRODUCT SPECIFICATION\nBrand: | PHOENIX | Company: | B. A. T. CYPRUS\nStyle: | HLB- KS | Country: | CYPRUS\nLicensee Ref. NO.: | Macket:\nPlace of Manufacture: | NICOSIA\nCIGARETTE MAKING\nPhysical Characteristics | Weights\nOverall Cigarette Length | 84 mm | Total Cigt. Wt. | 974 mg\nTobacco Rod Length | 64 mm\nFilter Plug Length | 20 mm | Net Net Tobacco | 749 mg\nFilter Plug Pressure Drop (unencap.) | 56 mm\nFilter Plug Pressure Drop encap. | 56 mm | Net Tob. Rod Density | 245 mg/cc\nCigarette Circumference | 24.75 mm\nTotal Pressure Drop (unencap.) | 90 mm\nTotal Pressure Drop (encap.) | 110 mm\nTipping Length | 25 mm\nPrint Position (from filter end) | 27 mm\nMoisture content (ex-catcher) | 13.5 %\nFilter ventilation Rate | Nil %\nTipping and Tipping Application\nTipping Paper: | Adhesive:\nSupplier(s) | Ecusta | Supplier (s) | Swift\nSupplier Code No(s). | E.30639 | Supplier Code No (s) | T.K. 9220\nColor | Imitation Cork | Type | Printed Imitation cork\nPerforation Type and No. of lines | None | Application Pattern:\nPorosity | (coresta) | Overall | x | skip | Other\nPrint Description | Brown on yellow\nBobbin Width | 50 mm mm | Glue Pree Area | N/A\nRobbin Length | 2700 m | Dimension | mm x mm\nsubstance | 36 gm/ m2 | Positioning | mm from mouth end\n(Indicate N/A If Not Applicable)\nPrepared by: | M. HAMERTON / enm\nDate: | May 1, 1985\nApproved by:\nDirector of Technical Operations, Brown & Williamson International Tobacco\nDate: | May 1, 1985\nReplaces: | New | Date: | May 1, 1985\n05045\n620419245",
+    "category": "handwritten_form",
+    "description": "Formulaire FUNSD rempli manuellement, avec transcription humaine. Source Kaggle MIT: senju14/ocr-dataset-of-multi-type-documents.",
+    "source": "kaggle",
+    "source_id": "kaggle:senju14/ocr-dataset-of-multi-type-documents:0000989556",
+    "license": "MIT",
+    "annotation_path": "dataset/kaggle_forms/0000989556.json"
+  },
+  {
+    "image_path": "dataset/kaggle_forms/0000990274.png",
+    "ground_truth": "SERVICE REQUEST FROM R & D BY INTERNATIONAL LICENSEE OPERATIONS\nREQUEST NO.: | 25- 84 | RECEIVED\nDATE: | March 27, 1984 | APR 2 1984 P. H. H.\nINITIATED | BY: | P. H. HARPER PHH\nCOMPLETION\nTARGET DATE: | April 13, 1984\nCOUNTRY: | BELGIUM\nPRODUCT: | LUCKY STRIKE Filter and VICEROY\nNATURE OF WORK:\nAdvise if locally obtained Yucatan Honey (sample enclosed) is an acceptable substitute for HALWAY.\nR & D COMMENTS:\nTarget the P A 29Mar 84\nBY:\nDATE:\nNOTES: | a) Nature of work should be specified in exact terms.\nb) R & D should advise if completion date cannot be met.\nc) Two copies of this form to be sent to R & D by initiator and R & D is to return to T. O. one completed copy.\nMH/ enm\n0036/ (r) # 2894M\n620429480",
+    "category": "handwritten_form",
+    "description": "Formulaire FUNSD rempli manuellement, avec transcription humaine. Source Kaggle MIT: senju14/ocr-dataset-of-multi-type-documents.",
+    "source": "kaggle",
+    "source_id": "kaggle:senju14/ocr-dataset-of-multi-type-documents:0000990274",
+    "license": "MIT",
+    "annotation_path": "dataset/kaggle_forms/0000990274.json"
+  },
+  {
+    "image_path": "dataset/kaggle_forms/0000999294.png",
+    "ground_truth": "PDC # | C273- 82- 7\nPROJECT # | 1982 102KL\nTOP- LINES MENTHOL PRODUCT TEST | PAGE # | 1 of 4\nSUBJECT: | KOOL Lights KS vs. Bright KS Product Monitor\nSAMPLE: | 408 Menthol Lights / 105 Menthol Ultra, 111 Non- Menthol Lights / 92 Non- Menthol Ultras)\nFIELD DATE: | September 13, 1982\nTAR | NIC | MOIST | MENT\nCIGARETTES: | # 839 / 869 | KOOL Lights KS- white tip- ping masked | 9.1 | .88 | 14.0 | .4 4\n# 369 / 839 | Bright KS white tipping- | 5. 5 | .55 | 13. 5 | .841\nmasked / a certain proportion of the menthol result is pep- perrront oil; R&D is unable to determine the percentage.\nTotal Menthol Smokers\nPREFERENCE: | (n=) | Total (205) | Male (99) | Female (106) | 21- 34 (96) | 35+ 109\nKOOL Lights | 53+++ | 60+++ | 46 | 56+++ | 50\nBright | 39 | 34 | 43 | 35 | 42\nNo Preference | 8 | 6 | 11 | 9 | 8\n200 | 100 | 100 | 100 | 100\nATTRIBUTES: | Total | Male | Female | 21- 34 | 35+\nKL | Bright | KL | Bright | KL | Bright | KL | Bright | KL | Bright\nSTRENGTH (7= Stronger) | 4.31*** | 4.59 | 4.09** | 4.45 | 4.51 | 4.71 | 4.35** | 4.74 | 4.27 | 4.45\nSMOOTHNESS (7= 5moother | 3.60** | 3.42 | 3.73** | 3.43 | 3.47 | 3.41 | 3.61* | 3.38 | 3.58 | 3.46\nAMT MENTHOL (7= More) | 3.64*** | 4.94 | 3.58*** | 4.85 | 3.70*** | 5.02 | 3.63*** | 5.31 | 3.65*** | 4.61\nMENTHOL TASTE (7= Better | 3.39*** | 3.04 | 3.46*** | 3.02 | 3.33** | 3.06 | 3.45*** | 2.99 | 2.34** | 2.08\nSATISFYING (7= More | 3.12*** | 2.78 | 3.28*** | 2.78 | 2.97* | 2.78 | 3.17*** | 2.74 | 3.08** | 2.82\nAPTERTASTE (7= Pleasant) | 3.56*** | 3.24 | 3.69*** | 3.21 | 3.44 | 3.26 | 3.52*** | 3.07 | 3.60* | 3.39\nEASE OF DRAW 17 Easier | 4.00 | 3.96 | 4.02 | 3.95 | 3.99 | 3.96 | 4.07** | 3.92 | 3.94 | 3.99\nNOTE | Attribute | scores | reflectia | a | comparison | of | the | test | product | to | the | smoker's | most | often | brand\n+/-/* | Directional Difference: | 66 79% confidence Level\n++/--/** | Marginal Difference: | 80- 94% confidence Level\n+++/---/*** | Significant Difference: | 95+% confidence Level\n620915734",
+    "category": "handwritten_form",
+    "description": "Formulaire FUNSD rempli manuellement, avec transcription humaine. Source Kaggle MIT: senju14/ocr-dataset-of-multi-type-documents.",
+    "source": "kaggle",
+    "source_id": "kaggle:senju14/ocr-dataset-of-multi-type-documents:0000999294",
+    "license": "MIT",
+    "annotation_path": "dataset/kaggle_forms/0000999294.json"
+  },
+  {
+    "image_path": "dataset/kaggle_forms/0001118259.png",
+    "ground_truth": "Reconstituted Tobacco Leaf Substitutions Export Formulas\nB&W | Revision Date:\nAllowable Grade Substitutions for Export CPCL\nStandard Grade Mark | Allowable Substitutions\nPCFS Flue cured fines | RPCFS or RPCFS-O\nPCBS Burley fines | RPCBS OT RPCBS- O\nWCC\nMC- 4 Manufacturing fines | MC -4 -S\nMC -4 -PH\nMC -4 -RC\nMC -4 -W\nMC -6 Stem Meal | MC -1\nMC -7 Winnowers | C Stem\nRXF Fine flue cured stem | RRXF or RRXF -O\nRRXM -B\nRRXM -T\nRBF Fine Burely stem | RRBF or RRBF -O\nRRB -B\n621800455\nRRB -L\nRRB -T",
+    "category": "handwritten_form",
+    "description": "Formulaire FUNSD rempli manuellement, avec transcription humaine. Source Kaggle MIT: senju14/ocr-dataset-of-multi-type-documents.",
+    "source": "kaggle",
+    "source_id": "kaggle:senju14/ocr-dataset-of-multi-type-documents:0001118259",
+    "license": "MIT",
+    "annotation_path": "dataset/kaggle_forms/0001118259.json"
+  },
+  {
+    "image_path": "dataset/kaggle_forms/0001123541.png",
+    "ground_truth": "B&W | QUALITY IMPROVEMENT SUGGESTION OUR MISSION IS SUPERIOR CONSUMER SATISFACTION | QUALITY\nHighest Quality. Teamwork, Do Right Things Right The First Time\nRESEARCH & DEVELOPMENT\nQuality Coord Only\nDATE: | June 21, 1993 | DEPARTMENT: | R&D Library\nDate Rec'd | 6/ 21/ 93\nSUBMITTED BY: | Carol S. Lincoln | QIP Log #1 | 93- 0301\nType | EQPR\nSUBMITTER'S SS#: | 407- 64- 3484 | Status (1993)\nKeywords (1993)\nSUGGESTION: (Describe Current Situation and Idea)\nThe current system of managing records is too complex. The trend seems to be increasingly specific, when we should be getting more general. Right now, people must work to understand the system. We must spend too much time adninistering the system, labeling and cleaning our files. Complying is a real burden, both for the individual and for the records coordinators.\nDescribe Possible Solutions And Benefits\n1. Drop the category specifications altogether.\n2. Use moregeneral categories.\nhote: I have passed this to Scott Appleton for the task force to use in streamlining the records management program.\nPROFIT IMPROVEMENT: | (If Applicable)\nRESPOND HERE | Implement: | ☐ Yes | ☐ No | ☐ Pending | Date\n632120763\nApproval Signature/ Date | Sign & Print Names) (See Instructions On Back) | Responder/ Date",
+    "category": "handwritten_form",
+    "description": "Formulaire FUNSD rempli manuellement, avec transcription humaine. Source Kaggle MIT: senju14/ocr-dataset-of-multi-type-documents.",
+    "source": "kaggle",
+    "source_id": "kaggle:senju14/ocr-dataset-of-multi-type-documents:0001123541",
+    "license": "MIT",
+    "annotation_path": "dataset/kaggle_forms/0001123541.json"
+  },
+  {
+    "image_path": "dataset/kaggle_forms/0001129658.png",
+    "ground_truth": "WINSTON & STRAWN\nFax Cover Sheet\nMAMI TRIAL SITE, 2000 FIRST UNION FINANCIAL CENTER, 200 SOUTH BISCAYNE BOULEVARD MIAMI, FLORIDA 33131\nFAX: | (305) 400 6 06\n200 PARK AVENUE NEWYORK NY 10166 4193 212 294-6700 | 400 L. STREET N WASHWINGTON DC 20005 3502 202 371 5700 | 35 WEST WACKER CHICAGO. IL 30601 312- 588 5800 | 21 AVENUE VICTOR HUGO 75 PARIS, FRANCE 33- 53 64 62 82\nFax Number: | 305 400- 6107\nFROM: | Kevin Narko | CHARGEBACK:\n4162/ 158\nDATE: | 10/ 13/ 99\nPlease Deliver as soon Possible To:\nRECIPIENT | COMPANY | FAX | No. | PHONE No.\nJohn Mulderig | Philip Morris | 917 -663 -5796 | 917- 663 3056\nGregory Little | Philip Morris | 917- 663 5979\nTotal number of pages including this page:\nCOMMENTS\nIF YOU DO NOT RECEIVE ALL THE PAGES, PLEASE CALL OUR FAX OPERATOR AS SOON AS POSSIBLE THANK YOU. 312- 558- 5948\nThe information contained in this facsimile message is attorncy privileged and confidential information intended only for the use of the individual or entity named above. If the reader of this message is not the intended recipient, or the employee or agent responsible to deliver it to the intended recipient, you are hereby notified that any dissemination, distribution or copying this communication strictly prohibited.\n2074956978\nIf you have received this communication in error, please immediately notify us by telephone, and return the original message to us at the above address via the U. S. Postal Service. Thank you.\nOperator Initials:\nConfirmation: | Yes | Name: | No:",
+    "category": "handwritten_form",
+    "description": "Formulaire FUNSD rempli manuellement, avec transcription humaine. Source Kaggle MIT: senju14/ocr-dataset-of-multi-type-documents.",
+    "source": "kaggle",
+    "source_id": "kaggle:senju14/ocr-dataset-of-multi-type-documents:0001129658",
+    "license": "MIT",
+    "annotation_path": "dataset/kaggle_forms/0001129658.json"
+  },
+  {
+    "image_path": "dataset/kaggle_forms/0001209043.png",
+    "ground_truth": "MAGAZINE SCORES AUDIENCE STUDIES\nBrand | SALEM (RJR) | Project # | 74- 80\nTitle | \"HEAD IN WATER\" | Total Sample | 214\nCode #\nSize | FULL PAGE\nMagazine | TIME\nField Date | WEEK OF MARCH 25, 1974\nLocation | CHICAGO, DALLAS/ FORT WORTH, INDIANAPOLIS, LOS ANGELES\nMEMPHIS, PHILADELPHIA, PITTSBURGH\nSample Description | MALE AND FEMALE MENTHOL SMOKERS\nPM6 | PROVED RECALL | COMMENTS\nSCORE | BASE | SCORE | BASE\nOVERALL | (167)\nTested among a half sample of smokers. Sub- group scores subject to wide variation because of small sample size and should be averaged across several ads for meaningful infor- mation.\n1.0 | (.97) | 31\nSEX:\nMale | 2.0 | (51) | 31 | (83)\nFemale | 0.0 | (46) | 31 | (84)\nAGE:\nUnder 25\n25- 34\n35- 44\n45 & Over\nUnder 35 | 2.4 | (42) | 33 | (81)\n35 & Over | 0.0 | (55) | 29 | (86)\nBRAND SMOKED:\nTest Brand Smokers | 33 | (42)\nAll Other Smokers | 30 | (125)\nDate Sent | 4/19/74\nPI- 7653\n770205964",
+    "category": "handwritten_form",
+    "description": "Formulaire FUNSD rempli manuellement, avec transcription humaine. Source Kaggle MIT: senju14/ocr-dataset-of-multi-type-documents.",
+    "source": "kaggle",
+    "source_id": "kaggle:senju14/ocr-dataset-of-multi-type-documents:0001209043",
+    "license": "MIT",
+    "annotation_path": "dataset/kaggle_forms/0001209043.json"
+  },
+  {
+    "image_path": "dataset/kaggle_forms/0001239897.png",
+    "ground_truth": "TOP- LINES NON- MENTHOL PRODUCT TEST | PROJECT | # 19 4- 26A\nSUBJECT: | 25% Replacement of Propylene Glycol With SORBITOL\nSAMPLE: | 250 VICEROY/ 125 Marlboro/ 125 Winston\nCIGARETTES\n#627/ 647 - | Current VICEROY B4\nCurrent VICEROY 84 except with 25% of the propylene glycol replaced with SORBITOL.\n#647/ #627 -\nREFERENCE | VICEROY | Competitive\n(#647/ 627) | (#627/ 647 | Current VICEROY 84 25% PG with SORBITOL | 47% | 53% | 54% | 46%46%\nATTRIBUTES | VICEROY | Competitive\nCurrent VICEROY 84 (#627/ 647) | 25% PG w/ SORBITOL #647/ 627 | Current VICEROY 84 (#647/ 647 | 25% PG w/ SORBITOL (#647/ 627)\nSTRENGTH | +1 | -15* | -13 | -4\nHARSHNESS | +5 | -5 | -7 | +7*\nAFTERTASTE | +22 | +21 | +14 | +26*\n*Statistically Significant\nNOTICE IF THE FILM IMAGE IS LESS CLEAR THAN THIS NOTICE. IT IS DUE TO THE QUALITY OF THE DOCUMENT BEING FILMED | 77905 6433",
+    "category": "handwritten_form",
+    "description": "Formulaire FUNSD rempli manuellement, avec transcription humaine. Source Kaggle MIT: senju14/ocr-dataset-of-multi-type-documents.",
+    "source": "kaggle",
+    "source_id": "kaggle:senju14/ocr-dataset-of-multi-type-documents:0001239897",
+    "license": "MIT",
+    "annotation_path": "dataset/kaggle_forms/0001239897.json"
+  },
+  {
+    "image_path": "dataset/kaggle_forms/0001438955.png",
+    "ground_truth": "NEWSPAPER SCORES AUDIENCE STUDIES\nBrand | BELAIR | Project # | 72- 31\nTitle | \" KALEIDOSCOPE - - GONE WITH THE WIND \" * | Total Sample | 285\nCode # | R/ BSS- 71- 19\nType of Ad | PARADE, 1 Page, 4- Color\nNewspaper (Date) | Pittsburgh Pittsburgh PUTSBURGH PRESS (4 /23 /72\nSan Diego SAN DIEGO UNION (4 /23 /72\nDayton DAYTON NEWS (4 /23 /72)\nBirmingham BIRMINGHAM NEWS (4 /23 /72)\nPM6 | PROVED RECALL | COMMENTS\nSCORE | BASE | SCORE | BASE\n% | %\nOVERALL: | 3.4% | (224) | 7% | (222) | *This was a combination ad with RALEIGH.\nSEX: | Male | 1.9 | (104) | 7 | (101)\nFemale | 5.0 | (120) | 7 | (121)\nAGE:\nUnder 25 | 3.2 | (63)\n25- 34 | 3.0 | (66)\n35- 44 | 4.4 | (46)\n45 & Over | 4.0 | (49)\n(129) | 5 | (117)\nUnder 35 35 & Over | 3.1 | 4.2 | (95) | 9 | (105)\nBRAND SMOKER | Test Brand Smokers | 6 | (17)\nAll Other Smokers | 7 | (205)\n465508326",
+    "category": "handwritten_form",
+    "description": "Formulaire FUNSD rempli manuellement, avec transcription humaine. Source Kaggle MIT: senju14/ocr-dataset-of-multi-type-documents.",
+    "source": "kaggle",
+    "source_id": "kaggle:senju14/ocr-dataset-of-multi-type-documents:0001438955",
+    "license": "MIT",
+    "annotation_path": "dataset/kaggle_forms/0001438955.json"
+  },
+  {
+    "image_path": "dataset/kaggle_forms/0001456787.png",
+    "ground_truth": "SECRET\nCHAMP S/ L TRIAL SPECIFICATION\nCIGARETTE MAKING\nPhysical Characteristics | BWIT Suggestion | HK Trial\nOverall Cigarette Length | 99 mm | 99 mm\nTobacco Rod Length | 72 mm | 72 mm\nFilter Plug Length | 27 mm | 27 mm\nFilter Plug Pressure Drop (unencap.) | mm | 62 mm\nFilter Plug Pressure Drop (encap.) | 58.5 mm | 58.5 mm\nCigarette Circumference | 24.8 mm | 24.8 mm\nTotal Pressure Drop (unencap.) | mm | mm\nTotal Pressure Drop (encap.)\nTipping Length | 32 mm | 32 mm\nPrint Position (from filter end) | 35 mm | 35 mm\nMoisture content (Packing) | 13 % | 13%\nFilter Ventilation Rate\nWeights\nTotal Cigarette Weight | mg | mg\nNet Net Tobacco | 858 mg | 858 mg\nTobacco Rod Density | 243.6 mg/ | 243.6 mg/ cc\nTipping and Tipping Application\nTipping Paper:\nSupplier(s) | ECUSTA/ B&W | ECUSTA/ B & W\nSupplier Code No(s).\nColor\nPerforation Type & No. of lines | N/A | N/A\nPorosity | Non Porous | Non Porous\nPrint Description | N/A | N/A\nBobbin Width | 64 mm | 64 mm\nDobbin Length | 2500 M | 2500 M\nSubstance | 36 nm/ M2 | 36 nm /47M2\n620753790",
+    "category": "handwritten_form",
+    "description": "Formulaire FUNSD rempli manuellement, avec transcription humaine. Source Kaggle MIT: senju14/ocr-dataset-of-multi-type-documents.",
+    "source": "kaggle",
+    "source_id": "kaggle:senju14/ocr-dataset-of-multi-type-documents:0001456787",
+    "license": "MIT",
+    "annotation_path": "dataset/kaggle_forms/0001456787.json"
+  },
+  {
+    "image_path": "dataset/kaggle_forms/0001463282.png",
+    "ground_truth": "MARKETING RESEARCH AUTHORIZATION\n(Recommended Proposal Attached)\nDate: | No. | 6\nDescription: | Y- 1 Ultra 100' s vs. Winston Ultra 100' s\nRequested By: | W. T. Carpenter | Research Request Attached: | Yes | x | No\nBudgeted: | Yes | x | No\nOriginal Budgeted Amount | 23.3\nCompetitive Proposals Obtained:\nEst. | Cost Per Interview\nSupplier | Cost | ($) | Travel | Total Cost\nKapuler | $ 33,675 + 10% Est. | $ 2000 | $ 35,675 | $ 84.2\nMarket Facts | $ 35,000 + 10 % Est. | $ 2000 | $ 37000 | $ 87.5\nPROJECTED: | Summary of MRD Budget | 1990\nInternal Init. Date | 4/ | Total Area Budget: | 370,000.00\nExt. Auth. Date Wave (s) | 12/ 90 | Current Bal. Available: | 199,900.00\nThis Change: (From Current Budget | -35,675,00\nThis Amount | -O-\nField Complete Wave (s) | 6/ 10/ 90 | (From Next Year's Budget\nNew Balance | 164,225.00\n7/ 9/ 90\nFinal Report Due (Supplier Rpt.) Wave (s) | Commited to Date: (Current Year) | 205,775.00\nProject Type | Product | Test\n(Product Test, A&U, etc.)\nSample Size | 400\nRecommended Supplier | Kapuler\nReason (s) for Recommendation | Lowest project costs\nSubmitted by: | Date | 5/ 2/ 90\nApproved By: | L. E. Gravely | Date | 5/3 90\nApproved By: | Date\nApproved By: | Date\nBudget Check: | Date | 5/ 3/ 90\nHoward\nOriginal - | Project File\ncc: | S. Willinger (3) | Project No. | 1990- 488\nK. A. Hutchison S. A. Howard | Account Name | BARCLAY\nMRD00005 (revised 3/ 20) PPs 0425\n670801704",
+    "category": "handwritten_form",
+    "description": "Formulaire FUNSD rempli manuellement, avec transcription humaine. Source Kaggle MIT: senju14/ocr-dataset-of-multi-type-documents.",
+    "source": "kaggle",
+    "source_id": "kaggle:senju14/ocr-dataset-of-multi-type-documents:0001463282",
+    "license": "MIT",
+    "annotation_path": "dataset/kaggle_forms/0001463282.json"
+  },
+  {
+    "image_path": "dataset/kaggle_forms/0001463448.png",
+    "ground_truth": "BROWN & WILLAMSON 1994 COLLECTION PROTOCOPYING VARIANCE FORM\nThis form was placed before Bates ID | 6708105266\nAT THE TIME OF REPRODUCTION, THE FOLLOWING NOTATTONS WERE MADE:\n( | ) | DOCUMENT COPIES ARE IN THE SAME SEQUENCE AS THEY APPEARED IN THE ORIGINAL.\n( | ) | PAGE NUMBER(S) WERE MISSING IN THE ORIGINAL.\n( | ☑ ) POOR QUALITY ORIGINAL. faded\n( | ) | OVERLAY ITEM COULD NOT BE REMOVED WITHOUT DAMAGE TO THE ORIGINAL.\nB( | ) | NG DOCUMENTS WERE FOUND WITHIN THE ORIGINAL:\n( | ) | FILE FOLDER\n( | ) | REDROPE EXPANDABLE FILE\n( | ) | HANGING FILE\n( | ) | ENVELOPE\n( | ) | OTHER (SPECIFY)\n( | ) | DOCUMENT COPIES WERE REPRODUCED IN COLOR PERMIT CORRECTION INTERPRETATION\n( | ) | BATES NUMBER NOT USED.\n( | ) | OTHER VARIANCE (EXPLAIN).",
+    "category": "handwritten_form",
+    "description": "Formulaire FUNSD rempli manuellement, avec transcription humaine. Source Kaggle MIT: senju14/ocr-dataset-of-multi-type-documents.",
+    "source": "kaggle",
+    "source_id": "kaggle:senju14/ocr-dataset-of-multi-type-documents:0001463448",
+    "license": "MIT",
+    "annotation_path": "dataset/kaggle_forms/0001463448.json"
+  },
+  {
+    "image_path": "dataset/kaggle_forms/0001476912.png",
+    "ground_truth": "MR 1909 (3-69) 100\nBROWN & WILLIAMSON TOBACCO CORPORATION FILTER SCORES\nBrand: | RALEIGH (BELAIR portion not tested) | Project # | 1969- 105\nCommercial: | LAKE- NEW PACK: 40 (with BELAIR Badmin- ton: 20) | Sample: | 336\nPM6 Base: | (234)\nCode #: | BW- RT- 69- | 98\nSupplier: | AUDIENCE STUDIES\nTEST DATES\nL. Angeles | 8/5 and 6\nChicago: | 8/8\nPM6 SCORES | COMMENTS\nOverall | 1.7 | This commercial was tested in color.\nCITY\nLos | 0.0\nChicago | 3.3\nSEX\nMale | 0.0\nFemale | 3.3\nAGE\n16-25 | 0.0\n26-35 | 0.0\n36-45 | 0.0\n46 & Over | 9.3\n35 & Under | 0.0\n36 & Over | 5.0\n465607116\nP",
+    "category": "handwritten_form",
+    "description": "Formulaire FUNSD rempli manuellement, avec transcription humaine. Source Kaggle MIT: senju14/ocr-dataset-of-multi-type-documents.",
+    "source": "kaggle",
+    "source_id": "kaggle:senju14/ocr-dataset-of-multi-type-documents:0001476912",
+    "license": "MIT",
+    "annotation_path": "dataset/kaggle_forms/0001476912.json"
+  },
+  {
+    "image_path": "dataset/kaggle_forms/0001477983.png",
+    "ground_truth": "STATE OF RHODE ISLAND AND PROVIDENCE PLANTATIONS\nOffice of the Secretary of State\nJames R. Langevin Secretary of State\nRoom 43 State House Providence, Rhode Island 02903- 1105\nMonthly Organization/ Employer Report | 401- 277- 2390\nDue the 1st Monday of the month during the legislative session to report the previous months' activity.\nReporting Period: | Month of May\nOrganization/ Employer Name: | R. J. Reynolds Tobacco\nLobbyist Name: | Peter J. McGinn\nIf any addresses or telephone numbers have changed since the last reporting period please check here and note the change in the space provided at the end of this form.\nCompensation/ Expenditure Information:\nHave you paid any type of compensation or incurred any obligation for payment to the above named\nlobbyist for lobbying? (yes or no) | No. | If yes, please complete the following.\nCompensation received lobbying: | $ | Retainer | $\nPart of salary received for lobbying: | $\nAmount earned but not received: | $ | Contractual or agreed fee: | $\nReimbursements for expenses (please itemize):\nOther | (please | explain):\nNote: | RIGL | 22-10-2 | (d) | requires | disclosure | in | a | dollar | amount | of | the | compensation | for | lobbying | activity.\nDuring this reporting period, have you made any expenditure or incurred any obligation of $ 25.00 or more per occurence to promote or oppose any legislation, including but not limited mailings, meals, print or broadcast advertisements, or gifts (yes or no)\nyes, please detail. including the names of the persons receiving and in whose behalf such expenditures have been made, the amount, date, place, and reason for the expenditure.\n(indicate if attached pages)\nList any changes of address telephone numbers:\n(from)\n(to)\nSignature Employer or Designee | Please print name of Employer or Designee\nPlease indicate the capacity in which you are executing this document:\nFOR OFFICIAL USE\nACCEPTED: | REVIEWED:",
+    "category": "handwritten_form",
+    "description": "Formulaire FUNSD rempli manuellement, avec transcription humaine. Source Kaggle MIT: senju14/ocr-dataset-of-multi-type-documents.",
+    "source": "kaggle",
+    "source_id": "kaggle:senju14/ocr-dataset-of-multi-type-documents:0001477983",
+    "license": "MIT",
+    "annotation_path": "dataset/kaggle_forms/0001477983.json"
+  },
+  {
+    "image_path": "dataset/kaggle_forms/0001485288.png",
+    "ground_truth": "DC B38 (8 78)\nBROWN & WILLIAMSON TOBACCO CORPORATION LOUISVILLE, KENTUCKY 40201\nSPECIAL SAMPLE MANUFACTURE | ☑\nSHIPMENT ☐\nTRANSFER ☐\nCopies to: | REDUCED TO MATERIAL ☐\nDate of Request | 6/ 25/ 81\nFactory Cost Dept. Writer Development Center Sue Livesay\nAccount Number | 22 244 00\nSample Disposition\nQuantity, Cartons of 200 each | Tax Status Paid or Free\nTo Sample Stock\nR & D | 20 | Free\nM. R.\nMethod of Shipment\nCigarette Description\nKS 1 mg grooved product using 4. 3/ 37 filter material. Cigarette code 244131\nSpecial Instructions & Comments\n620745255\nCompletion Date | 6/ 25/ 81 | Signed | B. D. WINGLER",
+    "category": "handwritten_form",
+    "description": "Formulaire FUNSD rempli manuellement, avec transcription humaine. Source Kaggle MIT: senju14/ocr-dataset-of-multi-type-documents.",
+    "source": "kaggle",
+    "source_id": "kaggle:senju14/ocr-dataset-of-multi-type-documents:0001485288",
+    "license": "MIT",
+    "annotation_path": "dataset/kaggle_forms/0001485288.json"
+  },
+  {
+    "image_path": "dataset/kaggle_forms/00040534.png",
+    "ground_truth": "ACUTE TOXICITY IN MICE\nCOMPOUND | 3-Hydroxy-3-methylbutanoic acid (Tur 13)\nSOURCE | Lorillard - Organic Chemistry | LORILLARD NO | OR39- 23 | A4\nDATE RECEIVED | Unk. | TESTED | 12/28/78 | REPORTED | 5/3/79 10/6/80 , Update\nINVESTIGATOR(S) | H. S. Tong & M. S. Forte' | NOTEBOOK PAGE | B1014- 23\nSIGNATURE(S)\nSTRAIN OF MICE | Swiss- Webster | MALE | X | FEMALE | DATE RECEIVED | Unk.\nAVERAGE WEIGHT RANGE (GM) | SOURCE | Camm | Research\nROUTE OF COMPOUND ADMINISTRATION | ☑ | P.O. | ☐ I.P. | ☐ I.V. | ☐ INHALATION\nCOMPOUND | ☑ | .5 % METHYL CELULOSE | ☐ CORN OIL | ☐ SALINE | ☐ OTHER\nGROUP NO. | % SOLUTION | DOSAGE (mg/ kg BODY WEIGHT) | RESULTS (NO TESTED)\n1 | 5 | 1800 | 1/ 6\n2 | 10 | 2160 | 0/ 6\n3 | 10 | 2592 | 0/ 6\n4 | 10 | 3732 | 3/ 6\n5 | 10 | 4479 | 6/ 6\nREFERENCE FOR CALCULATION | Litchfield, J. T. and Wilcoxin F. , J. of Pharmacol\nand Exper. Ther. , 90: 99 , 1948.\nLD50 (95% CONFIDENCE LIMITS) | 3.5 (3.1 to 3.9 g /kg\nCONCLUSION | This compound appears to act as a CNS depressant with symptons\nof respiratory depression, constriction of blood vessels, and in- activity. Survivors recovered in 48 hours. The recommended safe dose for a single trial by inhalation in man is 0.3 mg.\nCopies to the Following: | Dr. H. J. Minnemeyer Ms. L. B. Gray | 00040534\nLORILLARO RESEARCH CENTER | FORM 7 5/80",
+    "category": "handwritten_form",
+    "description": "Formulaire FUNSD rempli manuellement, avec transcription humaine. Source Kaggle MIT: senju14/ocr-dataset-of-multi-type-documents.",
+    "source": "kaggle",
+    "source_id": "kaggle:senju14/ocr-dataset-of-multi-type-documents:00040534",
+    "license": "MIT",
+    "annotation_path": "dataset/kaggle_forms/00040534.json"
+  },
+  {
+    "image_path": "dataset/kaggle_forms/00070353.png",
+    "ground_truth": "Manuscript Review Form\nTOBACCO SCIENCE\nRegistration No | 533 | Date | March 18, 1968\nAUTHORS | Andrew G. Kallianos, Richard K. Means, James D. Mold\n\"Effect of Nitrates in Tobacco on the Catechol Yield in Cigarette Smoke\"\nTITLE\nREVIEW COMPLETED | 3/ 29/ 68 | RECOMMENDATION: | x | APPROVE IN ITS\nPRESENT FORM: | NOT | APPROVE | (Give reasons below): | APPROVE TENTATIVELY\nSUBJECT TO THE FOLLOWING SUGGESTED REVISIONS: (itemize below):\nPage 4 - Last line should be Mass spectrometric instead of Mass spectroscopic.\n00070353\nNOTE- Execute in triplicate using additionall sheets if more space is required. Retain the third copy for your file Return the original (signed) and the first carbon (unsigned) along with the manuscript to this office The unsigned copy and the manuscript will be for returned to the author his consideration.",
+    "category": "handwritten_form",
+    "description": "Formulaire FUNSD rempli manuellement, avec transcription humaine. Source Kaggle MIT: senju14/ocr-dataset-of-multi-type-documents.",
+    "source": "kaggle",
+    "source_id": "kaggle:senju14/ocr-dataset-of-multi-type-documents:00070353",
+    "license": "MIT",
+    "annotation_path": "dataset/kaggle_forms/00070353.json"
+  },
+  {
+    "image_path": "dataset/kaggle_forms/00093726.png",
+    "ground_truth": "Date: | September 21, 1976\nSample No. | 6030\nType of Cigarette | 85 mm Filter\nBatch Size | 50 lbs.\nOriginal Request Made By | Dr. A. W. Spears | on | September 21, 1976\nSample Specifications Written By | W. E. Routh\nAdditional Spray\nBLEND | CASING | RECASING | FINAL FLAVOR\nOGS | OGS | OGS | OGS | 3. 4% PMO in EtoH\nCigarettes | Filters\nMaker | AMF | Kind | 20 mm True plastic rod\nLength | 85 mm\nCircumference | 25. | 0 | Process\nWeight | To be det. (803 mg tobacco) | Rod Length\nPressure Drop | To be determined | Pressure Drop\nFilter Length | 20 mm | Circumference\nPaper | 554 | Weight\nTipping Paper | 30 mm | Plasticizer\nPlug Wrap\napping | Responsibility\nLabels | White | Tobacco Blend | Ammons\nClosures | Blue | Filter Production | Wicker\nTear rape | White | Making & Packing | Brown /Routh\nCartons | \" | Shipping | Routh\n\"\nMarkings | Sample No. on overwrap | Sample Requisition [Form 02: 02: 06]\nRequirements | Special Requirements\nLaboratory | 3 cartons\nSpray 50 lbs. tobacco with solution of 880 g (= 1. 94 lbs.) PMC in 1175 ml of denatured alcohol. This should give 3. 4% PMO add- on (3. 3% PMO contained) assuming 88% spraying efficiency. PMO delivery from 85 mm cigarette smoked to 30 mm butt should be 6. 5 mg/ cig.\nOther | 20, 000 cigts.\nLaboratory Analysis\nSmoke Analysis PMO Analysis\nReports\n00093726\nWritten by | P. D. Schickedantz\nOriginal to | Dr. A. W. Spears\nCopies to | Dr. F. J. Schulz Dr. H. J. Minnemeyer\nManager, H.J. Minnemeyer Research",
+    "category": "handwritten_form",
+    "description": "Formulaire FUNSD rempli manuellement, avec transcription humaine. Source Kaggle MIT: senju14/ocr-dataset-of-multi-type-documents.",
+    "source": "kaggle",
+    "source_id": "kaggle:senju14/ocr-dataset-of-multi-type-documents:00093726",
+    "license": "MIT",
+    "annotation_path": "dataset/kaggle_forms/00093726.json"
+  },
+  {
+    "image_path": "dataset/kaggle_forms/0011505151.png",
+    "ground_truth": "PROJECT NO. | 1987- 115- CA\nCAPRI\nDESCRIPTION: | CAPRI EXPANSION A&U - CALIFORNIA - WAVE 4.\nSUPPLIER: | Kapuler Marketing Research\nMR PERSONNEL: | B. R. Pellett\nAUTHORIZED COST: | 70,825 + +10 % (TOTAL 1987) +7.075 (2 -23 -88 77,900 TOTAL\nInt. Init. Date\nExt. Autho. Date | 11- 16- 87\nField Complete | 12- -7 -87\nFinal Rpt. Due | 1- 11- 88\nPAID 1987 | 47,218\nDEC 1987 ACCRUAL | 9,442 | -Pd.\nCARRYOVER TO 1988 | 14,165\nRELEASED TO ACCTG | PAID OUT OF 1989 BUDGET | CUMULATIVE\nDEC | YEA - | CAPRI - | 21.240 | 9.442\n2- 25- 88 | FEB | 3068230.682 | 77.900\n466009457",
+    "category": "handwritten_form",
+    "description": "Formulaire FUNSD rempli manuellement, avec transcription humaine. Source Kaggle MIT: senju14/ocr-dataset-of-multi-type-documents.",
+    "source": "kaggle",
+    "source_id": "kaggle:senju14/ocr-dataset-of-multi-type-documents:0011505151",
+    "license": "MIT",
+    "annotation_path": "dataset/kaggle_forms/0011505151.json"
+  },
+  {
+    "image_path": "dataset/kaggle_forms/0011838621.png",
+    "ground_truth": "INTERNATIONAL MARKETING RESEARCH CHANGE OF AUTHORIZED COST\nDate: | 6/ 21/ 90 | No. | 27\nDescription: | Hong Kong: Cigarette Market Monitor\nSupplier: | MDR. HK\nTotal Cost | 1990 Cost\nPrevious Commitments This Project | $ 43.335.00 | $ 0.00\nAmt. of Change: | Increase X | Decrease | $ 4.376.47 | .08\nAdjusted Total Cost of Project: | (10% Change) | $ 47.711.47 | .08\nReasons:\nOriginal MRA did not include cost for the first month of the study (see L. Lee memo of September 11, 1989)\nPROJECTED: | Internal Init. Date | Sumary of IMRD Budget | Total Area Budget: | $ 2.960.000.00\nCurrent Bal. Available: | 1.488.126.23\nExt. Auth. Date Wave(s) | .08\nThis Change: (From Current Budget)\nThis Amount (From Next Year's Budget) | 0\nField Complete Wave(s)\nNew Balance: | 1.488.126.15\nFinal Report Due (Supplier Rpt.) Wave(s) | Committed to Date: (Current Year) | 1.471.873.85\nSubmitted By: | MD Davis | Date | 6/ 21/ 90\nM. b. Davis\n4/ 22/ 90\nApproved By: | Date\nN. W. Kremer\nOriginal- | Project File | Project No. | 1989- 29\ncc: | MRA File N. W. Kremer\nAccount Name | International.\n464537440",
+    "category": "handwritten_form",
+    "description": "Formulaire FUNSD rempli manuellement, avec transcription humaine. Source Kaggle MIT: senju14/ocr-dataset-of-multi-type-documents.",
+    "source": "kaggle",
+    "source_id": "kaggle:senju14/ocr-dataset-of-multi-type-documents:0011838621",
+    "license": "MIT",
+    "annotation_path": "dataset/kaggle_forms/0011838621.json"
+  },
+  {
+    "image_path": "dataset/kaggle_forms/0011845203.png",
+    "ground_truth": "BROWN & WILLIAMSON BID REQUEST FORM\n(QUANTITATIVE RESEARCH)\nPROJECT NUMBER: | 1991- 18\nB&W ORIGINATOR: | Mary D. Davis\nTO: | Mr. Johnny Pedersen - Gallup\nINSTRUCTIONS\n1. THE FOLLOWING DOCUMENT IS DIVIDED INTO TWO SECTIONS.\nSECTION ONE | CONTAINS THE PROJECT DESCRIPTIONS AND SPECIFICATIONS FROM\nB&W. ALL BIDS SHOULD BE BASED ON THE SPECIFICATIONS IN THIS DOCUMENT.\nSECTION TWO | SHOULD BE COMPLETED BY THE RESEARCH AGENCY AND RETURNED BY\nFAX TO THE FOLLOWING PERSON:\nMS. JACKIE KEY B&W LOUISVILLE, KENTUCKY U. S. A.\nFAX MUMBER: | 1- 502- 568 8092\n2. IN ORDER TO ALLOW US TO COMPARE BIDS, WE REQUEST THAT YOU SUBMIT A BID FOR THE RESEARCH AS SPECIFIED IN SECTION ONE.\nSUGGESTIONS | FOR | ALTERNATE | DESIGNS | FROM | THE | AGENCY | ARE | WELCOMED. | HOWEVER,\nTHESE | SHOULD | BE | SUBMITTED | AS | SEPARATE | DOCUMENTS | APPENDED | TO | THIS | BID\n3. | IF YOU HAVE ANY QUESTIONS, PLEASE CONTACT THE FOLLOWING PERSON:\nMary D. Davis\nFAX | NUMBER: | 1- 502- 568- 8092\nOTHER INFORMATION\nDATE REQUESTED: | 2/ 22 by courier\nDEADLINE FOR BID RECEIPT: | 3/1/91\n464565018",
+    "category": "handwritten_form",
+    "description": "Formulaire FUNSD rempli manuellement, avec transcription humaine. Source Kaggle MIT: senju14/ocr-dataset-of-multi-type-documents.",
+    "source": "kaggle",
+    "source_id": "kaggle:senju14/ocr-dataset-of-multi-type-documents:0011845203",
+    "license": "MIT",
+    "annotation_path": "dataset/kaggle_forms/0011845203.json"
+  },
+  {
+    "image_path": "dataset/kaggle_forms/0011856542.png",
+    "ground_truth": "PROJECT INITIATION FORM\nPROJECT CODE | BD-FF | DATE | 1/4/90\nPROJECT NAME | BULL DURHAM Full Flavor King Size Cigarettes\nPROJECT LEADER | J. F. Anders/ J. E. Mann\nWORK REQUESTED BY | Marketing\nPROJECT OBJECTIVE\nDevelop 14- mg \"tar\" delivery king size cigarette for generic pricing directed toward young male smokers. Cigarette dimensions- 85 mm x 24.9 mm circumference- 20 mm filter- 24 mm tipping. Offshore tobacco blend with unique flavor formulation. Cork tipping.\nOTHER PERSONNEL ASSIGNED\nApproved by\ncc:\nRSS RDC PHL PRC DRB Records Project Leader Other Personnel Assigned",
+    "category": "handwritten_form",
+    "description": "Formulaire FUNSD rempli manuellement, avec transcription humaine. Source Kaggle MIT: senju14/ocr-dataset-of-multi-type-documents.",
+    "source": "kaggle",
+    "source_id": "kaggle:senju14/ocr-dataset-of-multi-type-documents:0011856542",
+    "license": "MIT",
+    "annotation_path": "dataset/kaggle_forms/0011856542.json"
+  },
+  {
+    "image_path": "dataset/kaggle_forms/0011859695.png",
+    "ground_truth": "AMERICAN BROADCASTING COMPANY TELEVISION NETWORK\n1333 Avenue of the Americas, New York, New York 10019 LT 1- 7777\nDate: | September 25, 1969\nAgency: | SSC&B, Inc | Contact: | Larry Odum\nAddress: | 575 Lexington Avenue, New York, New York 10022\nClient: | American Tobacco Company\nRECEIVED\nPall Mail Filter tip\nProduct:\nSEP 30\nFilm Cleared: | VIDEO TAPE APPROVAL | PERCY F. SMITH\n\"Presenter/ Girl Rev\" AT-M B-T-64 :60 \"Pall Mall Filter Tip\" AT-P/ F-T-317 :30\nTAPE WILL FOLLOW AS SOON AS I RECEIVE IT FROM THE TAPE LIBRARY.\nPLEASE NOTIFY THIS DEPARTMENT OF ANY CHANGES IN THE CODE NUMBER(S).\nFinal approval is, of course, dependent upon time and placement of the commercial(s).\nFilm(s) enclosed.\nSincerely, American Broadcasting Company Cynthia Fates C.B Department BROADCAST STANDARDS AND PRACTICES\nCF: | cb\nXER 264/ REV 5/ 68",
+    "category": "handwritten_form",
+    "description": "Formulaire FUNSD rempli manuellement, avec transcription humaine. Source Kaggle MIT: senju14/ocr-dataset-of-multi-type-documents.",
+    "source": "kaggle",
+    "source_id": "kaggle:senju14/ocr-dataset-of-multi-type-documents:0011859695",
+    "license": "MIT",
+    "annotation_path": "dataset/kaggle_forms/0011859695.json"
+  },
+  {
+    "image_path": "dataset/kaggle_forms/0011899960.png",
+    "ground_truth": "7\nAttention | DR. HUGHES, MESSRS. ALAR, SANDEFUR, | Department | CORPORATE AFFAIRS\nBLOTT, BUTLER, MIDDLETON, CHRISTENSEN, PEPPLES, SACHS FREEDMAN\nCopies | T. HUMBER, M. BATEMAN | Subject | L&M Lawsuit\nPRESS QUERY\nPublication | ADWEEK - Midwest\nReporter/ Editor | Fran Brock (312) 467- 6500\nReceived by | Mark Ahearn | Time | 1: 45 P. M. | Date | 7/ 9/ 84\nDeadline for response | Already handled\nDescribe the storyline, list the questions and proposed answers, and summarize handling, including clearances.\nMs. Brock requested information regarding L&M lawsuit. I provided the approved prepared response.\nReporter then requested clarification of generic cigarette vs. 'private label cigarette' and asked to be notified when further announcements regarding generics were made.\nJ. M. A. JMA\n516007780\nRECEIVED\nJUL 10 1984 JOHN ALAR",
+    "category": "handwritten_form",
+    "description": "Formulaire FUNSD rempli manuellement, avec transcription humaine. Source Kaggle MIT: senju14/ocr-dataset-of-multi-type-documents.",
+    "source": "kaggle",
+    "source_id": "kaggle:senju14/ocr-dataset-of-multi-type-documents:0011899960",
+    "license": "MIT",
+    "annotation_path": "dataset/kaggle_forms/0011899960.json"
+  },
+  {
+    "image_path": "dataset/kaggle_forms/0011906503.png",
+    "ground_truth": "FA 956 (5- 85) g1 0081. (d) | 0465E\nBROWN & WILLIAMSON TOBACCO CORPORATION CAPITAL BUDGET PROJECT R&D\nCapital Budget | ($000) | Date Submitted\nTitle\nPurpose | CICARETTE TEST STATION (CT5400)\n1 | Maintenance of Existing Business | 5 | Compliance with Outside Requirements\n2 | Expansion of Existing Business | 6\n3 | New Products | Company Improvements & Administrative Requirements\n4 | Cost Reduction | 7 | Quality Improvement\nStatus | Estimate Cost\nThis Project is | x | Proposed | TOTAL | CAPITAL | EXPENSE\nApproved; | Proposal No. | 80 | 80 | 0\nProject Dates\nSubmission | 88 | Start | 7 | 88 | Completion | 11 | 88\nYr. | Mo. | Yr. | Mo. | Yr.\nPROJECT DESCRIPTION\nThe Cigarette Test Station (CTS400) combines many of the stand- alone instruments that R&D currently uses to measure cigarette weight, pressure drop, ventilation, and hardness into one compact module. The CTS400 has the additional measurement of cigarette hardness in comparison with the CTS300. With this added, measurement R&D will be able to replace the Firmness Integrator that measures cigarette firmness in addition to other measurements that are mentioned above. The Firmness Integrator is no longer manufactured and parts are becoming difficult to obtain. Lastly, purchase of this instrument would provide similar capability as the Macon Plant and help facilitate comparisions between laboratories.\nESTIMATED SPENDING SCHEDULE\nSpent Prior to | 1989 | Balance to Spend\nCAPITAL | 80 | CAPITAL\nEXPENSE | 0 | EXPENSE\n1989 SPENDING BY QUARTER | YEAR | CAPITAL | EXPENSE\nJAN. | -MAR. | APR. | -JUN. | JUL. | -SEP | OCT. | -DEC | TOTAL | 1990\nCAPITAL | 1991\nEXPENSE | 1992\n1993\nBeyond 1993\nSubmitted by | Approved by\nW. O. Crain\n621099940J",
+    "category": "handwritten_form",
+    "description": "Formulaire FUNSD rempli manuellement, avec transcription humaine. Source Kaggle MIT: senju14/ocr-dataset-of-multi-type-documents.",
+    "source": "kaggle",
+    "source_id": "kaggle:senju14/ocr-dataset-of-multi-type-documents:0011906503",
+    "license": "MIT",
+    "annotation_path": "dataset/kaggle_forms/0011906503.json"
+  },
+  {
+    "image_path": "dataset/kaggle_forms/0011973451.png",
+    "ground_truth": "NEW EXPORT PRODUCT DEVELOPMENT CHARTER\nDate: | 6/ 24/ 94\nBRAND/PROJECT NAME:\nRICHLAND Kings (Soft Pack) -Duty Free (Phoenix)\nMARKET (S):\nWorld- wide Duty Free\nOBJECTIVE:\nGenerate incremental volume for B& W by providing a low price brand to various international duty- free markets.\nSOURCE OF BUSINESS:\nMajor Competitive Brands: | Target Audience:\nTBD | Value- conscious Smokers\nCOST OR RETAIL PRICING:\nTBD\nVOLUME:\nStart | Up: | Est. Monthly Ongoing:\nTBD | TBD\nINITIAL MATERIALS REQUIRED: | Qty In Units | Dollar Cost\nPack Flats Labels: | On Hand\nCartons: | On Hand\nCases: | 500 | $250\nTIMETABLE:\nManufacturing: | Shipping:\nProduct Specs Date: | In- Market Arrival Date:\nStart Manufacture Date: | Launch Date:\nAPPROVALS: | Date | Date\nGroup Prod Dir | VP Int'l Planning\nDir. Int' Admin | VP Int'l Marketing\nRegional Dir/ VP | Senior VP Int'l\n670886182",
+    "category": "handwritten_form",
+    "description": "Formulaire FUNSD rempli manuellement, avec transcription humaine. Source Kaggle MIT: senju14/ocr-dataset-of-multi-type-documents.",
+    "source": "kaggle",
+    "source_id": "kaggle:senju14/ocr-dataset-of-multi-type-documents:0011973451",
+    "license": "MIT",
+    "annotation_path": "dataset/kaggle_forms/0011973451.json"
+  },
+  {
+    "image_path": "dataset/kaggle_forms/0011974919.png",
+    "ground_truth": "RESPONSE CODE REQUEST CONFIRMATION\nTo | Joe Leinster\nFrom: | Joyce Bagby\nDate: | September 10, 1996\nBrand: | Eclipse | PPS Program # | 602399 | Requested By:\nTitle: | Sneak Preview Confirmation Call- Charlotte Tests\nDescription: | Record of confirmation calls for sneak preview appointments\nFullfillment Data Entry at | APAC\nCirculation Quantity: | 300\nEstimated Response: | 100.00 %\nEstimated Responders: | 300\nDistribution Drop Date: | 10/ 03/ 96 | Expiration Date:\nResponse Code Assigned: | W25\nAddress, postal requirements, barcodes, document storage, and batch numbers to be supplied by:\nAPAC\nDE Fullfillment Vendor\nC: | Suzi Hicks RJR- IR | Debbie Lockery\nKaren Giddens | Vanessa Oakley\n52251 2963\nDrew Huyett | Melissa Andrews - TBM\nJackson Roper | Tammi LaManna - M/ B",
+    "category": "handwritten_form",
+    "description": "Formulaire FUNSD rempli manuellement, avec transcription humaine. Source Kaggle MIT: senju14/ocr-dataset-of-multi-type-documents.",
+    "source": "kaggle",
+    "source_id": "kaggle:senju14/ocr-dataset-of-multi-type-documents:0011974919",
+    "license": "MIT",
+    "annotation_path": "dataset/kaggle_forms/0011974919.json"
+  },
+  {
+    "image_path": "dataset/kaggle_forms/0011976929.png",
+    "ground_truth": "SPECIAL EVENTS\nState: | Illinois | City/ Town: | Dundee\nType of Event: | Beauty Contest\nEstimated Attendance | 700 | Dates: | March 3rd, 4th & 5th,\nName of Event: | Mrs. Illinois Beauty Pageant\nContact (Name/ Telephone): | Ms. Joy Weathers (Sales) 312/ 426 - 8000\nAudience Concentration | 90 % White - 10 % Black Age category 21 yrs. to 45 yrs.\nRecommended Brand(s) and Promotional Activity: | BARCLAY sampling\n2 - 12M cases mixed.\nTo be placed on tables by B & W Reps.\n466603840\n/lr | /934g",
+    "category": "handwritten_form",
+    "description": "Formulaire FUNSD rempli manuellement, avec transcription humaine. Source Kaggle MIT: senju14/ocr-dataset-of-multi-type-documents.",
+    "source": "kaggle",
+    "source_id": "kaggle:senju14/ocr-dataset-of-multi-type-documents:0011976929",
+    "license": "MIT",
+    "annotation_path": "dataset/kaggle_forms/0011976929.json"
+  },
+  {
+    "image_path": "dataset/kaggle_forms/0012178355.png",
+    "ground_truth": "Attachment II\nSPECIFICATION CHANGE PROPOSAL\nBRAND | ELI CUTTER KS | SPECIFICATION CHANGE NUMBER 84- 79\nDomestic | X | Export | Military | Contract\nTYPE OF SPECIFICATION CHANGE (Check all that apply)\nPackaging, Temporary | Packaging, Permanent\nCigarette Design, Trial | Cigarette Design, Permanent\nTar Adjustment < 1 mg | Tar Adjustment > 1 mg\nNew Product | X | Discontinue Product\nEquivalent Additive | Equivalent Packaging Material\nEquivalent Filter/ Paper/ /Tipping | Processing\nDescription: | ELI CUTTER KS, for test market, using AMELIA \"B\" Blend (XLF -680G)\n*Cost Summary-\nREQUESTED IMPLEMENTATION DATE | 9 /17 /84\nCOST SUMMARY\nObsolete Material Cost\nSpecial Equipment/ Material Cost\nEst. Annual Product Cost Change\nATTACHMENTS (Check if Included)\nRationale | Cost Analysis\nProduct Specification List | X | Spec. Change Detail\nPackaging Art Stat. | Casing Flavoring Formulae\nProcessing Detail | X | Blend Formulae\nInitial Production Requirement\nPrepared By: | D. M. Frank | Date | 10/ 10/ 84\nENDORSEMENTS | Date\nCQA\nRD&E - Product\nRD&E - Process\nELT\nMarketing\nAPPROVAL | Date\nCQA\nPresident\n10111\n621626776",
+    "category": "handwritten_form",
+    "description": "Formulaire FUNSD rempli manuellement, avec transcription humaine. Source Kaggle MIT: senju14/ocr-dataset-of-multi-type-documents.",
+    "source": "kaggle",
+    "source_id": "kaggle:senju14/ocr-dataset-of-multi-type-documents:0012178355",
+    "license": "MIT",
+    "annotation_path": "dataset/kaggle_forms/0012178355.json"
+  }
+]
