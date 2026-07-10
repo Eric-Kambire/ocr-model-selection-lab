@@ -75,6 +75,21 @@ Ouvrez `benchmark_colab.ipynb`, choisissez `CPU` ou `T4 GPU` dans
 notebook vérifie le matériel réellement disponible et lance une URL Gradio
 partageable.
 
+Le notebook utilise par défaut le dataset inclus dans le dépôt. Pour tester vos
+propres documents dans Colab, activez `IMPORT_CUSTOM_DATASET_ZIP = True` puis
+uploadez un ZIP contenant soit `labels.csv`, soit `dataset.json`.
+
+Format CSV minimal :
+
+```csv
+image_path,ground_truth,category,description
+images/cheque_001.png,"texte attendu exact",bank,"chèque manuscrit"
+images/form_001.jpg,"texte attendu exact",handwritten_form,"formulaire rempli"
+```
+
+Les chemins `image_path` sont relatifs au ZIP. Les images sont copiées dans
+`dataset/user_uploads/` et ajoutées au catalogue de la session Colab.
+
 ## CLI
 
 ```bash
