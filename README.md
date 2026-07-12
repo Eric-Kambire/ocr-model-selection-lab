@@ -75,6 +75,11 @@ Ouvrez `benchmark_colab.ipynb`, choisissez `CPU` ou `T4 GPU` dans
 notebook vérifie le matériel réellement disponible et lance une URL Gradio
 partageable.
 
+Le repo GitHub est nécessaire dans Colab parce qu’il contient le code du
+benchmark : UI, métriques, runner, adaptateurs, graphiques et exports. Les
+modèles ou datasets Kaggle sont des ressources à télécharger ensuite dans ce
+code ; ils ne remplacent pas le repo.
+
 Le notebook utilise par défaut le dataset inclus dans le dépôt. Pour tester vos
 propres documents dans Colab, activez `IMPORT_CUSTOM_DATASET_ZIP = True` puis
 uploadez un ZIP contenant soit `labels.csv`, soit `dataset.json`.
@@ -89,6 +94,11 @@ images/form_001.jpg,"texte attendu exact",handwritten_form,"formulaire rempli"
 
 Les chemins `image_path` sont relatifs au ZIP. Les images sont copiées dans
 `dataset/user_uploads/` et ajoutées au catalogue de la session Colab.
+
+Pour une ressource Kaggle, le notebook propose aussi une cellule optionnelle
+avec `kagglehub.dataset_download(...)` et `kagglehub.model_download(...)`. Un
+modèle Kaggle téléchargé doit avoir un adaptateur Python avant d’être comparable
+dans le benchmark.
 
 ## CLI
 
