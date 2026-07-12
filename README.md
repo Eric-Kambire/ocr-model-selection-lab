@@ -71,16 +71,14 @@ le fichier Compose principal.
 ## Google Colab
 
 Ouvrez `benchmark_colab.ipynb`, choisissez `CPU` ou `T4 GPU` dans
-**Runtime > Change runtime type**, puis exécutez les cellules dans l’ordre. Le
-notebook vérifie le matériel réellement disponible et lance une URL Gradio
-partageable.
+**Runtime > Change runtime type**, puis exécutez les cellules dans l’ordre.
 
-Le repo GitHub est nécessaire dans Colab parce qu’il contient le code du
-benchmark : UI, métriques, runner, adaptateurs, graphiques et exports. Les
-modèles ou datasets Kaggle sont des ressources à télécharger ensuite dans ce
-code ; ils ne remplacent pas le repo.
+Le notebook Colab est autonome : il ne clone pas le repo et ne dépend pas du
+code local pour exécuter le benchmark. La logique minimale nécessaire est écrite
+directement dans les cellules : dataset, adaptateurs, métriques, graphiques,
+exports et interface Gradio légère.
 
-Le notebook utilise par défaut le dataset inclus dans le dépôt. Pour tester vos
+Le notebook utilise par défaut un mini dataset synthétique. Pour tester vos
 propres documents dans Colab, activez `IMPORT_CUSTOM_DATASET_ZIP = True` puis
 uploadez un ZIP contenant soit `labels.csv`, soit `dataset.json`.
 
@@ -93,12 +91,13 @@ images/form_001.jpg,"texte attendu exact",handwritten_form,"formulaire rempli"
 ```
 
 Les chemins `image_path` sont relatifs au ZIP. Les images sont copiées dans
-`dataset/user_uploads/` et ajoutées au catalogue de la session Colab.
+le workspace temporaire Colab et ajoutées au dataset de la session.
 
-Pour une ressource Kaggle, le notebook propose aussi une cellule optionnelle
-avec `kagglehub.dataset_download(...)` et `kagglehub.model_download(...)`. Un
-modèle Kaggle téléchargé doit avoir un adaptateur Python avant d’être comparable
-dans le benchmark.
+Le notebook contient aussi des cellules prêtes pour préparer plusieurs familles
+de modèles : EasyOCR, PaddleOCR, Qwen OCR 0.8B, MiniCPM-V 4.6, Chandra OCR,
+LightOnOCR, dots.ocr, PaddleOCR-VL, LocateAnything et Unlimited OCR. Certains
+modèles sont téléchargés seulement : ils nécessitent un adaptateur Python
+spécifique avant d’être comparables.
 
 ## CLI
 
