@@ -2572,10 +2572,13 @@ cells.append(code(r"""
                 {"Métrique": "Modèle", "Valeur": model_name or "En attente"},
                 {"Métrique": "Statut", "Valeur": "Analyse en cours"},
             ])
+        status = str(result.get("status", "N/A"))
+        if result.get("error"):
+            status += f" — {result['error']}"
         return pd.DataFrame([
             {"Métrique": "Progression", "Valeur": f"{completed}/{total}"},
             {"Métrique": "Modèle", "Valeur": result.get("model_name", model_name)},
-            {"Métrique": "Statut", "Valeur": result.get("status", "N/A")},
+            {"Métrique": "Statut", "Valeur": status},
             {"Métrique": "Temps image", "Valeur": format_number(result.get("latency"), 2, " s")},
             {"Métrique": "CER", "Valeur": format_number(result.get("cer") * 100 if pd.notna(result.get("cer", np.nan)) else np.nan, 1, " %")},
             {"Métrique": "WER", "Valeur": format_number(result.get("wer") * 100 if pd.notna(result.get("wer", np.nan)) else np.nan, 1, " %")},
@@ -2659,7 +2662,15 @@ cells.append(code(r"""
                 result = event["result"]
                 last_image = result.get("preview_image_path") or result["image_path"]
                 last_metrics = live_metrics_frame(result, completed, total, event["model_name"])
-                last_text = str(result.get("text") or result.get("raw_text") or "(sortie vide)")
+                if result.get("status") == "skipped_incompatible":
+                    last_text = (
+                        "Modèle non exécuté dans ce runtime. "
+                        f"Profil/GPU requis : {result.get('error') or 'voir la fiche modèle'}."
+                    )
+                elif result.get("status") == "failed_load":
+                    last_text = f"Chargement impossible : {result.get('error') or 'détail indisponible'}."
+                else:
+                    last_text = str(result.get("text") or result.get("raw_text") or "(sortie vide)")
                 status_text = (
                     f"**Dernier résultat :** {event['model_name']} · `{result['status']}` · "
                     f"{format_number(result['latency'], 2, ' s')}"

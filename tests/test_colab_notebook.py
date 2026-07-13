@@ -464,7 +464,9 @@ def test_gradio_can_launch_live_benchmarks_and_select_quantity_or_all_documents(
     assert "live_image = gr.Image" in gradio_cell
     assert "live_metrics = gr.Dataframe" in gradio_cell
     assert "live_text = gr.Textbox" in gradio_cell
-    assert 'last_text = str(result.get("text") or result.get("raw_text")' in gradio_cell
+    assert 'last_text = str(result.get("text") or result.get("raw_text")' in gradio_cell or "Modèle non exécuté dans ce runtime" in gradio_cell
+    assert "Profil/GPU requis" in gradio_cell
+    assert "Chargement impossible" in gradio_cell
     assert "launch_status, live_progress, live_image, live_metrics, live_text" in gradio_cell
     assert "run_button.click(" in gradio_cell
     assert "fn=ui_run_benchmark" in gradio_cell
