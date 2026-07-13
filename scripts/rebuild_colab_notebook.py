@@ -773,7 +773,7 @@ cells.append(code(r"""
 cells.append(markdown(r"""
     ## 5. Choisir et télécharger les modèles
 
-    Les modèles cochés par défaut donnent une comparaison utile sur un Colab T4 sans dépasser volontairement la mémoire :
+    Cette cellule est la liste explicite des poids à télécharger. **Par défaut, tous les modèles du catalogue sont cochés** : le téléchargement peut représenter plusieurs dizaines de Go et certains modèles nécessitent un profil/runtine GPU séparé. Les poids sont téléchargés une fois, puis Gradio ne charge en mémoire que les modèles sélectionnés pour le run, un par un.
 
     - **EasyOCR** : baseline traditionnelle, CPU/GPU, sans notion de token génératif ;
     - **PP‑OCRv6 medium** : détection + reconnaissance OCR classique, rapide, CPU/GPU ;
@@ -787,9 +787,6 @@ cells.append(markdown(r"""
 
 cells.append(code(r"""
     # ÉTAPE 5A — Catalogue matériel et dépendances
-    DEFAULT_SELECTED_MODELS = ["easyocr", "pp_ocrv6", "glm_ocr", "granite_docling_258m"]
-    SELECTED_MODELS = list(DEFAULT_SELECTED_MODELS)
-    DOWNLOAD_SELECTED_WEIGHTS = True
 
     MODEL_CATALOG = {
         "easyocr": {
@@ -879,6 +876,21 @@ cells.append(code(r"""
         },
     }
 
+    # Modifiez uniquement cette liste si vous ne voulez pas télécharger tout le catalogue.
+    # Exemple rapide : MODELS_TO_DOWNLOAD = ["easyocr", "pp_ocrv6", "glm_ocr"]
+    ALL_MODEL_NAMES = list(MODEL_CATALOG)
+    DEFAULT_SELECTED_MODELS = [
+        "easyocr", "pp_ocrv6", "paddleocr_vl_1_6", "glm_ocr", "granite_docling_258m",
+        "qwen_ocr_0_8b", "minicpm_v_4_6", "chandra_ocr_2", "lightonocr_2_1b",
+        "dots_ocr", "unlimited_ocr", "locateanything_3b",
+    ]
+    MODELS_TO_DOWNLOAD = ALL_MODEL_NAMES.copy()
+    SELECTED_MODELS = MODELS_TO_DOWNLOAD.copy()
+    DOWNLOAD_SELECTED_WEIGHTS = True
+    print("Modèles à télécharger (modifiez MODELS_TO_DOWNLOAD ici) :")
+    print("\n".join(f"  - {name}" for name in MODELS_TO_DOWNLOAD))
+    print(f"Total sélectionné : {len(MODELS_TO_DOWNLOAD)} / {len(ALL_MODEL_NAMES)}")
+
     def model_readiness(model_name):
         cfg = MODEL_CATALOG[model_name]
         compatible_profile = cfg["profile"] == RUNTIME_PROFILE or (
@@ -916,7 +928,7 @@ cells.append(code(r"""
 """))
 
 cells.append(code(r"""
-    # ÉTAPE 5B — Télécharger uniquement les poids sélectionnés et compatibles
+    # ÉTAPE 5B — Télécharger la liste MODELS_TO_DOWNLOAD
     from huggingface_hub import hf_hub_download, model_info, snapshot_download
 
     os.environ.setdefault("HF_HOME", str(MODEL_DIR))
@@ -925,9 +937,6 @@ cells.append(code(r"""
 
     def download_model_weights(model_name):
         cfg = MODEL_CATALOG[model_name]
-        ready, reason = model_readiness(model_name)
-        if not ready:
-            return {"model": model_name, "status": "skipped", "detail": reason}
         strategy = cfg["download_strategy"]
         if strategy == "runtime":
             MODEL_RESOLVED_REVISIONS.setdefault(model_name, "managed-by-runtime")
@@ -968,6 +977,7 @@ cells.append(code(r"""
             MODEL_LOCAL_PATHS[model_name] = str(local_dir)
             return {"model": model_name, "status": "downloaded", "detail": str(local_dir)}
         snapshot_path = snapshot_download(cfg["model_id"], cache_dir=MODEL_DIR, token=HF_TOKEN or None)
+        MODEL_LOCAL_PATHS[model_name] = str(snapshot_path)
         MODEL_RESOLVED_REVISIONS[model_name] = Path(snapshot_path).name
         return {"model": model_name, "status": "downloaded", "detail": cfg["model_id"]}
 
@@ -983,7 +993,7 @@ cells.append(code(r"""
             except Exception as exc:
                 download_report.append({"model": selected_name, "status": "error", "detail": str(exc)})
     display(pd.DataFrame(download_report))
-    print("Les modèles non sélectionnés seront téléchargés seulement si vous les choisissez dans Gradio.")
+    print("Téléchargement terminé. Gradio vérifie la compatibilité du profil puis charge chaque modèle sélectionné un par un.")
 """))
 
 cells.append(markdown(r"""
@@ -1118,6 +1128,10 @@ cells.append(code(r"""
     def hf_revision_for(model_name):
         value = MODEL_RESOLVED_REVISIONS.get(model_name)
         return value if isinstance(value, str) and value != "managed-by-runtime" else None
+
+    def model_source_for(model_name):
+        # Utilise exactement le snapshot téléchargé par l'étape 5 quand il existe.
+        return MODEL_LOCAL_PATHS.get(model_name) or MODEL_CATALOG[model_name]["model_id"]
 
     def prediction_payload(
         text="", latency=np.nan, status="failed", raw_response=None, error=None,
@@ -1257,14 +1271,22 @@ cells.append(code(r"""
         def __init__(self, name, config):
             super().__init__(name, config)
             from transformers import AutoModelForImageTextToText, AutoProcessor
-            dtype = preferred_dtype()
+            # GLM-OCR publie des poids BF16 et recommande torch_dtype="auto".
+            # Cela évite un failed_load sur les runtimes où le type du checkpoint
+            # ne peut pas être converti automatiquement au moment du chargement.
+            dtype = "auto"
+            model_source = MODEL_LOCAL_PATHS.get(name) or config["model_id"]
+            local_only = Path(model_source).is_dir()
             self.processor = AutoProcessor.from_pretrained(
-                config["model_id"], revision=hf_revision_for(name),
-                token=HF_TOKEN or None, cache_dir=MODEL_DIR,
+                model_source, revision=None if local_only else hf_revision_for(name),
+                token=None if local_only else (HF_TOKEN or None), cache_dir=MODEL_DIR,
+                local_files_only=local_only,
             )
             self.model = AutoModelForImageTextToText.from_pretrained(
-                config["model_id"], torch_dtype=dtype, device_map="auto",
-                revision=hf_revision_for(name), token=HF_TOKEN or None, cache_dir=MODEL_DIR,
+                model_source, torch_dtype=dtype, device_map="auto",
+                revision=None if local_only else hf_revision_for(name),
+                token=None if local_only else (HF_TOKEN or None), cache_dir=MODEL_DIR,
+                local_files_only=local_only,
             ).eval()
 
         def predict(self, image_path, prompt=None, max_seconds=120):
@@ -2541,6 +2563,7 @@ cells.append(code(r"""
             {"Métrique": "Boîtes détectées", "Valeur": format_number(result.get("detected_boxes"), 0)},
             {"Métrique": "Boîtes/s", "Valeur": format_number(result.get("boxes_per_second"), 1)},
             {"Métrique": "Pic GPU", "Valeur": format_number(result.get("gpu_peak_mb"), 0, " Mo")},
+            {"Métrique": "Détail chargement/erreur", "Valeur": str(result.get("error") or "Aucune")},
         ])
 
     def summary_for_ui(summary):
@@ -2617,6 +2640,7 @@ cells.append(code(r"""
                 status_text = (
                     f"**Dernier résultat :** {event['model_name']} · `{result['status']}` · "
                     f"{format_number(result['latency'], 2, ' s')}"
+                    + (f"\n\n> Détail : `{result.get('error')}`" if result.get("error") else "")
                 )
             else:
                 current_results = event["results_df"]
