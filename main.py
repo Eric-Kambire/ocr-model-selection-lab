@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import html
 import json
+import logging
 import os
 import random
 import time
@@ -31,6 +32,14 @@ ROOT_DIR = Path(__file__).resolve().parent
 DATASET_DIR = ROOT_DIR / "dataset"
 CATALOG_PATH = DATASET_DIR / "dataset.json"
 RUNS_DIR = ROOT_DIR / "runs"
+
+LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
+logging.basicConfig(
+    level=getattr(logging, LOG_LEVEL, logging.INFO),
+    format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
+)
+LOGGER = logging.getLogger(__name__)
+LOGGER.info("Application initialisation | root=%s | log_level=%s", ROOT_DIR, LOG_LEVEL)
 
 METRICS_HELP = """
 ## Comment lire les résultats
@@ -358,9 +367,11 @@ def get_installed_ollama_models() -> list[str]:
                 names.append(model.get("model") or model.get("name"))
             else:
                 names.append(getattr(model, "model", None))
-        return [name for name in names if name]
+        installed = [name for name in names if name]
+        LOGGER.info("Ollama models detected | count=%d | models=%s", len(installed), installed)
+        return installed
     except Exception as exc:
-        print(f"Could not list Ollama models: {exc}")
+        LOGGER.warning("Unable to list Ollama models | error=%s", exc, exc_info=True)
         return []
 
 
@@ -374,8 +385,13 @@ def run_benchmark(
     if selected_category != "All":
         dataset = [item for item in dataset if item["category"] == selected_category]
     if not dataset:
+        LOGGER.warning("Benchmark skipped: no dataset cases | category=%s", selected_category)
         return pd.DataFrame(), [], ""
 
+    LOGGER.info(
+        "Benchmark starting | models=%s | category=%s | cases=%d | eval_mode=%s",
+        selected_models, selected_category, len(dataset), eval_mode,
+    )
     runner = BenchmarkRunner(build_default_registry())
     cases = [BenchmarkCase.from_dict(item) for item in dataset]
     run_id, results = runner.run(
@@ -386,7 +402,7 @@ def run_benchmark(
     )
     summary = summarize_results(results)
     run_dir = save_run(run_id, summary, results, RUNS_DIR)
-    print(f"Benchmark {run_id} saved to {run_dir}")
+    LOGGER.info("Benchmark completed | run_id=%s | results=%d | saved_to=%s", run_id, len(results), run_dir)
     return summary, results, run_id
 
 

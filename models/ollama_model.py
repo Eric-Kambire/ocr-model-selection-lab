@@ -1,6 +1,9 @@
 import time
 import os
+import logging
 from models.base import BaseOCRModel
+
+LOGGER = logging.getLogger(__name__)
 
 DEFAULT_OCR_PROMPT = """You are a professional layout-preserving OCR engine.
 Your task is to transcribe all the text, tables, and handwriting in this image.
@@ -18,16 +21,22 @@ class OllamaOCRModel(BaseOCRModel):
     def __init__(self, model_name: str, prompt: str | None = None):
         super().__init__(model_name)
         self.prompt = prompt.strip() if prompt and prompt.strip() else DEFAULT_OCR_PROMPT
+        self.host = os.getenv("OLLAMA_HOST", "http://127.0.0.1:11434")
         # Import ollama here to avoid dependency issues if not installed
         try:
             import ollama
             self.client = ollama
+            LOGGER.info(
+                "Ollama adapter ready | model=%s | host=%s | prompt_chars=%d",
+                self.model_name, self.host, len(self.prompt),
+            )
         except ImportError:
             self.client = None
-            print("Warning: 'ollama' Python library not installed. Please install it using pip.")
+            LOGGER.exception("Ollama Python library is not installed | model=%s", self.model_name)
 
     def perform_ocr(self, image_path: str) -> dict:
         if not self.client:
+            LOGGER.error("Ollama call skipped: Python client unavailable | model=%s", self.model_name)
             return {
                 "text": "",
                 "raw_response": "Error: Ollama library not installed.",
@@ -38,6 +47,7 @@ class OllamaOCRModel(BaseOCRModel):
             }
 
         if not os.path.exists(image_path):
+            LOGGER.error("Ollama call skipped: image not found | model=%s | image=%s", self.model_name, image_path)
             return {
                 "text": "",
                 "raw_response": f"Error: Image path not found: {image_path}",
@@ -48,6 +58,10 @@ class OllamaOCRModel(BaseOCRModel):
             }
 
         start_time = time.time()
+        LOGGER.info(
+            "Ollama request started | model=%s | image=%s | temperature=0.0",
+            self.model_name, image_path,
+        )
         
         try:
             # Call Ollama chat API with images
@@ -97,6 +111,11 @@ class OllamaOCRModel(BaseOCRModel):
             if output_tokens is not None and eval_duration:
                 # Ollama durations are expressed in nanoseconds.
                 tokens_per_second = float(output_tokens) / (float(eval_duration) / 1_000_000_000)
+
+            LOGGER.info(
+                "Ollama response received | model=%s | latency=%.3fs | input_tokens=%s | output_tokens=%s | tokens_per_second=%s | chars=%d",
+                self.model_name, latency, input_tokens, output_tokens, tokens_per_second, len(extracted_text),
+            )
             
             return {
                 "text": extracted_text,
@@ -114,6 +133,10 @@ class OllamaOCRModel(BaseOCRModel):
         except Exception as e:
             latency = time.time() - start_time
             error_msg = f"Error during Ollama OCR inference: {str(e)}"
+            LOGGER.exception(
+                "Ollama request failed | model=%s | image=%s | latency=%.3fs",
+                self.model_name, image_path, latency,
+            )
             return {
                 "text": "",
                 "raw_response": error_msg,

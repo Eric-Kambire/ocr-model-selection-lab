@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import math
 import concurrent.futures
+import logging
 import time
 import uuid
 from collections.abc import Callable, Iterable
@@ -14,6 +15,8 @@ from evaluator import evaluate_bankmark, evaluate_ocr
 
 from .domain import BenchmarkCase, BenchmarkResult, InferenceResult, InferenceStatus
 from .registry import ModelRegistry
+
+LOGGER = logging.getLogger(__name__)
 
 ProgressCallback = Callable[[int, int, str], None]
 TraceCallback = Callable[[dict[str, Any]], None]
@@ -93,6 +96,10 @@ class BenchmarkRunner:
             )
             for spec in model_specs
         ]
+        LOGGER.info(
+            "Runner initialised | models=%s | cases=%d | timeout=%s | eval_mode=%s",
+            [model.model_name for model in models], len(selected_cases), timeout_seconds, eval_mode,
+        )
         run_id = time.strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:8]
         total = len(models) * len(selected_cases)
         completed = 0
@@ -100,7 +107,12 @@ class BenchmarkRunner:
         started_at = time.monotonic()
 
         for model in models:
+            LOGGER.info("Model started | model=%s | cases=%d", model.model_name, len(selected_cases))
             for case in selected_cases:
+                LOGGER.debug(
+                    "Inference started | model=%s | image=%s | completed=%d/%d",
+                    model.model_name, case.image_path, completed, total,
+                )
                 if progress:
                     progress(completed, total, f"{model.model_name}: {case.image_path}")
                 elapsed_before = time.monotonic() - started_at
@@ -141,6 +153,10 @@ class BenchmarkRunner:
                         else InferenceResult.from_legacy_dict(raw)
                     )
                 except Exception as exc:  # Adapter boundary: keep one failure local.
+                    LOGGER.exception(
+                        "Adapter exception | model=%s | image=%s",
+                        model.model_name, case.image_path,
+                    )
                     inference = InferenceResult(
                         text="",
                         latency_seconds=0.0,
@@ -162,6 +178,16 @@ class BenchmarkRunner:
                 result_dict = result.to_dict()
                 if inference.status is not InferenceStatus.SUCCESS:
                     errors += 1
+                    LOGGER.warning(
+                        "Inference finished with non-success status | model=%s | image=%s | status=%s | error=%s",
+                        model.model_name, case.image_path, inference.status.value, inference.error,
+                    )
+                else:
+                    LOGGER.info(
+                        "Inference completed | model=%s | image=%s | latency=%.3fs | chars=%d | tokens=%s",
+                        model.model_name, case.image_path, inference.latency_seconds,
+                        len(inference.text or ""), inference.output_tokens,
+                    )
                 elapsed = time.monotonic() - started_at
                 remaining = (
                     (elapsed / completed) * (total - completed)
@@ -198,6 +224,7 @@ class BenchmarkRunner:
         try:
             return future.result(timeout=timeout_seconds)
         except concurrent.futures.TimeoutError:
+            LOGGER.warning("Inference timeout | model=%s | image=%s | timeout=%.2fs", getattr(model, "model_name", "unknown"), image_path, timeout_seconds)
             if late_result:
                 def capture_late(completed_future):
                     try:

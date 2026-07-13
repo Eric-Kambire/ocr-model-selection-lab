@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+import logging
 from typing import Any
 
 from models.mock_model import MockOCRModel
 from models.ollama_model import OllamaOCRModel
+
+LOGGER = logging.getLogger(__name__)
 
 ModelFactory = Callable[..., Any]
 
@@ -38,6 +41,7 @@ class ModelRegistry:
         if factory is None:
             available = ", ".join(sorted(self._factories))
             raise ValueError(f"Unknown provider '{provider}'. Available providers: {available}")
+        LOGGER.info("Creating model adapter | spec=%s | provider=%s | model=%s", model_spec, provider, model_name)
         return factory(model_name=model_name, **options)
 
     @property
