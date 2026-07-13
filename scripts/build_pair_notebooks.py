@@ -44,7 +44,7 @@ COMMON_INSTALL = r'''
 import os, subprocess, sys, importlib
 
 PINNED = [
-    "numpy==1.26.4", "pillow==11.1.0", "pandas==2.2.3",
+    "numpy==1.26.4", "pillow==11.1.0",
     "huggingface_hub>=0.30,<1", "datasets>=3.5,<4", "plotly>=5.24,<7",
     "transformers>=4.51,<5", "accelerate>=1.6,<2",
 ]
@@ -60,17 +60,16 @@ def _check_binary_stack():
     """Fail early with an actionable message instead of a cryptic ABI traceback."""
     try:
         import numpy as np
-        import pandas as pd
         from PIL import Image, ImageOps
-        print({"numpy": np.__version__, "pandas": pd.__version__, "pillow": Image.__version__})
-        return np, Image, pd
+        print({"numpy": np.__version__, "pillow": Image.__version__})
+        return np, Image
     except (ValueError, ImportError) as exc:
         raise RuntimeError(
-            "Incompatibilité binaire NumPy/Pandas/Pillow. Exécutez la cellule d'installation, "
+            "Incompatibilité binaire NumPy/Pillow. Exécutez la cellule d'installation, "
             "redémarrez le runtime Colab, puis reprenez ici. Détail: " + repr(exc)
         ) from exc
 
-np, Image, pd = _check_binary_stack()
+np, Image = _check_binary_stack()
 
 ROOT = Path("/content/ocr_pair_benchmark")
 ROOT.mkdir(parents=True, exist_ok=True)
@@ -261,18 +260,31 @@ def run_benchmark():
             record = {**row_base, "status": "failed_load", "error": repr(exc), "output": "", "latency_s": time.perf_counter()-t0}
             rows.append(record); print(record)
         finally: adapter.close()
-    result = pd.DataFrame(rows); result.to_csv(ARTIFACTS / "results.csv", index=False); return result
+    import csv
+    result_path = ARTIFACTS / "results.csv"
+    fields = sorted({k for row in rows for k in row})
+    with result_path.open("w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=fields); writer.writeheader(); writer.writerows(rows)
+    return rows
 
 RESULTS = run_benchmark()
 display(RESULTS)
 '''
 
 PLOTS = r'''
-import plotly.express as px
+import plotly.graph_objects as go
 if len(RESULTS):
-    display(px.box(RESULTS, x="model", y="latency_s", color="status", title="Latence par modèle"))
-    ok = RESULTS[RESULTS.status == "success"]
-    if len(ok): display(px.bar(ok.groupby("model", as_index=False).output_chars.mean(), x="model", y="output_chars", title="Volume de texte extrait"))
+    models = sorted({r.get("model", "") for r in RESULTS})
+    fig = go.Figure()
+    for model in models:
+        vals = [float(r.get("latency_s", 0)) for r in RESULTS if r.get("model") == model]
+        fig.add_trace(go.Box(y=vals, name=model))
+    fig.update_layout(title="Latence par modèle", yaxis_title="secondes")
+    display(fig)
+    ok = [r for r in RESULTS if r.get("status") == "success"]
+    if ok:
+        means = [sum(float(r.get("output_chars", 0)) for r in ok if r.get("model") == m) / max(1, sum(r.get("model") == m for r in ok)) for m in models]
+        fig2 = go.Figure(go.Bar(x=models, y=means)); fig2.update_layout(title="Volume moyen de texte extrait", yaxis_title="caractères"); display(fig2)
 print(f"Résultats persistés dans {ARTIFACTS}. Les sorties brutes restent disponibles même pour timeout/erreur.")
 '''
 
@@ -294,7 +306,7 @@ def make_notebook(number: str, left: str, right: str) -> dict:
         code(DATASET),
         code(ADAPTER),
         md("## Téléchargement et smoke test\nCette cellule vérifie réellement le téléchargement, l'instanciation et une inférence sur le premier document. Un `failed_load` est conservé avec l'erreur complète; il n'est pas transformé en faux succès."),
-        code("SMOKE = []\nfor name in SELECTED_MODELS:\n    adapter = Adapter(name); started = time.perf_counter()\n    try:\n        location = adapter.download(); adapter.load()\n        if CASES: output, status = _run_with_timeout(lambda: adapter.predict(CASES[0]['image_path']), TIMEOUT_SECONDS)\n        else: output, status = '', 'no_dataset'\n        SMOKE.append({'model': name, 'status': status, 'load_seconds': time.perf_counter()-started, 'output_chars': len(output or ''), 'error': ''})\n    except Exception as exc:\n        SMOKE.append({'model': name, 'status': 'failed_load', 'load_seconds': time.perf_counter()-started, 'output_chars': 0, 'error': repr(exc)})\n    finally: adapter.close()\nSMOKE = pd.DataFrame(SMOKE); display(SMOKE)"),
+        code("SMOKE = []\nfor name in SELECTED_MODELS:\n    adapter = Adapter(name); started = time.perf_counter()\n    try:\n        location = adapter.download(); adapter.load()\n        if CASES: output, status = _run_with_timeout(lambda: adapter.predict(CASES[0]['image_path']), TIMEOUT_SECONDS)\n        else: output, status = '', 'no_dataset'\n        SMOKE.append({'model': name, 'status': status, 'load_seconds': time.perf_counter()-started, 'output_chars': len(output or ''), 'error': ''})\n    except Exception as exc:\n        SMOKE.append({'model': name, 'status': 'failed_load', 'load_seconds': time.perf_counter()-started, 'output_chars': 0, 'error': repr(exc)})\n    finally: adapter.close()\nprint(SMOKE)"),
         md("## Benchmark sérialisé\nLe benchmark garde chaque sortie brute dans `raw_outputs.jsonl`, y compris un timeout. `latency_s` est le temps par image (chargement exclu), `output_chars` mesure le volume produit, et CER est le taux d'erreur caractère quand le dataset fournit une vérité terrain."),
         code(BENCH),
         code(PLOTS),
