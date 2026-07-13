@@ -44,20 +44,33 @@ COMMON_INSTALL = r'''
 import os, subprocess, sys, importlib
 
 PINNED = [
-    "numpy==1.26.4", "pillow==11.1.0", "pandas>=2.2,<3",
+    "numpy==1.26.4", "pillow==11.1.0", "pandas==2.2.3",
     "huggingface_hub>=0.30,<1", "datasets>=3.5,<4", "plotly>=5.24,<7",
     "transformers>=4.51,<5", "accelerate>=1.6,<2",
 ]
-subprocess.run([sys.executable, "-m", "pip", "install", "-q", "--upgrade", *PINNED], check=True)
-print("Dépendances installées. Si NumPy/Pillow vient d'être remplacé, redémarrez le runtime puis reprenez à la cellule 2.")
+subprocess.run([sys.executable, "-m", "pip", "install", "-q", "--upgrade", "--force-reinstall", "--no-cache-dir", *PINNED], check=True)
+print("Dépendances réinstallées ensemble. IMPORTANT : redémarrez maintenant le runtime Colab (Exécution → Redémarrer la session), puis reprenez à la cellule de vérification.")
 '''
 
 RUNTIME = r'''
 import gc, json, os, platform, subprocess, sys, time, traceback, threading
 from pathlib import Path
-import numpy as np
-from PIL import Image, ImageOps
-import pandas as pd
+
+def _check_binary_stack():
+    """Fail early with an actionable message instead of a cryptic ABI traceback."""
+    try:
+        import numpy as np
+        import pandas as pd
+        from PIL import Image, ImageOps
+        print({"numpy": np.__version__, "pandas": pd.__version__, "pillow": Image.__version__})
+        return np, Image, pd
+    except (ValueError, ImportError) as exc:
+        raise RuntimeError(
+            "Incompatibilité binaire NumPy/Pandas/Pillow. Exécutez la cellule d'installation, "
+            "redémarrez le runtime Colab, puis reprenez ici. Détail: " + repr(exc)
+        ) from exc
+
+np, Image, pd = _check_binary_stack()
 
 ROOT = Path("/content/ocr_pair_benchmark")
 ROOT.mkdir(parents=True, exist_ok=True)
