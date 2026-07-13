@@ -195,6 +195,15 @@ def test_legacy_profile_uses_a_python_312_compatible_numpy_constraint():
     assert "Image.new(\"RGB\", (2, 2), \"white\")" in install_cell
 
 
+def test_runtime_cell_has_binary_preflight_before_model_downloads():
+    runtime_cell = code_cell_containing(load_notebook(), "def verify_runtime_imports")
+    assert "RUNTIME_DIAGNOSTICS = verify_runtime_imports()" in runtime_cell
+    assert "numpy" in runtime_cell and "pillow" in runtime_cell
+    assert "import torchvision" in runtime_cell
+    assert "TorchVision incohérent" in runtime_cell
+    assert "Environnement Python incohérent avant les modèles" in runtime_cell
+
+
 def test_model_catalog_contains_requested_models_and_hardware_contracts():
     notebook = load_notebook()
     catalog_cell = code_cell_containing(notebook, "MODEL_CATALOG =")

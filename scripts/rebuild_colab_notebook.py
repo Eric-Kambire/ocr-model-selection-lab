@@ -210,9 +210,43 @@ cells.append(code(r"""
     try:
         import torch
         DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-    except Exception:
+    except Exception as exc:
         torch = None
         DEVICE = "cpu"
+        print("Torch indisponible au démarrage:", repr(exc))
+
+    def verify_runtime_imports():
+        # Détecte les installations binaires mélangées avant les modèles.
+        diagnostics = {
+            "python": platform.python_version(),
+            "numpy": getattr(np, "__version__", "inconnu"),
+            "pillow": getattr(__import__("PIL"), "__version__", "inconnu"),
+            "torch": getattr(torch, "__version__", "absent"),
+        }
+        problems = []
+        if not str(diagnostics["numpy"]).startswith("1.26."):
+            problems.append(f"NumPy {diagnostics['numpy']} (attendu 1.26.4)")
+        try:
+            from PIL import Image, ImageDraw, ImageFont
+            Image.new("RGB", (1, 1), "white")
+        except Exception as exc:
+            problems.append(f"Pillow incohérent: {exc!r}")
+        try:
+            import torchvision
+            diagnostics["torchvision"] = getattr(torchvision, "__version__", "inconnu")
+        except ModuleNotFoundError:
+            diagnostics["torchvision"] = "absent (facultatif pour les profils OCR)"
+        except Exception as exc:
+            diagnostics["torchvision"] = f"ERREUR: {exc!r}"
+            problems.append(f"TorchVision incohérent: {exc!r}")
+        print("Préflight runtime:", diagnostics)
+        if problems:
+            raise RuntimeError(
+                "Environnement Python incohérent avant les modèles: " + "; ".join(problems)
+                + ". Redémarrez le runtime, exécutez la cellule 1 deux fois comme indiqué, "
+                "puis relancez cette cellule."
+            )
+        return diagnostics
 
     try:
         from google.colab import userdata
@@ -242,6 +276,8 @@ cells.append(code(r"""
         if torch and DEVICE == "cuda" else (0, 0)
     )
     IS_T4 = "T4" in GPU_NAME.upper()
+
+    RUNTIME_DIAGNOSTICS = verify_runtime_imports()
 
     print("Python:", platform.python_version())
     print("Calcul:", DEVICE.upper(), "|", GPU_NAME, f"| {GPU_VRAM_GB:.1f} Go VRAM" if GPU_VRAM_GB else "")
