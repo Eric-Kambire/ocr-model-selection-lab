@@ -320,6 +320,19 @@ def test_core_requested_models_have_real_adapters_and_are_wired_to_the_factory()
     assert 'generation_mode="hybrid", temperature=0.7, do_sample=True' in adapter_cell
 
 
+def test_smoke_test_cell_loads_models_and_reports_real_responses():
+    notebook = load_notebook()
+    smoke_cell = code_cell_containing(notebook, "def smoke_test_models")
+    assert "SMOKE_TEST_MODELS = list(DEFAULT_SELECTED_MODELS)" in smoke_cell
+    assert "download_model_weights(model_name)" in smoke_cell
+    assert "adapter = build_adapter(model_name)" in smoke_cell
+    assert "prediction = adapter.predict(" in smoke_cell
+    assert '"skipped_incompatible"' in smoke_cell
+    assert '"failed_load"' in smoke_cell
+    assert '"empty_output"' in smoke_cell
+    assert "adapter.close()" in smoke_cell
+
+
 def test_wer_operates_on_words_not_joined_characters():
     notebook = load_notebook()
     metrics_cell = next(

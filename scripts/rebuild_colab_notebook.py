@@ -1849,6 +1849,79 @@ cells.append(code(r"""
 """))
 
 cells.append(markdown(r"""
+    ## 7B. Test direct des modèles avant Gradio
+
+    Cette cellule est un smoke test : elle prend la première image du dataset, charge chaque modèle demandé **un seul à la fois**, lance réellement une inférence et conserve la réponse brute. Elle permet de distinguer : modèle fonctionnel, profil/GPU incompatible, poids absents, erreur d'adaptateur ou sortie vide. Sur le Colab gratuit, les modèles compatibles avec le GPU courant seront testés ; les autres seront listés avec leur raison précise.
+"""))
+
+cells.append(code(r"""
+    # ÉTAPE 7B — Smoke test de chargement + réponse réelle
+    import gc
+
+    SMOKE_TEST_MODELS = list(DEFAULT_SELECTED_MODELS)
+    SMOKE_TEST_MAX_SECONDS = 45
+    SMOKE_TEST_ENABLED = True
+
+    def smoke_test_models(model_names=None, image_path=None, max_seconds=45):
+        model_names = list(model_names or SMOKE_TEST_MODELS)
+        if image_path is None:
+            if dataset_df.empty:
+                raise RuntimeError("Le dataset est vide : aucune image pour le smoke test.")
+            image_path = str(dataset_df.iloc[0].image_path)
+        rows = []
+        for model_name in model_names:
+            started = time.perf_counter()
+            adapter = None
+            ready, reason = model_readiness(model_name)
+            if not ready:
+                rows.append({
+                    "model": model_name, "status": "skipped_incompatible", "load_seconds": 0.0,
+                    "inference_seconds": np.nan, "output_chars": 0, "error": reason,
+                })
+                continue
+            try:
+                download_model_weights(model_name)
+                load_started = time.perf_counter()
+                adapter = build_adapter(model_name)
+                load_seconds = time.perf_counter() - load_started
+                prompt = MODEL_CATALOG[model_name].get("prompt") or OCR_PROMPT
+                prediction = adapter.predict(image_path, prompt, max_seconds=float(max_seconds))
+                text = str(prediction.get("text") or "")
+                status = str(prediction.get("status") or "failed")
+                error = str(prediction.get("error") or "")
+                if status == "success" and not text.strip():
+                    status = "empty_output"
+                rows.append({
+                    "model": model_name, "status": status, "load_seconds": load_seconds,
+                    "inference_seconds": prediction.get("latency", np.nan),
+                    "output_chars": len(text), "error": error,
+                })
+            except Exception as exc:
+                rows.append({
+                    "model": model_name, "status": "failed_load", "load_seconds": time.perf_counter() - started,
+                    "inference_seconds": np.nan, "output_chars": 0, "error": repr(exc),
+                })
+            finally:
+                if adapter is not None:
+                    try:
+                        adapter.close()
+                    except Exception:
+                        pass
+                del adapter
+                gc.collect()
+                if torch is not None and DEVICE == "cuda":
+                    torch.cuda.empty_cache()
+        return pd.DataFrame(rows)
+
+    smoke_test_df = smoke_test_models() if SMOKE_TEST_ENABLED else pd.DataFrame()
+    display(smoke_test_df)
+    print(
+        "Lecture : success = le modèle a répondu ; skipped_incompatible = profil/GPU non adapté ; "
+        "failed_load = téléchargement ou constructeur en erreur ; empty_output = réponse vide."
+    )
+"""))
+
+cells.append(markdown(r"""
     ## 8. Sélectionner les documents et exécuter un benchmark checkpointé
 
     Trois modes sont disponibles : tout le dataset, une quantité globale, ou la même quantité dans chaque catégorie. Le runner écrit `results.json` et `details.csv` après **chaque image**. Si Colab se coupe, les résultats déjà terminés restent dans le dossier du run ; le notebook ne prétend pas reprendre automatiquement le modèle au milieu d'une génération.
