@@ -3067,7 +3067,7 @@ cells.append(code(r"""
             ''')
             gr.Dataframe(value=model_catalog_df, interactive=False, label="Compatibilité du catalogue", elem_classes="compact-table")
 
-        run_button.click(
+        run_event = run_button.click(
             fn=ui_run_benchmark,
             inputs=[
                 model_selector, category_selector, selection_mode, quantity_slider,
@@ -3078,6 +3078,17 @@ cells.append(code(r"""
                 summary_table, dashboard_plot, result_selector, export_file,
             ],
             show_progress="full",
+        )
+        # Une mise à jour serveur du Dropdown ne déclenche pas de façon
+        # uniforme `change` selon les versions de Gradio. Recharge donc
+        # explicitement le premier résultat quand le benchmark est terminé,
+        # afin que le texte attendu soit immédiatement visible.
+        run_event.then(
+            fn=show_result, inputs=result_selector,
+            outputs=[
+                detail_image, detail_metrics, expected_text, extracted_text,
+                raw_output, markdown_output, html_source_output, diff_output, prompt_output,
+            ],
         )
         result_selector.change(
             fn=show_result, inputs=result_selector,
@@ -3103,7 +3114,7 @@ cells.append(code(r"""
 
     demo.queue(default_concurrency_limit=1, max_size=8)
     demo.launch(
-        share=IS_COLAB, inline=True, debug=False, prevent_thread_lock=True,
+        share=IS_COLAB, inline=IS_COLAB, debug=False, show_error=True, prevent_thread_lock=True,
         theme=gr.themes.Soft(primary_hue="blue", neutral_hue="slate"), css=APP_CSS,
         auth=GRADIO_AUTH, max_file_size="1GB", allowed_paths=[str(WORK_DIR)],
     )

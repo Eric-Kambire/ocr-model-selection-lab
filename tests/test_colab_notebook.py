@@ -467,7 +467,10 @@ def test_gradio_can_launch_live_benchmarks_and_select_quantity_or_all_documents(
     assert "fn=ui_run_benchmark" in gradio_cell
     assert "demo.queue(default_concurrency_limit=1" in gradio_cell
     assert "demo.launch(" in gradio_cell
-    assert "share=IS_COLAB, inline=True" in gradio_cell
+    assert "share=IS_COLAB, inline=IS_COLAB" in gradio_cell
+    assert "run_event.then(" in gradio_cell
+    assert "fn=show_result, inputs=result_selector" in gradio_cell
+    assert "show_error=True" in gradio_cell
     assert "css=APP_CSS" in gradio_cell
     assert "max(2, len(dataset_df))" in gradio_cell
 
