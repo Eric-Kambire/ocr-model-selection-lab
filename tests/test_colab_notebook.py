@@ -188,6 +188,9 @@ def test_legacy_profile_uses_a_python_312_compatible_numpy_constraint():
     assert 'legacy_numpy = "numpy>=1.26,<2" if sys.version_info >= (3, 12)' in install_cell
     assert 'if not package.startswith(("numpy", "pillow"))' in install_cell
     assert '"--force-reinstall", "pillow==11.1.0"' in install_cell
+    assert '"--force-reinstall", "numpy==1.26.4"' in install_cell
+    assert '"numpy==1.26.4"' in install_cell
+    assert "redémarrez le runtime Colab" in install_cell
     assert 'from PIL import Image, ImageDraw, ImageFont' in install_cell
     assert "Image.new(\"RGB\", (2, 2), \"white\")" in install_cell
 

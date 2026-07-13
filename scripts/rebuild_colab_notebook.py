@@ -88,8 +88,20 @@ cells.append(code(r"""
             check=True,
         )
 
+    def repair_numpy():
+        # NumPy 2.x peut laisser un mélange de fichiers Python/binaire dans
+        # Colab après plusieurs profils pip. NumPy 1.26.4 reste compatible
+        # avec Python 3.12, Transformers, PaddleOCR et les métriques du lab.
+        subprocess.run(
+            [
+                sys.executable, "-m", "pip", "install", "-q", "--no-cache-dir",
+                "--force-reinstall", "numpy==1.26.4",
+            ],
+            check=True,
+        )
+
     common_packages = (
-        "pandas>=2.2", "numpy>=1.26", "pillow>=10", "matplotlib>=3.8",
+        "pandas>=2.2", "numpy==1.26.4", "pillow>=10", "matplotlib>=3.8",
         "plotly>=5.24", "gradio>=6.0,<7", "tqdm>=4.66", "psutil>=5.9",
         "python-Levenshtein>=0.25", "datasets>=3.0", "huggingface_hub>=0.30",
         "kagglehub>=0.3.12", "accelerate>=1.0", "sentencepiece", "protobuf", "safetensors",
@@ -142,7 +154,10 @@ cells.append(code(r"""
     else:
         raise ValueError(f"Profil inconnu: {RUNTIME_PROFILE}")
 
+    repair_numpy()
     repair_pillow()
+    print("NumPy et Pillow ont été réinstallés proprement.")
+    print("IMPORTANT : redémarrez le runtime Colab avant d'exécuter les cellules suivantes.")
     try:
         from PIL import Image, ImageDraw, ImageFont
         Image.new("RGB", (2, 2), "white")
