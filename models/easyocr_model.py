@@ -1,5 +1,6 @@
 import os
 import time
+import gc
 from models.base import BaseOCRModel
 
 try:
@@ -44,6 +45,7 @@ class EasyOCRModel(BaseOCRModel):
                 "output_tokens": None,
                 "tokens_per_second": None,
             }
+
         except Exception as e:
             latency = time.time() - start_time
             return {
@@ -57,3 +59,12 @@ class EasyOCRModel(BaseOCRModel):
                 "output_tokens": None,
                 "tokens_per_second": None,
             }
+
+    def close(self) -> None:
+        """Release the EasyOCR reader before another model is created."""
+        reader = getattr(self, "reader", None)
+        if reader is not None:
+            del self.reader
+        gc.collect()
+        if EASYOCR_AVAILABLE and torch.cuda.is_available():
+            torch.cuda.empty_cache()

@@ -282,9 +282,33 @@ def _metric_percent(value: Any) -> str:
     return f"{float(value) * 100:.2f} %"
 
 
+def _late_trace_for(result: dict[str, Any]) -> dict[str, Any] | None:
+    """Find a provider response that arrived after this result timed out."""
+    if result.get("status") != "timeout" or not result.get("run_id"):
+        return None
+    trace_path = RUNS_DIR / str(result["run_id"]) / "traces.jsonl"
+    if not trace_path.is_file():
+        return None
+    try:
+        with trace_path.open("r", encoding="utf-8") as stream:
+            events = [json.loads(line) for line in stream if line.strip()]
+    except (OSError, json.JSONDecodeError):
+        return None
+    for event in reversed(events):
+        if (
+            event.get("timing") == "late_after_timeout"
+            and event.get("model") == result.get("model")
+            and event.get("image_path") == result.get("image_path")
+        ):
+            return event
+    return None
+
+
 def _live_metrics_markdown(result: dict[str, Any], next_label: str) -> str:
     expected = html.escape(str(result.get("ground_truth", "")))
-    extracted = html.escape(str(result.get("extracted_text", "")))
+    late = _late_trace_for(result)
+    extracted_value = late.get("text", "") if late else result.get("extracted_text", "")
+    extracted = html.escape(str(extracted_value))
     token_speed = result.get("tokens_per_second")
     token_text = (
         f"{float(token_speed):.2f} tokens/s" if token_speed is not None else "N/A"
@@ -293,6 +317,10 @@ def _live_metrics_markdown(result: dict[str, Any], next_label: str) -> str:
         f"\n- **Erreur :** {html.escape(str(result['error']))}"
         if result.get("error")
         else ""
+    )
+    late_note = (
+        "\n- **Sortie tardive conservée :** oui — disponible dans `traces.jsonl`."
+        if late else ""
     )
     return (
         "### Dernier résultat\n\n"
@@ -305,7 +333,7 @@ def _live_metrics_markdown(result: dict[str, Any], next_label: str) -> str:
         f"- **Vitesse tokens :** {token_text}\n"
         f"- **Device :** `{result.get('device', 'unknown')}`\n"
         f"- **Prochaine évaluation :** {next_label}"
-        f"{error}\n\n"
+        f"{error}{late_note}\n\n"
         "<details><summary>Texte attendu</summary>"
         f"<pre>{expected}</pre></details>"
         "<details><summary>Texte extrait</summary>"
@@ -380,6 +408,8 @@ def run_benchmark(
     selected_category: str = "All",
     mock_noise: float = 0.05,
     eval_mode: str = "Standard",
+    cpu_threads: int | None = None,
+    unload_after_task: bool = True,
 ) -> tuple[pd.DataFrame, list[dict[str, Any]], str]:
     dataset = load_dataset()
     if selected_category != "All":
@@ -398,6 +428,8 @@ def run_benchmark(
         selected_models,
         cases,
         eval_mode=eval_mode,
+        cpu_threads=cpu_threads,
+        unload_after_task=unload_after_task,
         mock_noise=mock_noise,
     )
     summary = summarize_results(results)
@@ -638,7 +670,8 @@ def build_ui() -> gr.Blocks:
             with gr.Tab("2. Paramètres"):
                 gr.Markdown(
                     "Paramètres appliqués au prochain benchmark. Un appel fournisseur "
-                    "ayant dépassé le timeout peut terminer en arrière-plan."
+                    "ayant dépassé le timeout est marqué immédiatement ; le fournisseur "
+                    "peut toutefois conserver une requête réseau jusqu’à sa propre annulation."
                 )
                 with gr.Row():
                     with gr.Column():
@@ -670,6 +703,19 @@ def build_ui() -> gr.Blocks:
                             maximum=7200,
                             precision=0,
                             label="Temps maximum par image (secondes)",
+                        )
+                        cpu_threads = gr.Number(
+                            value=max(1, min(8, os.cpu_count() or 1)),
+                            minimum=1,
+                            maximum=max(1, os.cpu_count() or 1),
+                            precision=0,
+                            label="Threads CPU par modèle",
+                            info="Le benchmark reste strictement séquentiel : un seul modèle et une seule image à la fois.",
+                        )
+                        unload_after_task = gr.Checkbox(
+                            value=True,
+                            label="Décharger le modèle après chaque image",
+                            info="Réduit la mémoire persistante, mais peut ralentir le run Ollama.",
                         )
                         max_errors = gr.Number(
                             value=0,
@@ -866,6 +912,8 @@ def build_ui() -> gr.Blocks:
             save_checkpoints,
             update_live_charts,
             selected_model_prompt,
+            selected_cpu_threads,
+            selected_unload_after_task,
         ):
             empty = empty_figure()
             if not model_specs or not selected_records:
@@ -919,6 +967,8 @@ def build_ui() -> gr.Blocks:
                     eval_mode=selected_eval_mode,
                     mock_noise=float(selected_noise),
                     timeout_seconds=float(selected_timeout or 0),
+                    cpu_threads=int(selected_cpu_threads or 1),
+                    unload_after_task=bool(selected_unload_after_task),
                     max_errors=int(selected_max_errors or 0),
                     model_prompt=selected_model_prompt,
                     trace=lambda event: RunCheckpoint(
@@ -1084,6 +1134,10 @@ def build_ui() -> gr.Blocks:
         def rendered_outputs(result):
             text = str(result.get("extracted_text") or "")
             raw = str(result.get("raw_response") or text)
+            late = _late_trace_for(result)
+            if late:
+                text = str(late.get("text") or text)
+                raw = str(late.get("raw_response") or text)
             return text, raw, text, text
 
         def show_detail(index, results, offset=0):
@@ -1116,6 +1170,10 @@ def build_ui() -> gr.Blocks:
             metrics = {key: value for key, value in result.items() if key not in hidden}
             if result.get("reasoning"):
                 metrics["reasoning"] = result["reasoning"]
+            late = _late_trace_for(result)
+            if late:
+                metrics["late_output"] = "Réponse reçue après timeout; conservée dans traces.jsonl"
+                metrics["late_latency"] = late.get("latency")
             identity = (
                 f"### {Path(result['image_path']).name}\n\n"
                 f"- **Modèle :** `{result['model']}`\n"
@@ -1221,6 +1279,8 @@ def build_ui() -> gr.Blocks:
                 checkpoint_enabled,
                 live_charts_enabled,
                 model_prompt,
+                cpu_threads,
+                unload_after_task,
             ],
             [
                 summary_table,
@@ -1308,6 +1368,11 @@ def main() -> None:
     parser.add_argument(
         "--eval-mode", default="Standard", choices=["Standard", "Bankmark"]
     )
+    parser.add_argument("--cpu-threads", type=int, default=None)
+    parser.add_argument(
+        "--unload-after-task", action=argparse.BooleanOptionalAction, default=True,
+        help="Décharger le modèle Ollama après chaque image (défaut: activé).",
+    )
     parser.add_argument("--host", default=os.getenv("GRADIO_SERVER_NAME", "127.0.0.1"))
     parser.add_argument("--port", type=int, default=int(os.getenv("GRADIO_SERVER_PORT", "7860")))
     parser.add_argument("--share", action="store_true")
@@ -1315,7 +1380,9 @@ def main() -> None:
 
     if args.cli:
         summary, _, run_id = run_benchmark(
-            args.models, args.category, args.noise, args.eval_mode
+            args.models, args.category, args.noise, args.eval_mode,
+            cpu_threads=args.cpu_threads,
+            unload_after_task=args.unload_after_task,
         )
         print(summary.to_string(index=False))
         print(f"Run ID: {run_id}")

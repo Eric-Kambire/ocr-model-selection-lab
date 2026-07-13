@@ -18,3 +18,7 @@ class BaseOCRModel(abc.ABC):
             - "latency": Execution time in seconds
         """
         pass
+
+    def close(self) -> None:
+        """Release provider resources before the next model is loaded."""
+        return None

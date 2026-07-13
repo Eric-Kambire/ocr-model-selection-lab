@@ -18,17 +18,31 @@ class OllamaOCRModel(BaseOCRModel):
     """
     An OCR model wrapper that uses a local Ollama vision model (e.g., gemma3:1b, llama3.2-vision).
     """
-    def __init__(self, model_name: str, prompt: str | None = None):
+    def __init__(
+        self,
+        model_name: str,
+        prompt: str | None = None,
+        cpu_threads: int | None = None,
+        unload_after_task: bool = False,
+        request_timeout: float | None = None,
+    ):
         super().__init__(model_name)
         self.prompt = prompt.strip() if prompt and prompt.strip() else DEFAULT_OCR_PROMPT
         self.host = os.getenv("OLLAMA_HOST", "http://127.0.0.1:11434")
+        self.cpu_threads = int(cpu_threads) if cpu_threads and int(cpu_threads) > 0 else None
+        self.unload_after_task = bool(unload_after_task)
+        self.request_timeout = float(request_timeout) if request_timeout and float(request_timeout) > 0 else None
         # Import ollama here to avoid dependency issues if not installed
         try:
             import ollama
-            self.client = ollama
+            if self.request_timeout is not None:
+                self.client = ollama.Client(host=self.host, timeout=self.request_timeout)
+            else:
+                self.client = ollama
             LOGGER.info(
-                "Ollama adapter ready | model=%s | host=%s | prompt_chars=%d",
-                self.model_name, self.host, len(self.prompt),
+                "Ollama adapter ready | model=%s | host=%s | prompt_chars=%d | cpu_threads=%s | request_timeout=%s | unload_after_task=%s",
+                self.model_name, self.host, len(self.prompt), self.cpu_threads,
+                self.request_timeout, self.unload_after_task,
             )
         except ImportError:
             self.client = None
@@ -75,8 +89,10 @@ class OllamaOCRModel(BaseOCRModel):
                     }
                 ],
                 options={
-                    "temperature": 0.0  # Keep transcription deterministic
-                }
+                    "temperature": 0.0,
+                    **({"num_thread": self.cpu_threads} if self.cpu_threads else {}),
+                },
+                **({"keep_alive": 0} if self.unload_after_task else {}),
             )
             
             if isinstance(response, dict):
