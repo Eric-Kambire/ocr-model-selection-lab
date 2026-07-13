@@ -187,6 +187,9 @@ def test_legacy_profile_uses_a_python_312_compatible_numpy_constraint():
     install_cell = code_cell_containing(load_notebook(), "RUNTIME_PROFILE =")
     assert 'legacy_numpy = "numpy>=1.26,<2" if sys.version_info >= (3, 12)' in install_cell
     assert 'if not package.startswith(("numpy", "pillow"))' in install_cell
+    assert '"--force-reinstall", "pillow==11.1.0"' in install_cell
+    assert 'from PIL import Image, ImageDraw, ImageFont' in install_cell
+    assert "Image.new(\"RGB\", (2, 2), \"white\")" in install_cell
 
 
 def test_model_catalog_contains_requested_models_and_hardware_contracts():

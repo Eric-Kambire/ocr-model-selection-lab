@@ -76,6 +76,18 @@ cells.append(code(r"""
             check=True,
         )
 
+    def repair_pillow():
+        # Colab peut conserver des fichiers PIL provenant de deux versions après
+        # plusieurs installations de profils. Une réinstallation forcée évite
+        # notamment l'incohérence ImageDraw/ImageText/_typing (_Ink manquant).
+        subprocess.run(
+            [
+                sys.executable, "-m", "pip", "install", "-q", "--no-cache-dir",
+                "--force-reinstall", "pillow==11.1.0",
+            ],
+            check=True,
+        )
+
     common_packages = (
         "pandas>=2.2", "numpy>=1.26", "pillow>=10", "matplotlib>=3.8",
         "plotly>=5.24", "gradio>=6.0,<7", "tqdm>=4.66", "psutil>=5.9",
@@ -129,6 +141,17 @@ cells.append(code(r"""
         os.environ["PATH"] = f"{llama_root}/build/bin:" + os.environ.get("PATH", "")
     else:
         raise ValueError(f"Profil inconnu: {RUNTIME_PROFILE}")
+
+    repair_pillow()
+    try:
+        from PIL import Image, ImageDraw, ImageFont
+        Image.new("RGB", (2, 2), "white")
+        print(f"Pillow vérifié: {getattr(Image, '__version__', 'version inconnue')} · {Image.__file__}")
+    except Exception as exc:
+        raise RuntimeError(
+            "Pillow reste incohérent après réparation. Redémarrez le runtime Colab, "
+            "puis exécutez à nouveau cette cellule d'installation."
+        ) from exc
 
     print("Profil installé:", RUNTIME_PROFILE)
     print("Aucun modèle n'est gardé en mémoire à ce stade.")
@@ -3183,5 +3206,6 @@ notebook = {
     "nbformat_minor": 5,
 }
 
-OUTPUT.write_text(json.dumps(notebook, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
+with OUTPUT.open("w", encoding="utf-8", newline="\n") as notebook_file:
+    notebook_file.write(json.dumps(notebook, ensure_ascii=False, indent=1) + "\n")
 print(f"Wrote {OUTPUT} with {len(cells)} cells")
