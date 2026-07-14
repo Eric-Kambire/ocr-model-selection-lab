@@ -46,7 +46,7 @@ import os, subprocess, sys, importlib
 
 PINNED = [
     "numpy==1.26.4", "pillow==11.1.0",
-    "huggingface_hub>=0.30,<1", "datasets>=3.5,<4", "kagglehub>=0.3,<1", "requests>=2.32,<3", "plotly>=5.24,<7",
+    "huggingface_hub>=0.30,<1", "datasets>=3.5,<4", "kagglehub>=0.3,<1", "requests>=2.32,<3", "plotly>=5.24,<7", "gradio>=6.0,<7",
     "transformers>=4.51,<5", "accelerate>=1.6,<2",
 ]
 subprocess.run([sys.executable, "-m", "pip", "install", "-q", "--upgrade", "--force-reinstall", "--no-cache-dir", *PINNED], check=True)
@@ -360,6 +360,52 @@ if len(RESULTS):
 print(f"Résultats persistés dans {ARTIFACTS}. Les sorties brutes restent disponibles même pour timeout/erreur.")
 '''
 
+GRADIO_CELL = r'''
+# Interface Gradio autonome du notebook : un test ciblé puis le benchmark du couple.
+import tempfile
+import gradio as gr
+
+def _gradio_single_test(model_name, image):
+    if image is None:
+        return "❌ Ajoutez une image.", "", {"status": "no_image"}
+    path = Path(tempfile.mkstemp(suffix=".png", dir=ARTIFACTS)[1])
+    Image.fromarray(np.asarray(image)).convert("RGB").save(path)
+    adapter = Adapter(model_name); started = time.perf_counter()
+    try:
+        adapter.download(); adapter.load()
+        output, status = _run_with_timeout(lambda: adapter.predict(str(path)), TIMEOUT_SECONDS)
+        metrics = {"model": model_name, "status": status, "latency_s": round(time.perf_counter()-started, 3), "output_chars": len(output or ""), "timeout_s": TIMEOUT_SECONDS}
+        return ("✅ Réponse reçue" if status == "success" else f"⚠️ {status}"), output or "(sortie vide)", metrics
+    except Exception as exc:
+        return "❌ Échec de chargement ou d'inférence", "", {"model": model_name, "status": "failed_load", "error": repr(exc)}
+    finally:
+        adapter.close()
+        path.unlink(missing_ok=True)
+
+def _gradio_benchmark():
+    result = run_benchmark()
+    return result, f"Benchmark terminé : {len(result)} évaluations. Fichiers : {ARTIFACTS}"
+
+with gr.Blocks(title=f"OCR pair — {MODELS[0]} + {MODELS[1]}") as pair_demo:
+    gr.Markdown(f"# OCR Model Selection — {MODELS[0]} + {MODELS[1]}\nTestez un modèle seul avant de lancer la comparaison.")
+    with gr.Row():
+        with gr.Column():
+            model_input = gr.Dropdown(list(MODELS), value=MODELS[0], label="Modèle à tester")
+            image_input = gr.Image(type="numpy", label="Image à analyser")
+            test_button = gr.Button("Tester ce modèle", variant="primary")
+            benchmark_button = gr.Button("Lancer le benchmark du couple")
+        with gr.Column():
+            test_status = gr.Markdown("En attente d'un test.")
+            extracted_output = gr.Textbox(label="Texte extrait / sortie brute", lines=16)
+            live_metrics = gr.JSON(label="Mesures du test")
+    benchmark_status = gr.Markdown()
+    benchmark_table = gr.Dataframe(label="Résultats du benchmark", interactive=False)
+    test_button.click(_gradio_single_test, [model_input, image_input], [test_status, extracted_output, live_metrics], queue=True)
+    benchmark_button.click(_gradio_benchmark, outputs=[benchmark_table, benchmark_status], queue=True)
+
+pair_demo.launch(share=False, debug=False)
+'''
+
 
 def make_notebook(number: str, left: str, right: str) -> dict:
     extras = {
@@ -385,6 +431,8 @@ def make_notebook(number: str, left: str, right: str) -> dict:
         md("## Benchmark sérialisé\nLe benchmark garde chaque sortie brute dans `raw_outputs.jsonl`, y compris un timeout. `latency_s` est le temps par image (chargement exclu), `output_chars` mesure le volume produit, et CER est le taux d'erreur caractère quand le dataset fournit une vérité terrain."),
         code(BENCH),
         code(PLOTS),
+        md("## Interface Gradio\nCette cellule ouvre une interface locale Colab pour tester une image avec un seul modèle, afficher sa réponse et ses mesures, puis lancer le benchmark des deux modèles. Exécutez-la après le smoke test."),
+        code(GRADIO_CELL),
         md("## Interprétation\nUn modèle est exploitable seulement si son smoke test est `success`, ses sorties ne sont pas vides et sa latence reste compatible avec votre usage. Un score CER plus bas est meilleur. Pour les modèles marqués `failed_load`, l'erreur indique explicitement le runtime ou la mémoire manquante; ne relancez pas en boucle sans corriger cette cause."),
     ]
     return {"cells": cells, "metadata": {"kernelspec": {"display_name": "Python 3", "language": "python", "name": "python3"}, "language_info": {"name": "python", "version": "3.x"}}, "nbformat": 4, "nbformat_minor": 5}
