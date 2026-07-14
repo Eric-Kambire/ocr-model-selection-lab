@@ -47,7 +47,7 @@ import os, subprocess, sys, importlib
 PINNED = [
     "numpy==1.26.4", "pillow==11.1.0",
     "huggingface_hub>=0.30,<1", "datasets>=3.5,<4", "kagglehub>=0.3,<1", "requests>=2.32,<3", "plotly>=5.24,<7", "gradio>=6.0,<7",
-    "transformers>=4.51,<5", "accelerate>=1.6,<2",
+    "accelerate>=1.6,<2",
 ]
 subprocess.run([sys.executable, "-m", "pip", "install", "-q", "--upgrade", "--force-reinstall", "--no-cache-dir", *PINNED], check=True)
 print("Dépendances réinstallées ensemble. IMPORTANT : redémarrez maintenant le runtime Colab (Exécution → Redémarrer la session), puis reprenez à la cellule de vérification.")
@@ -225,8 +225,17 @@ class Adapter:
             except TypeError:
                 self.obj = PaddleOCR(lang="fr")
             return
-        if kind in {"chandra", "dots", "legacy", "gguf"}:
-            raise RuntimeError(f"{self.name} nécessite son runtime officiel dédié ({kind}); profil non activé dans ce notebook CORE.")
+        if kind == "chandra":
+            import torch
+            from transformers import AutoModelForImageTextToText, AutoProcessor
+            from chandra.model.schema import BatchInputItem
+            self.obj = AutoModelForImageTextToText.from_pretrained(self.meta["id"], dtype=torch.bfloat16 if DEVICE == "cuda" else torch.float32, device_map="auto" if DEVICE == "cuda" else None)
+            self.processor = AutoProcessor.from_pretrained(self.meta["id"])
+            self.processor.tokenizer.padding_side = "left"
+            self.BatchInputItem = BatchInputItem
+            return
+        if kind in {"dots", "legacy", "gguf"}:
+            raise RuntimeError(f"{self.name} nécessite son runtime officiel dédié ({kind}); le smoke test le signale explicitement au lieu de télécharger un poids incompatible.")
         from transformers import AutoProcessor
         # Les classes diffèrent selon la fiche officielle; on essaie la classe
         # recommandée puis un fallback compatible sans masquer l'erreur finale.
@@ -253,6 +262,11 @@ class Adapter:
         if self.meta["kind"] == "paddle":
             result = self.obj.predict(np.array(image)) if hasattr(self.obj, "predict") else self.obj.ocr(np.array(image))
             return _norm(result)
+        if self.meta["kind"] == "chandra":
+            from chandra.model.hf import generate_hf
+            from chandra.output import parse_markdown
+            batch = [self.BatchInputItem(image=image, prompt_type="ocr_layout")]
+            return _norm(parse_markdown(generate_hf(batch, self.obj)[0].raw))
         prompt = "Text Recognition:"
         messages = [{"role": "user", "content": [{"type": "image", "image": image}, {"type": "text", "text": prompt}]}]
         text = self.processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
@@ -411,8 +425,11 @@ pair_demo.launch(share=GRADIO_SHARE, debug=False)
 def make_notebook(number: str, left: str, right: str) -> dict:
     extras = {
         "01_classic_ocr": ["easyocr>=1.7,<2", "paddleocr>=2.9,<3", "paddlepaddle>=3.0,<4"],
-        "02_transformers_documents": [], "03_paddle_qwen": ["paddleocr>=2.9,<3", "paddlepaddle>=3.0,<4"],
-        "04_compact_vlm": [], "05_specialized_gpu": ["chandra-ocr[hf]"], "06_legacy_localization": [],
+        "02_transformers_documents": ["transformers>=5.0.0", "accelerate>=1.6,<2", "docling-core>=2.0,<3"],
+        "03_paddle_qwen": ["transformers>=5.0.0", "accelerate>=1.6,<2", "paddleocr>=2.9,<3", "paddlepaddle>=3.0,<4"],
+        "04_compact_vlm": ["transformers>=5.7.0", "accelerate>=1.6,<2", "torchvision", "torchcodec"],
+        "05_specialized_gpu": ["transformers==4.57.1", "chandra-ocr[hf]"],
+        "06_legacy_localization": ["transformers==4.57.1", "peft", "decord==0.6.0", "opencv-python-headless==4.11.0.86"],
     }[number]
     cells = [
         md(f"# OCR benchmark — {left} + {right}\n\nNotebook autonome Colab. **Deux modèles maximum**, chargés l'un après l'autre pour protéger la mémoire. Les poids viennent des dépôts officiels Hugging Face ou du paquet officiel du modèle.\n\nOrdre : installer → vérifier le runtime → télécharger → smoke test → benchmark → graphiques."),
