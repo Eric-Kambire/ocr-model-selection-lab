@@ -41,54 +41,62 @@ def code(value: str) -> dict:
 
 
 COMMON_INSTALL = r'''
-# Installation reproductible mais différentielle : Colab possède déjà la
-# plupart des paquets. On n'écrase donc pas inutilement l'environnement.
-import os, re, subprocess, sys
+# Installation ciblée, compatible Colab et Kaggle.
+# Les versions sont volontairement explicites pour éviter les mélanges ABI
+# NumPy/Pillow. Le script n'installe que les paquets absents ou incompatibles
+# et lance une seule commande pip (donc pas de réinstallation en boucle).
+import os, subprocess, sys
 from importlib.metadata import PackageNotFoundError, version as installed_version
-from packaging.version import Version
-from packaging.requirements import Requirement
 
-PINNED = [
+BASE_PACKAGES = [
     "numpy==1.26.4", "pillow==11.1.0",
-    "huggingface_hub>=0.30,<1", "datasets>=3.5,<4", "kagglehub>=0.3,<1", "requests>=2.32,<3", "plotly>=5.24,<7", "gradio>=6.0,<7",
-    "accelerate>=1.6,<2",
+    "huggingface_hub>=0.30,<1", "datasets>=3.5,<4",
+    "kagglehub>=0.3,<1", "requests>=2.32,<3",
+    "plotly>=5.24,<7", "gradio>=6.0,<7", "accelerate>=1.6,<2", "packaging>=24,<26",
 ]
 
-def _dist_name(spec):
-    return re.split(r"[<>=!~ ]", spec, maxsplit=1)[0].lower().replace("_", "-")
-
 def _installed(name):
-    try: return installed_version(name)
-    except PackageNotFoundError: return None
+    try:
+        return installed_version(name)
+    except PackageNotFoundError:
+        return None
 
-def _needs(spec):
-    requirement = Requirement(spec)
-    current = _installed(requirement.name)
-    return current is None or (bool(requirement.specifier) and Version(current) not in requirement.specifier)
+def _requirement_matches(spec):
+    # packaging est déjà présent dans les runtimes Colab/Kaggle.
+    from packaging.requirements import Requirement
+    from packaging.version import Version
+    req = Requirement(spec)
+    current = _installed(req.name)
+    return current is not None and (not req.specifier or Version(current) in req.specifier)
 
-numpy_now = _installed("numpy")
-if numpy_now is None or Version(numpy_now) >= Version("2.0.0"):
-    subprocess.run([sys.executable, "-m", "pip", "install", "-q", "--prefer-binary", "numpy==1.26.4"], check=True)
-    print("NumPy 1.26.4 installé. Redémarrez le runtime avant de continuer.")
+def install_missing(packages):
+    missing = [spec for spec in packages if not _requirement_matches(spec)]
+    if missing:
+        print("Installation ciblée:", missing)
+        subprocess.run(
+            [sys.executable, "-m", "pip", "install", "-q", "--prefer-binary", *missing],
+            check=True,
+        )
+    else:
+        print("Dépendances déjà compatibles : aucune installation nécessaire.")
+    return missing
 
-missing = [spec for spec in PINNED if _needs(spec) and not spec.startswith("numpy")]
-if missing:
-    subprocess.run([sys.executable, "-m", "pip", "install", "-q", "--prefer-binary", *missing], check=True)
-    print("Paquets manquants installés:", missing)
-else:
-    print("Dépendances déjà présentes : aucune réinstallation lourde nécessaire.")
+_numpy_before = _installed("numpy")
+_installed_now = install_missing(BASE_PACKAGES)
+if _numpy_before is None or (_numpy_before and _numpy_before.split(".", 1)[0] != "1"):
+    print("NumPy a été modifié. Redémarrez le runtime Colab/Kaggle une fois, puis reprenez à la cellule suivante.")
 '''
 
 NUMPY_GUARD = r'''
-# Garde explicite contre NumPy 2.x (incompatibilités ABI avec certaines roues
-# OCR/vision). Cette cellule est volontairement séparée pour être identifiable.
+# Vérification séparée après installation. Elle évite l'ImportError opaque
+# numpy/pandas/Pillow et indique exactement quand redémarrer le runtime.
 from importlib.metadata import version as _numpy_version
 from packaging.version import Version
-if Version(_numpy_version("numpy")) >= Version("2.0.0"):
+_numpy_current = _numpy_version("numpy")
+if Version(_numpy_current) >= Version("2.0.0"):
     subprocess.run([sys.executable, "-m", "pip", "install", "-q", "--prefer-binary", "numpy==1.26.4"], check=True)
-    print("NumPy 1.26.4 installé. Redémarrez le runtime avant la cellule suivante.")
-else:
-    print("NumPy compatible déjà présent:", _numpy_version("numpy"))
+    raise RuntimeError("NumPy 2.x a été remplacé par 1.26.4. Redémarrez le runtime Colab/Kaggle, puis reprenez ici.")
+print("NumPy compatible:", _numpy_current)
 '''
 
 RUNTIME = r'''
@@ -138,9 +146,21 @@ from datasets import load_dataset
 DATASET_SOURCES = [
     {"name": "hf_multifin", "kind": "hf", "repo_id": "TheFinAI/MultiFinBen-EnglishOCR", "split": "train", "revision": "08cbac5db10834b6cbce428364e0bd8c52eea6fb", "quota": 15},
     {"name": "hf_cheques", "kind": "hf", "repo_id": "arunchincheti/handwritten_and_cheques_dataset", "split": "test", "revision": "4d81a7c9b1af2fcbb9abc7c1f85f1c7b789c01a2", "quota": 15},
-    {"name": "kaggle_iam", "kind": "kaggle", "handle": "naderabdelghany/iam-handwritten-forms-dataset", "quota": 5},
-    {"name": "github_forms", "kind": "github", "url": "https://github.com/bernardadhitya/handwritten-form-ocr-ie-json-dataset/archive/6b9113e8e18973293cc003bc079c21e2f7f3d6e5.zip", "quota": 5},
+    {"name": "kaggle_iam", "kind": "kaggle", "handle": "naderabdelghany/iam-handwritten-forms-dataset/versions/1", "revision": "version-1", "quota": 5,
+     "sample_files": ["data/000/a01-000u.png", "data/000/a01-003u.png", "data/000/a01-007u.png", "data/000/a01-011u.png", "data/000/a01-014u.png"]},
+    {"name": "github_forms", "kind": "github", "url": "https://github.com/bernardadhitya/handwritten-form-ocr-ie-json-dataset/archive/6b9113e8e18973293cc003bc079c21e2f7f3d6e5.zip", "revision": "6b9113e8e18973293cc003bc079c21e2f7f3d6e5", "quota": 5},
 ]
+
+def _run_with_timeout(fn, seconds):
+    box = {}; done = threading.Event()
+    def worker():
+        try: box["value"] = fn()
+        except Exception as exc: box["error"] = repr(exc)
+        finally: done.set()
+    threading.Thread(target=worker, daemon=True).start(); done.wait(seconds)
+    if not done.is_set(): return None, "timeout"
+    if "error" in box: return None, box["error"]
+    return box.get("value", ""), "success"
 
 def _find_columns(ds):
     image_cols = [c for c in ds.column_names if c.lower() in {"image", "img", "images", "filepath", "file"}]
@@ -187,7 +207,8 @@ def load_cases(limit=MAX_DOCUMENTS):
                 import kagglehub
                 folder, status = _run_with_timeout(lambda: kagglehub.dataset_download(source["handle"]), DOWNLOAD_TIMEOUT_SECONDS)
                 if status != "success": raise TimeoutError(status)
-                paths = list(Path(folder).rglob("*.png")) + list(Path(folder).rglob("*.jpg"))
+                selected = source.get("sample_files")
+                paths = [Path(folder) / item for item in selected] if selected else list(Path(folder).rglob("*.png")) + list(Path(folder).rglob("*.jpg"))
                 cases.extend(_save_path_cases(paths, source_name, quota))
             else:
                 import io, zipfile, requests
@@ -204,17 +225,6 @@ def load_cases(limit=MAX_DOCUMENTS):
 
 CASES = load_cases()
 print(f"Cas chargés: {len(CASES)}. Les scores CER/WER sont calculés uniquement si une vérité terrain existe.")
-
-def _run_with_timeout(fn, seconds):
-    box = {}; done = threading.Event()
-    def worker():
-        try: box["value"] = fn()
-        except Exception as exc: box["error"] = repr(exc)
-        finally: done.set()
-    threading.Thread(target=worker, daemon=True).start(); done.wait(seconds)
-    if not done.is_set(): return None, "timeout"
-    if "error" in box: return None, box["error"]
-    return box.get("value", ""), "success"
 '''
 
 ADAPTER = r'''
@@ -467,7 +477,7 @@ def make_notebook(number: str, left: str, right: str) -> dict:
         code(f"MODELS = {left!r}, {right!r}\nprint('Modèles de ce notebook:', MODELS)"),
         code(COMMON_INSTALL),
         code(NUMPY_GUARD),
-        code("EXTRA_PACKAGES = " + repr(extras) + "\nif EXTRA_PACKAGES:\n    _missing_extra = [p for p in EXTRA_PACKAGES if _needs(p)]\n    if _missing_extra: subprocess.run([sys.executable, '-m', 'pip', 'install', '-q', '--prefer-binary', *_missing_extra], check=True)\n    print('Dépendances spécifiques installées/manquantes:', _missing_extra)\nelse: print('Dépendances spécifiques: aucune')"),
+        code("EXTRA_PACKAGES = " + repr(extras) + "\n_missing_extra = install_missing(EXTRA_PACKAGES)\nprint('Dépendances spécifiques installées/manquantes:', _missing_extra)"),
         code(RUNTIME),
         md("## Secrets (facultatif)\nAjoutez `HF_TOKEN` et `KAGGLE_API_TOKEN` dans Colab → Secrets si nécessaire. Le token n'est jamais affiché. Les quatre sources du notebook principal sont tentées : Hugging Face MultiFin, Hugging Face chèques, Kaggle IAM Forms et le dépôt GitHub handwritten forms. Les images Kaggle/GitHub sans transcription exploitable restent visibles mais ne reçoivent pas de CER/WER."),
         code("try:\n    from google.colab import userdata\n    os.environ['HF_TOKEN'] = userdata.get('HF_TOKEN') or ''\n    os.environ['KAGGLE_API_TOKEN'] = userdata.get('KAGGLE_API_TOKEN') or userdata.get('KAGGLE_TOKEN') or ''\nexcept Exception:\n    os.environ.setdefault('HF_TOKEN', '')\n    os.environ.setdefault('KAGGLE_API_TOKEN', '')\nprint('HF_TOKEN présent:', bool(os.environ.get('HF_TOKEN')), '| KAGGLE token présent:', bool(os.environ.get('KAGGLE_API_TOKEN')))"),
