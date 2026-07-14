@@ -121,12 +121,13 @@ np, Image = _check_binary_stack()
 ROOT = Path("/content/ocr_pair_benchmark")
 ROOT.mkdir(parents=True, exist_ok=True)
 ARTIFACTS = ROOT / "artifacts"; ARTIFACTS.mkdir(exist_ok=True)
-TIMEOUT_SECONDS = 120
-DOWNLOAD_TIMEOUT_SECONDS = 180
+TIMEOUT_SECONDS = int(os.getenv("OCR_INFERENCE_TIMEOUT_SECONDS", "120"))
+DOWNLOAD_TIMEOUT_SECONDS = int(os.getenv("OCR_DOWNLOAD_TIMEOUT_SECONDS", "900"))
+LOAD_TIMEOUT_SECONDS = int(os.getenv("OCR_LOAD_TIMEOUT_SECONDS", "600"))
 MAX_DOCUMENTS = 30
 SELECTED_MODELS = list(MODELS)  # Vous pouvez réduire à un seul modèle.
 assert 1 <= len(SELECTED_MODELS) <= 2
-os.environ.setdefault("HF_HUB_DOWNLOAD_TIMEOUT", str(DOWNLOAD_TIMEOUT_SECONDS))
+os.environ.setdefault("HF_HUB_DOWNLOAD_TIMEOUT", "120")  # délai par requête HTTP
 os.environ.setdefault("HF_HUB_ETAG_TIMEOUT", "30")
 os.environ.setdefault("HF_HUB_DISABLE_PROGRESS_BARS", "1")
 
@@ -236,7 +237,7 @@ MODEL_META = {
     "PP-OCRv6": {"id": "PaddlePaddle/PP-OCRv6_medium_det_safetensors", "kind": "paddle", "min_gpu_gb": 4},
     "GLM-OCR": {"id": "zai-org/GLM-OCR", "kind": "transformers", "min_gpu_gb": 8},
     "Granite Docling 258M": {"id": "ibm-granite/granite-docling-258M", "kind": "transformers", "min_gpu_gb": 8},
-    "PaddleOCR-VL 1.6": {"id": "PaddlePaddle/PaddleOCR-VL-1.6", "kind": "transformers", "min_gpu_gb": 8},
+    "PaddleOCR-VL 1.6": {"id": "PaddlePaddle/PaddleOCR-VL-1.6", "kind": "paddle_vl", "min_gpu_gb": 8},
     "Qwen3.5 OCR 0.8B": {"id": "loay/English-Document-OCR-Qwen3.5-0.8B", "kind": "gguf", "min_gpu_gb": 0},
     "MiniCPM-V 4.6": {"id": "openbmb/MiniCPM-V-4.6", "kind": "transformers", "min_gpu_gb": 12},
     "LightOnOCR-2 1B": {"id": "lightonai/LightOnOCR-2-1B", "kind": "transformers", "min_gpu_gb": 8},
@@ -254,6 +255,12 @@ class Adapter:
     def download(self):
         from huggingface_hub import snapshot_download
         if self.meta["kind"] == "easyocr": return "pip/easyocr"
+        if self.meta["kind"] == "paddle_vl": return "paddleocr://PaddleOCR-VL-v1.6"
+        if self.meta["kind"] == "gguf":
+            from huggingface_hub import hf_hub_download
+            self.model_file = hf_hub_download(self.meta["id"], "english-document-ocr-qwen3.5-0.8b-q4_k_m.gguf", token=os.environ.get("HF_TOKEN"))
+            self.mmproj_file = hf_hub_download(self.meta["id"], "mmproj-english-document-ocr-qwen3.5-0.8b-f16.gguf", token=os.environ.get("HF_TOKEN"))
+            return self.model_file
         return snapshot_download(self.meta["id"], token=os.environ.get("HF_TOKEN"), local_files_only=False)
     def load(self):
         kind = self.meta["kind"]
@@ -266,6 +273,10 @@ class Adapter:
             except TypeError:
                 self.obj = PaddleOCR(lang="fr")
             return
+        if kind == "paddle_vl":
+            from paddleocr import PaddleOCRVL
+            self.obj = PaddleOCRVL(pipeline_version="v1.6")
+            return
         if kind == "chandra":
             import torch
             from transformers import AutoModelForImageTextToText, AutoProcessor
@@ -275,8 +286,13 @@ class Adapter:
             self.processor.tokenizer.padding_side = "left"
             self.BatchInputItem = BatchInputItem
             return
-        if kind in {"dots", "legacy", "gguf"}:
+        if kind in {"dots", "legacy"}:
             raise RuntimeError(f"{self.name} nécessite son runtime officiel dédié ({kind}); le smoke test le signale explicitement au lieu de télécharger un poids incompatible.")
+        if kind == "gguf":
+            from llama_cpp import Llama
+            self.obj = Llama(model_path=self.model_file, clip_model_path=self.mmproj_file,
+                             n_ctx=8192, n_gpu_layers=(-1 if DEVICE == "cuda" else 0), verbose=False)
+            return
         from transformers import AutoProcessor
         # Les classes diffèrent selon la fiche officielle; on essaie la classe
         # recommandée puis un fallback compatible sans masquer l'erreur finale.
@@ -303,6 +319,22 @@ class Adapter:
         if self.meta["kind"] == "paddle":
             result = self.obj.predict(np.array(image)) if hasattr(self.obj, "predict") else self.obj.ocr(np.array(image))
             return _norm(result)
+        if self.meta["kind"] == "paddle_vl":
+            result = next(iter(self.obj.predict(path)))
+            for attr in ("json", "res"):
+                value = getattr(result, attr, None)
+                if value is not None:
+                    return _norm(value() if callable(value) else value)
+            return _norm(result)
+        if self.meta["kind"] == "gguf":
+            import base64, io
+            buffer = io.BytesIO(); image.save(buffer, format="PNG")
+            encoded = base64.b64encode(buffer.getvalue()).decode("ascii")
+            response = self.obj.create_chat_completion(messages=[{"role": "user", "content": [
+                {"type": "text", "text": "Extract all visible text from this document image and return only the transcription in reading order using a markdown-first format."},
+                {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{encoded}"}},
+            ]}], max_tokens=2048)
+            return _norm(response["choices"][0]["message"]["content"])
         if self.meta["kind"] == "chandra":
             from chandra.model.hf import generate_hf
             from chandra.output import parse_markdown
@@ -324,11 +356,12 @@ class Adapter:
 # ne reste pas bloquée avant l'inférence.
 _raw_download, _raw_load = Adapter.download, Adapter.load
 def _bounded_download(self):
-    value, status = _run_with_timeout(lambda: _raw_download(self), DOWNLOAD_TIMEOUT_SECONDS)
-    if status != "success": raise TimeoutError(f"download_status={status}")
-    return value
+    # Un téléchargement de plusieurs Go peut dépasser 180 s. Hugging Face
+    # gère les délais par requête et reprend les fragments déjà en cache.
+    print(f"Téléchargement {self.name} ({self.meta['id']}) — délai conseillé: {DOWNLOAD_TIMEOUT_SECONDS}s")
+    return _raw_download(self)
 def _bounded_load(self):
-    value, status = _run_with_timeout(lambda: _raw_load(self), DOWNLOAD_TIMEOUT_SECONDS)
+    value, status = _run_with_timeout(lambda: _raw_load(self), LOAD_TIMEOUT_SECONDS)
     if status != "success": raise TimeoutError(f"load_status={status}")
     return value
 Adapter.download, Adapter.load = _bounded_download, _bounded_load
@@ -465,9 +498,9 @@ pair_demo.launch(share=GRADIO_SHARE, debug=False)
 
 def make_notebook(number: str, left: str, right: str) -> dict:
     extras = {
-        "01_classic_ocr": ["easyocr>=1.7,<2", "paddleocr>=2.9,<3", "paddlepaddle>=3.0,<4"],
+        "01_classic_ocr": ["easyocr>=1.7,<2", "paddleocr>=3.0,<4", "paddlepaddle>=3.2.1,<4"],
         "02_transformers_documents": ["transformers>=5.0.0", "accelerate>=1.6,<2", "docling-core>=2.0,<3"],
-        "03_paddle_qwen": ["transformers>=5.0.0", "accelerate>=1.6,<2", "paddleocr>=2.9,<3", "paddlepaddle>=3.0,<4"],
+        "03_paddle_qwen": ["llama-cpp-python>=0.3.16", "paddleocr>=3.0,<4", "paddlepaddle>=3.2.1,<4"],
         "04_compact_vlm": ["transformers>=5.7.0", "accelerate>=1.6,<2", "torchvision", "torchcodec"],
         "05_specialized_gpu": ["transformers==4.57.1", "chandra-ocr[hf]"],
         "06_legacy_localization": ["transformers==4.57.1", "peft", "decord==0.6.0", "opencv-python-headless==4.11.0.86"],
