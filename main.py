@@ -735,7 +735,9 @@ def build_ui() -> gr.Blocks:
                         )
                         checkpoint_enabled = gr.Checkbox(
                             value=True,
-                            label="Sauvegarder après chaque document",
+                            label="Checkpoint permanent après chaque document",
+                            interactive=False,
+                            info="Toujours actif pour permettre la restauration après actualisation.",
                         )
                         live_charts_enabled = gr.Checkbox(
                             value=True,
@@ -1040,7 +1042,10 @@ def build_ui() -> gr.Blocks:
                     if update.result is None:
                         continue
                     results.append(update.result)
-                    if save_checkpoints and checkpoint:
+                    # Checkpoints are durable by design. The legacy checkbox
+                    # remains for API compatibility, but a completed document
+                    # must never depend on a UI toggle to survive refresh/crash.
+                    if checkpoint:
                         checkpoint.write(results)
                     summary = summarize_results(results)
                     if update_live_charts:
