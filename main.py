@@ -1298,6 +1298,11 @@ def build_ui() -> gr.Blocks:
                 live_counters,
                 live_table,
             ],
+            # Keep one benchmark execution at a time, but isolate it in its
+            # own concurrency group. Navigation, dataset browsing and detail
+            # buttons must continue to be served while this generator yields.
+            concurrency_limit=1,
+            concurrency_id="benchmark-run",
         )
         stop.click(
             fn=None,
@@ -1352,6 +1357,10 @@ def build_ui() -> gr.Blocks:
             [upload_image, upload_label, upload_category, upload_description],
             [add_data_status, dataset_selector, catalog_component],
         )
+    # Gradio's default queue limit can serialize every event behind a long OCR
+    # request. A small global pool keeps lightweight UI actions responsive while
+    # the benchmark group above remains strictly single-model/single-run.
+    app.queue(default_concurrency_limit=4)
     return app
 
 
