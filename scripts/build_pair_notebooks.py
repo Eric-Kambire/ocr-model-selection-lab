@@ -46,7 +46,7 @@ import os, subprocess, sys, importlib
 
 PINNED = [
     "numpy==1.26.4", "pillow==11.1.0",
-    "huggingface_hub>=0.30,<1", "datasets>=3.5,<4", "plotly>=5.24,<7",
+    "huggingface_hub>=0.30,<1", "datasets>=3.5,<4", "kagglehub>=0.3,<1", "requests>=2.32,<3", "plotly>=5.24,<7",
     "transformers>=4.51,<5", "accelerate>=1.6,<2",
 ]
 subprocess.run([sys.executable, "-m", "pip", "install", "-q", "--upgrade", "--force-reinstall", "--no-cache-dir", *PINNED], check=True)
@@ -105,8 +105,10 @@ DATASET = r'''
 from datasets import load_dataset
 
 DATASET_SOURCES = [
-    ("hf_multifin", "TheFinAI/MultiFinBen-EnglishOCR", "train", "08cbac5db10834b6cbce428364e0bd8c52eea6fb", 15),
-    ("hf_cheques", "arunchincheti/handwritten_and_cheques_dataset", "test", "4d81a7c9b1af2fcbb9abc7c1f85f1c7b789c01a2", 15),
+    {"name": "hf_multifin", "kind": "hf", "repo_id": "TheFinAI/MultiFinBen-EnglishOCR", "split": "train", "revision": "08cbac5db10834b6cbce428364e0bd8c52eea6fb", "quota": 15},
+    {"name": "hf_cheques", "kind": "hf", "repo_id": "arunchincheti/handwritten_and_cheques_dataset", "split": "test", "revision": "4d81a7c9b1af2fcbb9abc7c1f85f1c7b789c01a2", "quota": 15},
+    {"name": "kaggle_iam", "kind": "kaggle", "handle": "naderabdelghany/iam-handwritten-forms-dataset", "quota": 5},
+    {"name": "github_forms", "kind": "github", "url": "https://github.com/bernardadhitya/handwritten-form-ocr-ie-json-dataset/archive/6b9113e8e18973293cc003bc079c21e2f7f3d6e5.zip", "quota": 5},
 ]
 
 def _find_columns(ds):
@@ -121,22 +123,50 @@ def _as_image(value):
     if isinstance(value, (str, Path)): return Image.open(value).convert("RGB")
     return None
 
+def _save_path_cases(paths, source_name, limit, truth_by_stem=None):
+    cases = []
+    for image_path in paths:
+        if len(cases) >= limit: break
+        try:
+            image = Image.open(image_path).convert("RGB")
+            path = ARTIFACTS / f"{source_name}_{len(cases):03d}.png"; image.save(path)
+            stem = Path(image_path).stem
+            cases.append({"id": path.stem, "image_path": str(path), "expected": str((truth_by_stem or {}).get(stem, "")), "source": source_name})
+        except Exception:
+            continue
+    return cases
+
 def load_cases(limit=MAX_DOCUMENTS):
     cases = []
-    for source_name, dataset_id, split, revision, quota in DATASET_SOURCES:
+    for source in DATASET_SOURCES:
+        source_name, kind, quota = source["name"], source["kind"], source["quota"]
         try:
-            ds, status = _run_with_timeout(lambda: load_dataset(dataset_id, split=split, revision=revision, streaming=False, trust_remote_code=False), DOWNLOAD_TIMEOUT_SECONDS)
-            if status != "success" or ds is None: raise TimeoutError(status)
-            image_cols, text_cols = _find_columns(ds)
-            if not image_cols: raise ValueError(f"Aucune colonne image détectée: {ds.column_names}")
-            image_col = image_cols[0]; text_col = text_cols[0] if text_cols else None
-            for row in ds.select(range(min(quota, len(ds)))):
-                image = _as_image(row[image_col])
-                if image is None: continue
-                expected = str(row[text_col]) if text_col else ""
-                path = ARTIFACTS / f"{source_name}_{len(cases):03d}.png"; image.save(path)
-                cases.append({"id": path.stem, "image_path": str(path), "expected": expected, "source": source_name})
-                if len(cases) >= limit: return cases
+            if kind == "hf":
+                ds, status = _run_with_timeout(lambda: load_dataset(source["repo_id"], split=source["split"], revision=source["revision"], streaming=False, trust_remote_code=False), DOWNLOAD_TIMEOUT_SECONDS)
+                if status != "success" or ds is None: raise TimeoutError(status)
+                image_cols, text_cols = _find_columns(ds)
+                if not image_cols: raise ValueError(f"Aucune colonne image détectée: {ds.column_names}")
+                image_col = image_cols[0]; text_col = text_cols[0] if text_cols else None
+                for row in ds.select(range(min(quota, len(ds)))):
+                    image = _as_image(row[image_col])
+                    if image is None: continue
+                    path = ARTIFACTS / f"{source_name}_{len(cases):03d}.png"; image.save(path)
+                    cases.append({"id": path.stem, "image_path": str(path), "expected": str(row[text_col]) if text_col else "", "source": source_name})
+            elif kind == "kaggle":
+                import kagglehub
+                folder, status = _run_with_timeout(lambda: kagglehub.dataset_download(source["handle"]), DOWNLOAD_TIMEOUT_SECONDS)
+                if status != "success": raise TimeoutError(status)
+                paths = list(Path(folder).rglob("*.png")) + list(Path(folder).rglob("*.jpg"))
+                cases.extend(_save_path_cases(paths, source_name, quota))
+            else:
+                import io, zipfile, requests
+                archive, status = _run_with_timeout(lambda: requests.get(source["url"], timeout=DOWNLOAD_TIMEOUT_SECONDS).content, DOWNLOAD_TIMEOUT_SECONDS)
+                if status != "success": raise TimeoutError(status)
+                folder = ARTIFACTS / source_name; folder.mkdir(exist_ok=True)
+                with zipfile.ZipFile(io.BytesIO(archive)) as zf: zf.extractall(folder)
+                paths = list(folder.rglob("*.png")) + list(folder.rglob("*.jpg")) + list(folder.rglob("*.jpeg"))
+                cases.extend(_save_path_cases(paths, source_name, quota))
+            if len(cases) >= limit: return cases[:limit]
         except Exception as exc:
             print(f"Source {source_name} indisponible: {exc!r}")
     return cases
@@ -344,8 +374,8 @@ def make_notebook(number: str, left: str, right: str) -> dict:
         code(NUMPY_GUARD),
         code("EXTRA_PACKAGES = " + repr(extras) + "\nif EXTRA_PACKAGES:\n    subprocess.run([sys.executable, '-m', 'pip', 'install', '-q', '--upgrade', *EXTRA_PACKAGES], check=True)\nprint('Dépendances spécifiques:', EXTRA_PACKAGES or 'aucune')"),
         code(RUNTIME),
-        md("## Secrets (facultatif)\nAjoutez `HF_TOKEN` dans Colab → Secrets si un modèle gated le demande. Le token n'est jamais affiché. Kaggle reste optionnel : ce notebook utilise par défaut un dataset public Hugging Face."),
-        code("try:\n    from google.colab import userdata\n    os.environ['HF_TOKEN'] = userdata.get('HF_TOKEN') or ''\nexcept Exception:\n    os.environ.setdefault('HF_TOKEN', '')\nprint('HF_TOKEN présent:', bool(os.environ.get('HF_TOKEN')))"),
+        md("## Secrets (facultatif)\nAjoutez `HF_TOKEN` et `KAGGLE_API_TOKEN` dans Colab → Secrets si nécessaire. Le token n'est jamais affiché. Les quatre sources du notebook principal sont tentées : Hugging Face MultiFin, Hugging Face chèques, Kaggle IAM Forms et le dépôt GitHub handwritten forms. Les images Kaggle/GitHub sans transcription exploitable restent visibles mais ne reçoivent pas de CER/WER."),
+        code("try:\n    from google.colab import userdata\n    os.environ['HF_TOKEN'] = userdata.get('HF_TOKEN') or ''\n    os.environ['KAGGLE_API_TOKEN'] = userdata.get('KAGGLE_API_TOKEN') or userdata.get('KAGGLE_TOKEN') or ''\nexcept Exception:\n    os.environ.setdefault('HF_TOKEN', '')\n    os.environ.setdefault('KAGGLE_API_TOKEN', '')\nprint('HF_TOKEN présent:', bool(os.environ.get('HF_TOKEN')), '| KAGGLE token présent:', bool(os.environ.get('KAGGLE_API_TOKEN')))"),
         code(DATASET),
         code(pair_adapter_source((left, right))),
         md("## Téléchargement et smoke test\nCette cellule vérifie réellement le téléchargement, l'instanciation et une inférence sur le premier document. Un `failed_load` est conservé avec l'erreur complète; il n'est pas transformé en faux succès."),
