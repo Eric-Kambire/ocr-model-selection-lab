@@ -98,7 +98,10 @@ puis ajouté atomiquement à `dataset/dataset.json`.
 
 APP_CSS = """
 .gradio-container {
-    max-width: 1500px !important;
+    width: min(100% - 40px, 1600px) !important;
+    max-width: 1600px !important;
+    margin: 0 auto !important;
+    padding: 18px 0 30px !important;
     min-height: 100vh !important;
     overflow: visible !important;
     background: var(--body-background-fill) !important;
@@ -107,14 +110,47 @@ APP_CSS = """
 #page-shell {
     min-height: calc(100vh - 190px) !important;
     overflow: visible !important;
+    gap: 14px !important;
+    background: var(--body-background-fill) !important;
+}
+#page-navigation {
+    position: sticky !important;
+    top: 10px !important;
+    z-index: 20 !important;
+    margin: 0 !important;
+    padding: 7px !important;
+    border: 1px solid var(--block-border-color) !important;
+    border-radius: 12px !important;
+    background: var(--body-background-fill) !important;
+    box-shadow: 0 6px 18px rgba(24, 24, 27, .06) !important;
+}
+#page-navigation > [data-testid="block-info"] {
+    display: none !important;
 }
 #page-navigation .wrap {
     display: flex !important;
     flex-wrap: wrap !important;
-    gap: 6px !important;
+    gap: 4px !important;
 }
 #page-navigation label {
     margin: 0 !important;
+    min-height: 34px !important;
+    padding: 7px 10px !important;
+    border: 1px solid transparent !important;
+    border-radius: 8px !important;
+    background: transparent !important;
+    transition: background-color .12s ease, border-color .12s ease !important;
+}
+#page-navigation label.selected {
+    border-color: var(--block-border-color) !important;
+    background: var(--button-secondary-background-fill) !important;
+    font-weight: 600 !important;
+}
+#page-navigation label:hover {
+    background: var(--background-fill-secondary) !important;
+}
+#page-navigation label span {
+    white-space: nowrap !important;
 }
 #page-settings,
 #page-charts,
@@ -130,6 +166,19 @@ APP_CSS = """
     height: 100% !important;
     align-items: stretch !important;
 }
+#page-benchmark {
+    gap: 14px !important;
+}
+#page-benchmark > .row {
+    gap: 18px !important;
+    align-items: flex-start !important;
+}
+#benchmark-config {
+    flex: 0 1 390px !important;
+    max-width: 410px !important;
+    padding-right: 18px !important;
+    border-right: 1px solid var(--block-border-color) !important;
+}
 #models-list .wrap {
     max-height: 145px !important;
     overflow-y: auto !important;
@@ -137,6 +186,13 @@ APP_CSS = """
 }
 #summary-panel {
     min-height: 0 !important;
+    gap: 10px !important;
+}
+#summary-panel > .row {
+    gap: 8px !important;
+}
+#summary-panel > .row > button {
+    min-height: 40px !important;
 }
 .dashboard-grid {
     height: 100% !important;
@@ -170,7 +226,16 @@ APP_CSS = """
     margin: 0 !important;
 }
 #live-section-title h3 {
-    margin: 4px 0 0 !important;
+    margin: 6px 0 0 !important;
+}
+#benchmark-layout {
+    gap: 14px !important;
+    padding-top: 10px !important;
+    border-top: 1px solid var(--block-border-color) !important;
+}
+#live-image,
+#live-metrics {
+    border-radius: 10px !important;
 }
 #metrics-pane {
     max-height: 70vh !important;
@@ -198,9 +263,28 @@ APP_CSS = """
 }
 .hero { padding: 14px 20px; border-radius: 16px; color: white;
         background: linear-gradient(135deg, #312e81 0%, #4f46e5 50%, #0f766e 100%);
-        box-shadow: 0 12px 28px rgba(49,46,129,.24); margin-bottom: 8px; }
-.hero h1 { margin: 0 0 3px 0; font-size: 26px; line-height: 1.15; }
-.hero p { margin: 0; opacity: .9; font-size: 14px; }
+        box-shadow: 0 12px 28px rgba(49,46,129,.24); margin-bottom: 0; }
+.hero h1 { margin: 0 0 3px 0; color: white !important; font-size: 26px; line-height: 1.15; }
+.hero p { margin: 0; color: white !important; opacity: .9; font-size: 14px; }
+@media (max-width: 900px) {
+    .gradio-container {
+        width: min(100% - 24px, 1600px) !important;
+        padding-top: 12px !important;
+    }
+    #page-navigation {
+        position: static !important;
+    }
+    #benchmark-config {
+        max-width: none !important;
+        padding-right: 0 !important;
+        border-right: 0 !important;
+        border-bottom: 1px solid var(--block-border-color) !important;
+        padding-bottom: 12px !important;
+    }
+    #page-benchmark > .row {
+        gap: 14px !important;
+    }
+}
 """
 
 # Client-side routing deliberately avoids Gradio's lazy Tab mounting. Every
