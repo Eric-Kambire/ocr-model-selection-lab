@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import textwrap
+import ast
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -50,6 +51,13 @@ PINNED = [
 ]
 subprocess.run([sys.executable, "-m", "pip", "install", "-q", "--upgrade", "--force-reinstall", "--no-cache-dir", *PINNED], check=True)
 print("Dépendances réinstallées ensemble. IMPORTANT : redémarrez maintenant le runtime Colab (Exécution → Redémarrer la session), puis reprenez à la cellule de vérification.")
+'''
+
+NUMPY_GUARD = r'''
+# Garde explicite contre NumPy 2.x (incompatibilités ABI avec certaines roues
+# OCR/vision). Cette cellule est volontairement séparée pour être identifiable.
+subprocess.run([sys.executable, "-m", "pip", "install", "-q", "--upgrade", "--force-reinstall", "--no-cache-dir", "numpy<2.0.0"], check=True)
+print("numpy<2.0.0 installé. Redémarrez le runtime avant la cellule suivante si Colab indique que NumPy était déjà chargé.")
 '''
 
 RUNTIME = r'''
@@ -96,8 +104,10 @@ DATASET = r'''
 # Jeu de données public, borné et reproductible. Aucun fichier local du projet n'est requis.
 from datasets import load_dataset
 
-DATASET_ID = "arunchincheti/handwritten_and_cheques_dataset"
-DATASET_SPLIT = "train"
+DATASET_SOURCES = [
+    ("hf_multifin", "TheFinAI/MultiFinBen-EnglishOCR", "train", "08cbac5db10834b6cbce428364e0bd8c52eea6fb", 15),
+    ("hf_cheques", "arunchincheti/handwritten_and_cheques_dataset", "test", "4d81a7c9b1af2fcbb9abc7c1f85f1c7b789c01a2", 15),
+]
 
 def _find_columns(ds):
     image_cols = [c for c in ds.column_names if c.lower() in {"image", "img", "images", "filepath", "file"}]
@@ -112,25 +122,24 @@ def _as_image(value):
     return None
 
 def load_cases(limit=MAX_DOCUMENTS):
-    try:
-        ds, status = _run_with_timeout(lambda: load_dataset(DATASET_ID, split=DATASET_SPLIT, streaming=False, trust_remote_code=False), DOWNLOAD_TIMEOUT_SECONDS)
-        if status != "success" or ds is None:
-            print(f"Dataset non disponible ({status}); vous pouvez déposer des images dans {ARTIFACTS}.")
-            return []
-        image_cols, text_cols = _find_columns(ds)
-        if not image_cols: raise ValueError(f"Aucune colonne image détectée: {ds.column_names}")
-        image_col = image_cols[0]; text_col = text_cols[0] if text_cols else None
-        cases = []
-        for row in ds.select(range(min(limit, len(ds)))):
-            image = _as_image(row[image_col])
-            if image is None: continue
-            expected = str(row[text_col]) if text_col else ""
-            path = ARTIFACTS / f"case_{len(cases):03d}.png"; image.save(path)
-            cases.append({"id": path.stem, "image_path": str(path), "expected": expected})
-        return cases
-    except Exception as exc:
-        print("Dataset indisponible ou schéma inattendu:", repr(exc))
-        return []
+    cases = []
+    for source_name, dataset_id, split, revision, quota in DATASET_SOURCES:
+        try:
+            ds, status = _run_with_timeout(lambda: load_dataset(dataset_id, split=split, revision=revision, streaming=False, trust_remote_code=False), DOWNLOAD_TIMEOUT_SECONDS)
+            if status != "success" or ds is None: raise TimeoutError(status)
+            image_cols, text_cols = _find_columns(ds)
+            if not image_cols: raise ValueError(f"Aucune colonne image détectée: {ds.column_names}")
+            image_col = image_cols[0]; text_col = text_cols[0] if text_cols else None
+            for row in ds.select(range(min(quota, len(ds)))):
+                image = _as_image(row[image_col])
+                if image is None: continue
+                expected = str(row[text_col]) if text_col else ""
+                path = ARTIFACTS / f"{source_name}_{len(cases):03d}.png"; image.save(path)
+                cases.append({"id": path.stem, "image_path": str(path), "expected": expected, "source": source_name})
+                if len(cases) >= limit: return cases
+        except Exception as exc:
+            print(f"Source {source_name} indisponible: {exc!r}")
+    return cases
 
 CASES = load_cases()
 print(f"Cas chargés: {len(CASES)}. Les scores CER/WER sont calculés uniquement si une vérité terrain existe.")
@@ -240,6 +249,16 @@ def _bounded_load(self):
 Adapter.download, Adapter.load = _bounded_download, _bounded_load
 '''
 
+def pair_adapter_source(names: tuple[str, str]) -> str:
+    """Keep only the two selected model definitions in each notebook."""
+    marker = "MODEL_META = "
+    start = ADAPTER.index(marker)
+    end = ADAPTER.index("\n\ndef _norm", start)
+    dict_start = start + len(marker)
+    metadata = ast.literal_eval(ADAPTER[dict_start:end].strip())
+    selected = {name: metadata[name] for name in names}
+    return ADAPTER[:start] + marker + repr(selected) + ADAPTER[end:]
+
 BENCH = r'''
 def _run_with_timeout(fn, seconds):
     box = {}; done = threading.Event()
@@ -322,12 +341,13 @@ def make_notebook(number: str, left: str, right: str) -> dict:
         md(f"# OCR benchmark — {left} + {right}\n\nNotebook autonome Colab. **Deux modèles maximum**, chargés l'un après l'autre pour protéger la mémoire. Les poids viennent des dépôts officiels Hugging Face ou du paquet officiel du modèle.\n\nOrdre : installer → vérifier le runtime → télécharger → smoke test → benchmark → graphiques."),
         code(f"MODELS = {left!r}, {right!r}\nprint('Modèles de ce notebook:', MODELS)"),
         code(COMMON_INSTALL),
+        code(NUMPY_GUARD),
         code("EXTRA_PACKAGES = " + repr(extras) + "\nif EXTRA_PACKAGES:\n    subprocess.run([sys.executable, '-m', 'pip', 'install', '-q', '--upgrade', *EXTRA_PACKAGES], check=True)\nprint('Dépendances spécifiques:', EXTRA_PACKAGES or 'aucune')"),
         code(RUNTIME),
         md("## Secrets (facultatif)\nAjoutez `HF_TOKEN` dans Colab → Secrets si un modèle gated le demande. Le token n'est jamais affiché. Kaggle reste optionnel : ce notebook utilise par défaut un dataset public Hugging Face."),
         code("try:\n    from google.colab import userdata\n    os.environ['HF_TOKEN'] = userdata.get('HF_TOKEN') or ''\nexcept Exception:\n    os.environ.setdefault('HF_TOKEN', '')\nprint('HF_TOKEN présent:', bool(os.environ.get('HF_TOKEN')))"),
         code(DATASET),
-        code(ADAPTER),
+        code(pair_adapter_source((left, right))),
         md("## Téléchargement et smoke test\nCette cellule vérifie réellement le téléchargement, l'instanciation et une inférence sur le premier document. Un `failed_load` est conservé avec l'erreur complète; il n'est pas transformé en faux succès."),
         code("SMOKE = []\nfor name in SELECTED_MODELS:\n    adapter = Adapter(name); started = time.perf_counter()\n    try:\n        location = adapter.download(); adapter.load()\n        if CASES: output, status = _run_with_timeout(lambda: adapter.predict(CASES[0]['image_path']), TIMEOUT_SECONDS)\n        else: output, status = '', 'no_dataset'\n        SMOKE.append({'model': name, 'status': status, 'load_seconds': time.perf_counter()-started, 'output_chars': len(output or ''), 'error': ''})\n    except Exception as exc:\n        SMOKE.append({'model': name, 'status': 'failed_load', 'load_seconds': time.perf_counter()-started, 'output_chars': 0, 'error': repr(exc)})\n    finally: adapter.close()\nprint(SMOKE)"),
         md("## Benchmark sérialisé\nLe benchmark garde chaque sortie brute dans `raw_outputs.jsonl`, y compris un timeout. `latency_s` est le temps par image (chargement exclu), `output_chars` mesure le volume produit, et CER est le taux d'erreur caractère quand le dataset fournit une vérité terrain."),
