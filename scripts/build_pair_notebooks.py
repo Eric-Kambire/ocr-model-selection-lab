@@ -403,7 +403,8 @@ with gr.Blocks(title=f"OCR pair — {MODELS[0]} + {MODELS[1]}") as pair_demo:
     test_button.click(_gradio_single_test, [model_input, image_input], [test_status, extracted_output, live_metrics], queue=True)
     benchmark_button.click(_gradio_benchmark, outputs=[benchmark_table, benchmark_status], queue=True)
 
-pair_demo.launch(share=False, debug=False)
+GRADIO_SHARE = True  # Colab nécessite un lien public temporaire pour ouvrir l'interface.
+pair_demo.launch(share=GRADIO_SHARE, debug=False)
 '''
 
 
