@@ -141,7 +141,9 @@ except Exception as exc:
 '''
 
 DATASET = r'''
-# Jeu de données public, borné et reproductible. Aucun fichier local du projet n'est requis.
+# Jeu de données public, borné et reproductible. Chaque notebook télécharge
+# directement les mêmes quatre sources que benchmark_colab.ipynb : il n'utilise
+# ni le dépôt GitHub de l'application, ni un fichier local du projet.
 from datasets import load_dataset
 
 DATASET_SOURCES = [
@@ -190,11 +192,14 @@ def _save_path_cases(paths, source_name, limit, truth_by_stem=None):
 
 def load_cases(limit=MAX_DOCUMENTS):
     cases = []
+    global DATASET_DOWNLOAD_REPORT
+    DATASET_DOWNLOAD_REPORT = []
     for source in DATASET_SOURCES:
         source_name, kind, quota = source["name"], source["kind"], source["quota"]
+        print(f"[{source_name}] téléchargement — quota {quota}")
         try:
             if kind == "hf":
-                ds, status = _run_with_timeout(lambda: load_dataset(source["repo_id"], split=source["split"], revision=source["revision"], streaming=False, trust_remote_code=False), DOWNLOAD_TIMEOUT_SECONDS)
+                ds, status = _run_with_timeout(lambda: load_dataset(source["repo_id"], split=source["split"], revision=source["revision"], streaming=False, trust_remote_code=False, token=os.environ.get("HF_TOKEN") or None), DOWNLOAD_TIMEOUT_SECONDS)
                 if status != "success" or ds is None: raise TimeoutError(status)
                 image_cols, text_cols = _find_columns(ds)
                 if not image_cols: raise ValueError(f"Aucune colonne image détectée: {ds.column_names}")
@@ -204,6 +209,7 @@ def load_cases(limit=MAX_DOCUMENTS):
                     if image is None: continue
                     path = ARTIFACTS / f"{source_name}_{len(cases):03d}.png"; image.save(path)
                     cases.append({"id": path.stem, "image_path": str(path), "expected": str(row[text_col]) if text_col else "", "source": source_name})
+                DATASET_DOWNLOAD_REPORT.append({"source": source_name, "status": "success", "documents": min(quota, len(ds))})
             elif kind == "kaggle":
                 import kagglehub
                 folder, status = _run_with_timeout(lambda: kagglehub.dataset_download(source["handle"]), DOWNLOAD_TIMEOUT_SECONDS)
@@ -211,21 +217,25 @@ def load_cases(limit=MAX_DOCUMENTS):
                 selected = source.get("sample_files")
                 paths = [Path(folder) / item for item in selected] if selected else list(Path(folder).rglob("*.png")) + list(Path(folder).rglob("*.jpg"))
                 cases.extend(_save_path_cases(paths, source_name, quota))
+                DATASET_DOWNLOAD_REPORT.append({"source": source_name, "status": "success", "documents": len(paths[:quota])})
             else:
                 import io, zipfile, requests
-                archive, status = _run_with_timeout(lambda: requests.get(source["url"], timeout=DOWNLOAD_TIMEOUT_SECONDS).content, DOWNLOAD_TIMEOUT_SECONDS)
+                archive, status = _run_with_timeout(lambda: requests.get(source["url"], headers={"Authorization": f"Bearer {os.environ.get('GITHUB_TOKEN')}"} if os.environ.get("GITHUB_TOKEN") else {}, timeout=DOWNLOAD_TIMEOUT_SECONDS).content, DOWNLOAD_TIMEOUT_SECONDS)
                 if status != "success": raise TimeoutError(status)
                 folder = ARTIFACTS / source_name; folder.mkdir(exist_ok=True)
                 with zipfile.ZipFile(io.BytesIO(archive)) as zf: zf.extractall(folder)
                 paths = list(folder.rglob("*.png")) + list(folder.rglob("*.jpg")) + list(folder.rglob("*.jpeg"))
                 cases.extend(_save_path_cases(paths, source_name, quota))
+                DATASET_DOWNLOAD_REPORT.append({"source": source_name, "status": "success", "documents": min(quota, len(paths))})
             if len(cases) >= limit: return cases[:limit]
         except Exception as exc:
+            DATASET_DOWNLOAD_REPORT.append({"source": source_name, "status": "error", "documents": 0, "error": repr(exc)})
             print(f"Source {source_name} indisponible: {exc!r}")
     return cases
 
 CASES = load_cases()
 print(f"Cas chargés: {len(CASES)}. Les scores CER/WER sont calculés uniquement si une vérité terrain existe.")
+display(DATASET_DOWNLOAD_REPORT)
 '''
 
 ADAPTER = r'''
@@ -513,7 +523,7 @@ def make_notebook(number: str, left: str, right: str) -> dict:
         code("EXTRA_PACKAGES = " + repr(extras) + "\n_missing_extra = install_missing(EXTRA_PACKAGES)\nprint('Dépendances spécifiques installées/manquantes:', _missing_extra)"),
         code(RUNTIME),
         md("## Secrets (facultatif)\nAjoutez `HF_TOKEN` et `KAGGLE_API_TOKEN` dans Colab → Secrets si nécessaire. Le token n'est jamais affiché. Les quatre sources du notebook principal sont tentées : Hugging Face MultiFin, Hugging Face chèques, Kaggle IAM Forms et le dépôt GitHub handwritten forms. Les images Kaggle/GitHub sans transcription exploitable restent visibles mais ne reçoivent pas de CER/WER."),
-        code("try:\n    from google.colab import userdata\n    os.environ['HF_TOKEN'] = userdata.get('HF_TOKEN') or ''\n    os.environ['KAGGLE_API_TOKEN'] = userdata.get('KAGGLE_API_TOKEN') or userdata.get('KAGGLE_TOKEN') or ''\nexcept Exception:\n    os.environ.setdefault('HF_TOKEN', '')\n    os.environ.setdefault('KAGGLE_API_TOKEN', '')\nprint('HF_TOKEN présent:', bool(os.environ.get('HF_TOKEN')), '| KAGGLE token présent:', bool(os.environ.get('KAGGLE_API_TOKEN')))"),
+        code("def _secret(name):\n    try:\n        from google.colab import userdata\n        value = userdata.get(name)\n        if value: return value.strip()\n    except Exception:\n        pass\n    value = os.getenv(name)\n    return value.strip() if isinstance(value, str) and value.strip() else ''\n\nos.environ['HF_TOKEN'] = _secret('HF_TOKEN') or _secret('HUGGINGFACE_TOKEN') or _secret('HF_HUB_TOKEN')\nos.environ['KAGGLE_API_TOKEN'] = _secret('KAGGLE_API_TOKEN') or _secret('KAGGLE_TOKEN')\nos.environ['GITHUB_TOKEN'] = _secret('GITHUB_TOKEN') or _secret('GH_TOKEN')\n# Compatibilité avec les anciens secrets Kaggle.\nkaggle_json = _secret('KAGGLE_JSON')\nif kaggle_json:\n    import json\n    try:\n        credentials = json.loads(kaggle_json)\n        os.environ['KAGGLE_USERNAME'] = str(credentials['username'])\n        os.environ['KAGGLE_KEY'] = str(credentials['key'])\n    except (KeyError, TypeError, json.JSONDecodeError):\n        print('KAGGLE_JSON ignoré : format attendu {username, key}.')\nprint('HF_TOKEN présent:', bool(os.environ.get('HF_TOKEN')), '| Kaggle présent:', bool(os.environ.get('KAGGLE_API_TOKEN') or (os.environ.get('KAGGLE_USERNAME') and os.environ.get('KAGGLE_KEY'))), '| GitHub présent:', bool(os.environ.get('GITHUB_TOKEN')))"),
         code(DATASET),
         code(pair_adapter_source((left, right))),
         md("## Téléchargement et smoke test\nCette cellule vérifie réellement le téléchargement, l'instanciation et une inférence sur le premier document. Un `failed_load` est conservé avec l'erreur complète; il n'est pas transformé en faux succès."),
