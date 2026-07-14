@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import math
-import concurrent.futures
+import logging
+import threading
 import time
 import uuid
 from collections.abc import Callable, Iterable
@@ -14,6 +15,8 @@ from evaluator import evaluate_bankmark, evaluate_ocr
 
 from .domain import BenchmarkCase, BenchmarkResult, InferenceResult, InferenceStatus
 from .registry import ModelRegistry
+
+LOGGER = logging.getLogger(__name__)
 
 ProgressCallback = Callable[[int, int, str], None]
 TraceCallback = Callable[[dict[str, Any]], None]
@@ -34,7 +37,13 @@ class RunnerProgress:
 
 
 class BenchmarkRunner:
-    """Runs models against immutable cases and produces normalized results."""
+    """Execute a benchmark while isolating provider failures.
+
+    The runner intentionally owns the lifecycle of one adapter at a time:
+    create -> process every selected case -> close.  This is important for
+    local machines with limited RAM/VRAM and also prevents one broken provider
+    from aborting the remaining models.
+    """
 
     def __init__(self, registry: ModelRegistry) -> None:
         self.registry = registry
@@ -49,6 +58,8 @@ class BenchmarkRunner:
         timeout_seconds: float | None = None,
         max_errors: int | None = None,
         model_prompt: str | None = None,
+        cpu_threads: int | None = None,
+        unload_after_task: bool = False,
         progress: ProgressCallback | None = None,
         trace: TraceCallback | None = None,
     ) -> tuple[str, list[dict[str, Any]]]:
@@ -60,6 +71,8 @@ class BenchmarkRunner:
             timeout_seconds=timeout_seconds,
             max_errors=max_errors,
             model_prompt=model_prompt,
+            cpu_threads=cpu_threads,
+            unload_after_task=unload_after_task,
             progress=progress,
             trace=trace,
         )
@@ -81,107 +94,177 @@ class BenchmarkRunner:
         timeout_seconds: float | None = None,
         max_errors: int | None = None,
         model_prompt: str | None = None,
+        cpu_threads: int | None = None,
+        unload_after_task: bool = False,
         progress: ProgressCallback | None = None,
         trace: TraceCallback | None = None,
     ):
         selected_cases = list(cases)
-        models = [
-            self.registry.create(
-                spec,
-                mock_noise=mock_noise,
-                model_prompt=model_prompt,
-            )
-            for spec in model_specs
-        ]
+        model_specs = list(model_specs)
+        LOGGER.info(
+            "Runner initialised | models=%s | cases=%d | timeout=%s | cpu_threads=%s | unload_after_task=%s | eval_mode=%s",
+            model_specs, len(selected_cases), timeout_seconds, cpu_threads, unload_after_task, eval_mode,
+        )
         run_id = time.strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:8]
-        total = len(models) * len(selected_cases)
+        total = len(model_specs) * len(selected_cases)
         completed = 0
         errors = 0
         started_at = time.monotonic()
 
-        for model in models:
-            for case in selected_cases:
-                if progress:
-                    progress(completed, total, f"{model.model_name}: {case.image_path}")
-                elapsed_before = time.monotonic() - started_at
-                yield RunnerProgress(
-                    run_id=run_id,
-                    completed=completed,
-                    total=total,
-                    model_name=model.model_name,
-                    case=case,
-                    result=None,
-                    stage="processing",
-                    elapsed_seconds=elapsed_before,
-                    estimated_remaining_seconds=(
-                        (elapsed_before / completed) * (total - completed)
-                        if completed
-                        else None
-                    ),
-                    error_count=errors,
+        # Models are processed serially.  Do not turn this into a worker pool:
+        # loading two vision models concurrently is the main source of OOMs on
+        # the supported CPU-only developer machines.
+        for model_spec in model_specs:
+            model = None
+            model_name = str(model_spec).split(":", 1)[-1]
+            try:
+                model = self.registry.create(
+                    model_spec,
+                    mock_noise=mock_noise,
+                    model_prompt=model_prompt,
+                    cpu_threads=cpu_threads,
+                    unload_after_task=unload_after_task,
+                    # Forward the same budget to providers that support a
+                    # native network timeout (notably Ollama). The runner
+                    # timeout alone cannot cancel an HTTP request safely.
+                    timeout_seconds=timeout_seconds,
                 )
-                try:
-                    raw = self._perform_with_timeout(
-                        model,
-                        case.image_path,
-                        timeout_seconds,
-                        late_result=lambda late_raw, late_error: self._emit_trace(
-                            trace,
-                            run_id,
-                            model.model_name,
-                            case,
-                            late_raw,
-                            timing="late_after_timeout",
-                            error=late_error,
-                        ),
-                    )
-                    inference = (
-                        raw
-                        if isinstance(raw, InferenceResult)
-                        else InferenceResult.from_legacy_dict(raw)
-                    )
-                except Exception as exc:  # Adapter boundary: keep one failure local.
+                model_name = model.model_name
+            except Exception as exc:
+                LOGGER.exception("Model initialization failed | spec=%s", model_spec)
+                for case in selected_cases:
                     inference = InferenceResult(
-                        text="",
-                        latency_seconds=0.0,
+                        text="", latency_seconds=0.0,
                         status=InferenceStatus.FAILED,
-                        error=f"{type(exc).__name__}: {exc}",
+                        error=f"Model initialization failed: {type(exc).__name__}: {exc}",
+                        device="unknown",
                     )
-                self._emit_trace(
-                    trace,
-                    run_id,
-                    model.model_name,
-                    case,
-                    inference,
-                    timing="on_time",
-                )
-                result = self._evaluate(
-                    run_id, model.model_name, case, inference, eval_mode
-                )
-                completed += 1
-                result_dict = result.to_dict()
-                if inference.status is not InferenceStatus.SUCCESS:
+                    result = self._evaluate(run_id, model_name, case, inference, eval_mode)
+                    completed += 1
                     errors += 1
-                elapsed = time.monotonic() - started_at
-                remaining = (
-                    (elapsed / completed) * (total - completed)
-                    if completed and completed < total
-                    else 0.0
-                )
-                yield RunnerProgress(
-                    run_id=run_id,
-                    completed=completed,
-                    total=total,
-                    model_name=model.model_name,
-                    case=case,
-                    result=result_dict,
-                    stage="completed",
-                    elapsed_seconds=elapsed,
-                    estimated_remaining_seconds=remaining,
-                    error_count=errors,
-                )
-                if max_errors is not None and max_errors > 0 and errors >= max_errors:
-                    return
+                    yield RunnerProgress(
+                        run_id=run_id, completed=completed, total=total,
+                        model_name=model_name, case=case, result=result.to_dict(),
+                        stage="completed", elapsed_seconds=time.monotonic() - started_at,
+                        estimated_remaining_seconds=None, error_count=errors,
+                    )
+                    if max_errors is not None and max_errors > 0 and errors >= max_errors:
+                        return
+                continue
+
+            LOGGER.info("Model started | model=%s | cases=%d", model.model_name, len(selected_cases))
+            try:
+                for case in selected_cases:
+                    LOGGER.debug(
+                        "Inference started | model=%s | image=%s | completed=%d/%d",
+                        model.model_name, case.image_path, completed, total,
+                    )
+                    if progress:
+                        progress(completed, total, f"{model.model_name}: {case.image_path}")
+                    elapsed_before = time.monotonic() - started_at
+                    yield RunnerProgress(
+                        run_id=run_id,
+                        completed=completed,
+                        total=total,
+                        model_name=model.model_name,
+                        case=case,
+                        result=None,
+                        stage="processing",
+                        elapsed_seconds=elapsed_before,
+                        estimated_remaining_seconds=(
+                            (elapsed_before / completed) * (total - completed)
+                            if completed
+                            else None
+                        ),
+                        error_count=errors,
+                    )
+                    try:
+                        # The adapter boundary is deliberately narrow.  Any
+                        # provider exception becomes a failed document rather
+                        # than stopping the whole run.
+                        raw = self._perform_with_timeout(
+                            model,
+                            case.image_path,
+                            timeout_seconds,
+                            late_result=lambda late_raw, late_error: self._emit_trace(
+                                trace,
+                                run_id,
+                                model.model_name,
+                                case,
+                                late_raw,
+                                timing="late_after_timeout",
+                                error=late_error,
+                            ),
+                        )
+                        inference = (
+                            raw
+                            if isinstance(raw, InferenceResult)
+                            else InferenceResult.from_legacy_dict(raw)
+                        )
+                    except Exception as exc:  # Adapter boundary: keep one failure local.
+                        LOGGER.exception(
+                            "Adapter exception | model=%s | image=%s",
+                            model.model_name, case.image_path,
+                        )
+                        inference = InferenceResult(
+                            text="",
+                            latency_seconds=0.0,
+                            status=InferenceStatus.FAILED,
+                            error=f"{type(exc).__name__}: {exc}",
+                        )
+                    self._emit_trace(
+                        trace,
+                        run_id,
+                        model.model_name,
+                        case,
+                        inference,
+                        timing="on_time",
+                    )
+                    result = self._evaluate(
+                        run_id, model.model_name, case, inference, eval_mode
+                    )
+                    completed += 1
+                    result_dict = result.to_dict()
+                    if inference.status is not InferenceStatus.SUCCESS:
+                        errors += 1
+                        LOGGER.warning(
+                            "Inference finished with non-success status | model=%s | image=%s | status=%s | error=%s",
+                            model.model_name, case.image_path, inference.status.value, inference.error,
+                        )
+                    else:
+                        LOGGER.info(
+                            "Inference completed | model=%s | image=%s | latency=%.3fs | chars=%d | tokens=%s",
+                            model.model_name, case.image_path, inference.latency_seconds,
+                            len(inference.text or ""), inference.output_tokens,
+                        )
+                    elapsed = time.monotonic() - started_at
+                    remaining = (
+                        (elapsed / completed) * (total - completed)
+                        if completed and completed < total
+                        else 0.0
+                    )
+                    yield RunnerProgress(
+                        run_id=run_id,
+                        completed=completed,
+                        total=total,
+                        model_name=model.model_name,
+                        case=case,
+                        result=result_dict,
+                        stage="completed",
+                        elapsed_seconds=elapsed,
+                        estimated_remaining_seconds=remaining,
+                        error_count=errors,
+                    )
+                    if max_errors is not None and max_errors > 0 and errors >= max_errors:
+                        return
+            finally:
+                close = getattr(model, "close", None)
+                if callable(close):
+                    try:
+                        close()
+                    except Exception:
+                        LOGGER.exception("Model cleanup failed | model=%s", model.model_name)
+                LOGGER.info("Model released | model=%s", model.model_name)
 
     @staticmethod
     def _perform_with_timeout(
@@ -193,30 +276,51 @@ class BenchmarkRunner:
         if timeout_seconds is None or timeout_seconds <= 0:
             return model.perform_ocr(image_path)
 
-        executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
-        future = executor.submit(model.perform_ocr, image_path)
-        try:
-            return future.result(timeout=timeout_seconds)
-        except concurrent.futures.TimeoutError:
+        result_holder: list[Any] = []
+        error_holder: list[BaseException] = []
+        finished = threading.Event()
+
+        def worker() -> None:
+            try:
+                result_holder.append(model.perform_ocr(image_path))
+            except BaseException as exc:  # propagate through the caller thread
+                error_holder.append(exc)
+            finally:
+                finished.set()
+
+        # A Python thread cannot safely be force-killed.  The daemon flag lets
+        # the UI continue after a timeout; provider-specific timeouts (Ollama,
+        # HTTP clients, etc.) must still be configured to stop the real call.
+        thread = threading.Thread(target=worker, name="ocr-inference", daemon=True)
+        thread.start()
+        if finished.wait(timeout_seconds):
+            if error_holder:
+                raise error_holder[0]
+            return result_holder[0]
+
+        if not finished.is_set():
+            LOGGER.warning("Inference timeout | model=%s | image=%s | timeout=%.2fs", getattr(model, "model_name", "unknown"), image_path, timeout_seconds)
             if late_result:
-                def capture_late(completed_future):
+                # Keep observing the provider in the background only to persist
+                # its eventual raw response. It is never reintroduced into the
+                # quality score or the progress counter.
+                def capture_late() -> None:
+                    finished.wait()
                     try:
-                        late_result(completed_future.result(), None)
+                        if error_holder:
+                            raise error_holder[0]
+                        late_result(result_holder[0] if result_holder else None, None)
                     except Exception as exc:
                         late_result(None, f"{type(exc).__name__}: {exc}")
 
-                future.add_done_callback(capture_late)
+                threading.Thread(target=capture_late, name="ocr-late-result", daemon=True).start()
             return InferenceResult(
-                text="",
-                latency_seconds=timeout_seconds,
-                status=InferenceStatus.TIMEOUT,
-                error=f"Timeout after {timeout_seconds:.1f} seconds",
-                device=getattr(model, "device_name", "unknown"),
-            )
-        finally:
-            # A provider call cannot always be forcefully interrupted. Do not
-            # block the benchmark while a timed-out provider releases itself.
-            executor.shutdown(wait=False, cancel_futures=True)
+                    text="",
+                    latency_seconds=timeout_seconds,
+                    status=InferenceStatus.TIMEOUT,
+                    error=f"Timeout after {timeout_seconds:.1f} seconds; late output is persisted when available",
+                    device=getattr(model, "device_name", "unknown"),
+                )
 
     @staticmethod
     def _emit_trace(

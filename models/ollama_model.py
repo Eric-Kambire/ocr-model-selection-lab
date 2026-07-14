@@ -1,6 +1,9 @@
 import time
 import os
+import logging
 from models.base import BaseOCRModel
+
+LOGGER = logging.getLogger(__name__)
 
 DEFAULT_OCR_PROMPT = """You are a professional layout-preserving OCR engine.
 Your task is to transcribe all the text, tables, and handwriting in this image.
@@ -13,21 +16,47 @@ Rules:
 
 class OllamaOCRModel(BaseOCRModel):
     """
-    An OCR model wrapper that uses a local Ollama vision model (e.g., gemma3:1b, llama3.2-vision).
+    OCR adapter for Ollama's local HTTP API.
+
+    The application talks to Ollama through ``client.chat`` rather than
+    starting a subprocess. ``request_timeout`` limits the network call,
+    ``num_thread`` controls CPU parallelism, and ``keep_alive=0`` asks Ollama
+    to unload the model after this request when memory is constrained.
     """
-    def __init__(self, model_name: str, prompt: str | None = None):
+    def __init__(
+        self,
+        model_name: str,
+        prompt: str | None = None,
+        cpu_threads: int | None = None,
+        unload_after_task: bool = False,
+        request_timeout: float | None = None,
+    ):
         super().__init__(model_name)
         self.prompt = prompt.strip() if prompt and prompt.strip() else DEFAULT_OCR_PROMPT
-        # Import ollama here to avoid dependency issues if not installed
+        self.host = os.getenv("OLLAMA_HOST", "http://127.0.0.1:11434")
+        self.cpu_threads = int(cpu_threads) if cpu_threads and int(cpu_threads) > 0 else None
+        self.unload_after_task = bool(unload_after_task)
+        self.request_timeout = float(request_timeout) if request_timeout and float(request_timeout) > 0 else None
+        # Import lazily: mock/EasyOCR-only installations must not require the
+        # optional Ollama Python package just to start the application.
         try:
             import ollama
-            self.client = ollama
+            if self.request_timeout is not None:
+                self.client = ollama.Client(host=self.host, timeout=self.request_timeout)
+            else:
+                self.client = ollama
+            LOGGER.info(
+                "Ollama adapter ready | model=%s | host=%s | prompt_chars=%d | cpu_threads=%s | request_timeout=%s | unload_after_task=%s",
+                self.model_name, self.host, len(self.prompt), self.cpu_threads,
+                self.request_timeout, self.unload_after_task,
+            )
         except ImportError:
             self.client = None
-            print("Warning: 'ollama' Python library not installed. Please install it using pip.")
+            LOGGER.exception("Ollama Python library is not installed | model=%s", self.model_name)
 
     def perform_ocr(self, image_path: str) -> dict:
         if not self.client:
+            LOGGER.error("Ollama call skipped: Python client unavailable | model=%s", self.model_name)
             return {
                 "text": "",
                 "raw_response": "Error: Ollama library not installed.",
@@ -38,6 +67,7 @@ class OllamaOCRModel(BaseOCRModel):
             }
 
         if not os.path.exists(image_path):
+            LOGGER.error("Ollama call skipped: image not found | model=%s | image=%s", self.model_name, image_path)
             return {
                 "text": "",
                 "raw_response": f"Error: Image path not found: {image_path}",
@@ -48,9 +78,15 @@ class OllamaOCRModel(BaseOCRModel):
             }
 
         start_time = time.time()
+        LOGGER.info(
+            "Ollama request started | model=%s | image=%s | temperature=0.0",
+            self.model_name, image_path,
+        )
         
         try:
-            # Call Ollama chat API with images
+            # Ollama accepts a local image path in ``images``. Keeping the
+            # prompt and image in one chat message makes this adapter compatible
+            # with both text-only OCR prompts and vision-capable models.
             response = self.client.chat(
                 model=self.model_name,
                 messages=[
@@ -61,8 +97,10 @@ class OllamaOCRModel(BaseOCRModel):
                     }
                 ],
                 options={
-                    "temperature": 0.0  # Keep transcription deterministic
-                }
+                    "temperature": 0.0,
+                    **({"num_thread": self.cpu_threads} if self.cpu_threads else {}),
+                },
+                **({"keep_alive": 0} if self.unload_after_task else {}),
             )
             
             if isinstance(response, dict):
@@ -83,7 +121,9 @@ class OllamaOCRModel(BaseOCRModel):
                 output_tokens = getattr(response, "eval_count", None)
                 eval_duration = getattr(response, "eval_duration", None)
             
-            # Clean up potential markdown formatting code blocks wrapped by LLM (e.g. ```markdown ... ```)
+            # Some models ignore the OCR-only instruction and wrap their answer
+            # in a Markdown fence. Remove only that outer fence; never rewrite
+            # the actual transcription content.
             if extracted_text.startswith("```"):
                 lines = extracted_text.split("\n")
                 if len(lines) >= 2 and lines[-1].startswith("```"):
@@ -97,6 +137,11 @@ class OllamaOCRModel(BaseOCRModel):
             if output_tokens is not None and eval_duration:
                 # Ollama durations are expressed in nanoseconds.
                 tokens_per_second = float(output_tokens) / (float(eval_duration) / 1_000_000_000)
+
+            LOGGER.info(
+                "Ollama response received | model=%s | latency=%.3fs | input_tokens=%s | output_tokens=%s | tokens_per_second=%s | chars=%d",
+                self.model_name, latency, input_tokens, output_tokens, tokens_per_second, len(extracted_text),
+            )
             
             return {
                 "text": extracted_text,
@@ -114,6 +159,10 @@ class OllamaOCRModel(BaseOCRModel):
         except Exception as e:
             latency = time.time() - start_time
             error_msg = f"Error during Ollama OCR inference: {str(e)}"
+            LOGGER.exception(
+                "Ollama request failed | model=%s | image=%s | latency=%.3fs",
+                self.model_name, image_path, latency,
+            )
             return {
                 "text": "",
                 "raw_response": error_msg,

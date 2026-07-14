@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import html
 import json
+import logging
 import os
 import random
 import time
@@ -31,6 +32,14 @@ ROOT_DIR = Path(__file__).resolve().parent
 DATASET_DIR = ROOT_DIR / "dataset"
 CATALOG_PATH = DATASET_DIR / "dataset.json"
 RUNS_DIR = ROOT_DIR / "runs"
+
+LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
+logging.basicConfig(
+    level=getattr(logging, LOG_LEVEL, logging.INFO),
+    format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
+)
+LOGGER = logging.getLogger(__name__)
+LOGGER.info("Application initialisation | root=%s | log_level=%s", ROOT_DIR, LOG_LEVEL)
 
 METRICS_HELP = """
 ## Comment lire les résultats
@@ -89,26 +98,86 @@ puis ajouté atomiquement à `dataset/dataset.json`.
 
 APP_CSS = """
 .gradio-container {
-    max-width: 1500px !important;
+    width: min(100% - 40px, 1600px) !important;
+    max-width: 1600px !important;
+    margin: 0 auto !important;
+    padding: 18px 0 30px !important;
     min-height: 100vh !important;
     overflow: visible !important;
     background: var(--body-background-fill) !important;
     color: var(--body-text-color) !important;
 }
-#main-tabs {
+#page-shell {
     min-height: calc(100vh - 190px) !important;
     overflow: visible !important;
+    gap: 14px !important;
+    background: var(--body-background-fill) !important;
 }
-#main-tabs > .tabitem {
-    min-height: calc(100vh - 240px) !important;
-    overflow: visible !important;
-    padding-bottom: 4px !important;
+#page-navigation {
+    position: sticky !important;
+    top: 10px !important;
+    z-index: 20 !important;
+    margin: 0 !important;
+    padding: 7px !important;
+    border: 1px solid var(--block-border-color) !important;
+    border-radius: 12px !important;
+    background: var(--body-background-fill) !important;
+    box-shadow: 0 6px 18px rgba(24, 24, 27, .06) !important;
+}
+#page-navigation > [data-testid="block-info"] {
+    display: none !important;
+}
+#page-navigation .wrap {
+    display: flex !important;
+    flex-wrap: wrap !important;
+    gap: 4px !important;
+}
+#page-navigation label {
+    margin: 0 !important;
+    min-height: 34px !important;
+    padding: 7px 10px !important;
+    border: 1px solid transparent !important;
+    border-radius: 8px !important;
+    background: transparent !important;
+    transition: background-color .12s ease, border-color .12s ease !important;
+}
+#page-navigation label.selected {
+    border-color: var(--block-border-color) !important;
+    background: var(--button-secondary-background-fill) !important;
+    font-weight: 600 !important;
+}
+#page-navigation label:hover {
+    background: var(--background-fill-secondary) !important;
+}
+#page-navigation label span {
+    white-space: nowrap !important;
+}
+#page-settings,
+#page-charts,
+#page-details,
+#page-add-data,
+#page-metrics,
+#page-dataset {
+    display: none !important;
 }
 #benchmark-layout,
 #explorer-layout,
 #dataset-layout {
     height: 100% !important;
     align-items: stretch !important;
+}
+#page-benchmark {
+    gap: 14px !important;
+}
+#page-benchmark > .row {
+    gap: 18px !important;
+    align-items: flex-start !important;
+}
+#benchmark-config {
+    flex: 0 1 390px !important;
+    max-width: 410px !important;
+    padding-right: 18px !important;
+    border-right: 1px solid var(--block-border-color) !important;
 }
 #models-list .wrap {
     max-height: 145px !important;
@@ -117,6 +186,13 @@ APP_CSS = """
 }
 #summary-panel {
     min-height: 0 !important;
+    gap: 10px !important;
+}
+#summary-panel > .row {
+    gap: 8px !important;
+}
+#summary-panel > .row > button {
+    min-height: 40px !important;
 }
 .dashboard-grid {
     height: 100% !important;
@@ -150,7 +226,16 @@ APP_CSS = """
     margin: 0 !important;
 }
 #live-section-title h3 {
-    margin: 4px 0 0 !important;
+    margin: 6px 0 0 !important;
+}
+#benchmark-layout {
+    gap: 14px !important;
+    padding-top: 10px !important;
+    border-top: 1px solid var(--block-border-color) !important;
+}
+#live-image,
+#live-metrics {
+    border-radius: 10px !important;
 }
 #metrics-pane {
     max-height: 70vh !important;
@@ -178,10 +263,85 @@ APP_CSS = """
 }
 .hero { padding: 14px 20px; border-radius: 16px; color: white;
         background: linear-gradient(135deg, #312e81 0%, #4f46e5 50%, #0f766e 100%);
-        box-shadow: 0 12px 28px rgba(49,46,129,.24); margin-bottom: 8px; }
-.hero h1 { margin: 0 0 3px 0; font-size: 26px; line-height: 1.15; }
-.hero p { margin: 0; opacity: .9; font-size: 14px; }
+        box-shadow: 0 12px 28px rgba(49,46,129,.24); margin-bottom: 0; }
+.hero h1 { margin: 0 0 3px 0; color: white !important; font-size: 26px; line-height: 1.15; }
+.hero p { margin: 0; color: white !important; opacity: .9; font-size: 14px; }
+@media (max-width: 900px) {
+    .gradio-container {
+        width: min(100% - 24px, 1600px) !important;
+        padding-top: 12px !important;
+    }
+    #page-navigation {
+        position: static !important;
+    }
+    #benchmark-config {
+        max-width: none !important;
+        padding-right: 0 !important;
+        border-right: 0 !important;
+        border-bottom: 1px solid var(--block-border-color) !important;
+        padding-bottom: 12px !important;
+    }
+    #page-benchmark > .row {
+        gap: 14px !important;
+    }
+}
 """
+
+# Client-side routing deliberately avoids Gradio's lazy Tab mounting. Every
+# page is rendered once; the navigation only toggles CSS display and therefore
+# remains usable while a benchmark generator is running.
+APP_JS = r"""
+() => {
+  const labels = [
+    "1. Benchmark", "2. Paramètres", "3. Graphiques",
+    "4. Résultats détaillés", "5. Ajouter des données",
+    "6. Comprendre les métriques", "7. Dataset"
+  ];
+  const pageIds = [
+    "page-benchmark", "page-settings", "page-charts", "page-details",
+    "page-add-data", "page-metrics", "page-dataset"
+  ];
+  const install = () => {
+    const navigation = document.querySelector("#page-navigation");
+    if (!navigation || navigation.dataset.clientRouterInstalled) {
+      return Boolean(navigation);
+    }
+    navigation.dataset.clientRouterInstalled = "true";
+    const activate = (index) => {
+      pageIds.forEach((id, position) => {
+        const page = document.getElementById(id);
+        if (page) page.style.setProperty("display", position === index ? "flex" : "none", "important");
+      });
+      navigation.querySelectorAll("label").forEach((label, position) => {
+        const input = label.querySelector("input");
+        const selected = position === index;
+        if (input) {
+          input.checked = selected;
+          input.setAttribute("aria-checked", String(selected));
+        }
+        label.classList.toggle("selected", selected);
+      });
+    };
+    navigation.addEventListener("click", (event) => {
+      const label = event.target.closest("label");
+      if (!label || !navigation.contains(label)) return;
+      const choices = Array.from(navigation.querySelectorAll("label"));
+      const index = choices.indexOf(label);
+      if (index < 0) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      activate(index);
+    }, true);
+    activate(0);
+    return true;
+  };
+  if (!install()) {
+    const observer = new MutationObserver(() => { if (install()) observer.disconnect(); });
+    observer.observe(document.documentElement, { childList: true, subtree: true });
+  }
+}
+"""
+APP_HEAD = "<script>\n(" + APP_JS + ")();\n</script>"
 
 
 def select_dataset_items(
@@ -273,9 +433,33 @@ def _metric_percent(value: Any) -> str:
     return f"{float(value) * 100:.2f} %"
 
 
+def _late_trace_for(result: dict[str, Any]) -> dict[str, Any] | None:
+    """Find a provider response that arrived after this result timed out."""
+    if result.get("status") != "timeout" or not result.get("run_id"):
+        return None
+    trace_path = RUNS_DIR / str(result["run_id"]) / "traces.jsonl"
+    if not trace_path.is_file():
+        return None
+    try:
+        with trace_path.open("r", encoding="utf-8") as stream:
+            events = [json.loads(line) for line in stream if line.strip()]
+    except (OSError, json.JSONDecodeError):
+        return None
+    for event in reversed(events):
+        if (
+            event.get("timing") == "late_after_timeout"
+            and event.get("model") == result.get("model")
+            and event.get("image_path") == result.get("image_path")
+        ):
+            return event
+    return None
+
+
 def _live_metrics_markdown(result: dict[str, Any], next_label: str) -> str:
     expected = html.escape(str(result.get("ground_truth", "")))
-    extracted = html.escape(str(result.get("extracted_text", "")))
+    late = _late_trace_for(result)
+    extracted_value = late.get("text", "") if late else result.get("extracted_text", "")
+    extracted = html.escape(str(extracted_value))
     token_speed = result.get("tokens_per_second")
     token_text = (
         f"{float(token_speed):.2f} tokens/s" if token_speed is not None else "N/A"
@@ -284,6 +468,10 @@ def _live_metrics_markdown(result: dict[str, Any], next_label: str) -> str:
         f"\n- **Erreur :** {html.escape(str(result['error']))}"
         if result.get("error")
         else ""
+    )
+    late_note = (
+        "\n- **Sortie tardive conservée :** oui — disponible dans `traces.jsonl`."
+        if late else ""
     )
     return (
         "### Dernier résultat\n\n"
@@ -296,7 +484,7 @@ def _live_metrics_markdown(result: dict[str, Any], next_label: str) -> str:
         f"- **Vitesse tokens :** {token_text}\n"
         f"- **Device :** `{result.get('device', 'unknown')}`\n"
         f"- **Prochaine évaluation :** {next_label}"
-        f"{error}\n\n"
+        f"{error}{late_note}\n\n"
         "<details><summary>Texte attendu</summary>"
         f"<pre>{expected}</pre></details>"
         "<details><summary>Texte extrait</summary>"
@@ -358,9 +546,11 @@ def get_installed_ollama_models() -> list[str]:
                 names.append(model.get("model") or model.get("name"))
             else:
                 names.append(getattr(model, "model", None))
-        return [name for name in names if name]
+        installed = [name for name in names if name]
+        LOGGER.info("Ollama models detected | count=%d | models=%s", len(installed), installed)
+        return installed
     except Exception as exc:
-        print(f"Could not list Ollama models: {exc}")
+        LOGGER.warning("Unable to list Ollama models | error=%s", exc, exc_info=True)
         return []
 
 
@@ -369,24 +559,33 @@ def run_benchmark(
     selected_category: str = "All",
     mock_noise: float = 0.05,
     eval_mode: str = "Standard",
+    cpu_threads: int | None = None,
+    unload_after_task: bool = True,
 ) -> tuple[pd.DataFrame, list[dict[str, Any]], str]:
     dataset = load_dataset()
     if selected_category != "All":
         dataset = [item for item in dataset if item["category"] == selected_category]
     if not dataset:
+        LOGGER.warning("Benchmark skipped: no dataset cases | category=%s", selected_category)
         return pd.DataFrame(), [], ""
 
+    LOGGER.info(
+        "Benchmark starting | models=%s | category=%s | cases=%d | eval_mode=%s",
+        selected_models, selected_category, len(dataset), eval_mode,
+    )
     runner = BenchmarkRunner(build_default_registry())
     cases = [BenchmarkCase.from_dict(item) for item in dataset]
     run_id, results = runner.run(
         selected_models,
         cases,
         eval_mode=eval_mode,
+        cpu_threads=cpu_threads,
+        unload_after_task=unload_after_task,
         mock_noise=mock_noise,
     )
     summary = summarize_results(results)
     run_dir = save_run(run_id, summary, results, RUNS_DIR)
-    print(f"Benchmark {run_id} saved to {run_dir}")
+    LOGGER.info("Benchmark completed | run_id=%s | results=%d | saved_to=%s", run_id, len(results), run_dir)
     return summary, results, run_id
 
 
@@ -514,6 +713,23 @@ def build_ui() -> gr.Blocks:
         if any(item["category"] == name for item in dataset)
     ]
 
+    def available_run_choices() -> list[tuple[str, str]]:
+        """Return persisted runs newest first without loading their payloads."""
+        if not RUNS_DIR.exists():
+            return []
+        choices = []
+        for run_dir in sorted((p for p in RUNS_DIR.iterdir() if p.is_dir()), reverse=True):
+            if (run_dir / "results.json").exists():
+                choices.append((run_dir.name, run_dir.name))
+        return choices
+
+    def startup_run_info():
+        """Keep page startup light; payloads are loaded only on explicit open."""
+        choices = available_run_choices()
+        if not choices:
+            return gr.update(choices=[], value=None), "Aucun run sauvegardé."
+        return gr.update(choices=choices, value=choices[0][1]), f"Dernier run disponible : `{choices[0][1]}`. Cliquez sur **Ouvrir le run**."
+
     with gr.Blocks(title="OCR Model Selection Lab", fill_height=True) as app:
         gr.HTML(
             "<div class='hero'><h1>OCR Model Selection Lab</h1>"
@@ -524,8 +740,21 @@ def build_ui() -> gr.Blocks:
         detail_index = gr.State(0)
         result_model = gr.Dropdown([], visible=False)
 
-        with gr.Tabs(elem_id="main-tabs"):
-            with gr.Tab("1. Benchmark"):
+        # Gradio Tabs lazy-mount inactive pages. With this dashboard, mounting
+        # an inactive page could freeze the browser. The pages remain mounted
+        # and a lightweight selector only changes their visibility.
+        with gr.Group(elem_id="page-shell"):
+            page_navigation = gr.Radio(
+                [
+                    "1. Benchmark", "2. Paramètres", "3. Graphiques",
+                    "4. Résultats détaillés", "5. Ajouter des données",
+                    "6. Comprendre les métriques", "7. Dataset",
+                ],
+                value="1. Benchmark",
+                label="Navigation",
+                elem_id="page-navigation",
+            )
+            with gr.Column(visible=True, elem_id="page-benchmark") as benchmark_page:
                 with gr.Row(equal_height=False):
                     with gr.Column(scale=1, elem_id="benchmark-config"):
                         models = gr.CheckboxGroup(
@@ -619,10 +848,11 @@ def build_ui() -> gr.Blocks:
                         "### Recommandation\n\nDisponible après les premiers résultats."
                     )
 
-            with gr.Tab("2. Paramètres"):
+            with gr.Column(visible=True, elem_id="page-settings") as settings_page:
                 gr.Markdown(
                     "Paramètres appliqués au prochain benchmark. Un appel fournisseur "
-                    "ayant dépassé le timeout peut terminer en arrière-plan."
+                    "ayant dépassé le timeout est marqué immédiatement ; le fournisseur "
+                    "peut toutefois conserver une requête réseau jusqu’à sa propre annulation."
                 )
                 with gr.Row():
                     with gr.Column():
@@ -655,6 +885,19 @@ def build_ui() -> gr.Blocks:
                             precision=0,
                             label="Temps maximum par image (secondes)",
                         )
+                        cpu_threads = gr.Number(
+                            value=max(1, min(8, os.cpu_count() or 1)),
+                            minimum=1,
+                            maximum=max(1, os.cpu_count() or 1),
+                            precision=0,
+                            label="Threads CPU par modèle",
+                            info="Le benchmark reste strictement séquentiel : un seul modèle et une seule image à la fois.",
+                        )
+                        unload_after_task = gr.Checkbox(
+                            value=True,
+                            label="Décharger le modèle après chaque image",
+                            info="Réduit la mémoire persistante, mais peut ralentir le run Ollama.",
+                        )
                         max_errors = gr.Number(
                             value=0,
                             minimum=0,
@@ -663,7 +906,9 @@ def build_ui() -> gr.Blocks:
                         )
                         checkpoint_enabled = gr.Checkbox(
                             value=True,
-                            label="Sauvegarder après chaque document",
+                            label="Checkpoint permanent après chaque document",
+                            interactive=False,
+                            info="Toujours actif pour permettre la restauration après actualisation.",
                         )
                         live_charts_enabled = gr.Checkbox(
                             value=True,
@@ -684,7 +929,7 @@ def build_ui() -> gr.Blocks:
                     ),
                 )
 
-            with gr.Tab("3. Graphiques"):
+            with gr.Column(visible=True, elem_id="page-charts") as charts_page:
                 gr.Markdown(
                     "Les bulles du premier graphique représentent les modèles. "
                     "Le coin supérieur droit correspond au meilleur compromis qualité/vitesse."
@@ -697,7 +942,17 @@ def build_ui() -> gr.Blocks:
                         reliability_plot = gr.Plot(value=empty_figure(), elem_classes=["dashboard-chart"])
                         category_plot = gr.Plot(value=empty_figure(), elem_classes=["dashboard-chart"])
 
-            with gr.Tab("4. Résultats détaillés") as details_tab:
+            with gr.Column(visible=True, elem_id="page-details") as details_page:
+                with gr.Row():
+                    persisted_runs = gr.Dropdown(
+                        choices=available_run_choices(),
+                        label="Runs sauvegardés",
+                        info="Recharge un benchmark après actualisation de la page.",
+                        scale=3,
+                    )
+                    refresh_runs = gr.Button("Actualiser la liste")
+                    open_run = gr.Button("Ouvrir le run", variant="secondary")
+                persisted_run_status = gr.Markdown("Les runs terminés sont conservés dans `runs/`.")
                 result_selector = gr.Dropdown(
                     [],
                     label="Liste des éléments testés — cliquez pour sélectionner",
@@ -733,21 +988,21 @@ def build_ui() -> gr.Blocks:
                             with gr.Column():
                                 gr.Markdown("**Affichage de la sortie**")
                                 with gr.Tabs():
-                                    with gr.Tab("Texte extrait"):
+                                    with gr.Tab("Texte extrait", render_children=True):
                                         extracted = gr.Textbox(
                                             label="Transcription normalisée",
                                             lines=12,
                                             interactive=False,
                                         )
-                                    with gr.Tab("Sortie brute"):
+                                    with gr.Tab("Sortie brute", render_children=True):
                                         raw_output = gr.Textbox(
                                             label="Réponse brute du fournisseur",
                                             lines=12,
                                             interactive=False,
                                         )
-                                    with gr.Tab("Markdown rendu"):
+                                    with gr.Tab("Markdown rendu", render_children=True):
                                         markdown_output = gr.Markdown()
-                                    with gr.Tab("HTML source"):
+                                    with gr.Tab("HTML source", render_children=True):
                                         html_source = gr.Code(
                                             label=(
                                                 "Source HTML — non exécutée "
@@ -758,7 +1013,7 @@ def build_ui() -> gr.Blocks:
                         with gr.Accordion("Toutes les mesures techniques", open=False):
                             details = gr.JSON(label="Mesures de ce document")
 
-            with gr.Tab("5. Ajouter des données"):
+            with gr.Column(visible=True, elem_id="page-add-data") as add_data_page:
                 with gr.Row():
                     with gr.Column(scale=1):
                         upload_image = gr.File(
@@ -789,10 +1044,10 @@ def build_ui() -> gr.Blocks:
                         add_data_status = gr.Markdown()
                 gr.Markdown(DATA_FORMAT_HELP)
 
-            with gr.Tab("6. Comprendre les métriques"):
+            with gr.Column(visible=True, elem_id="page-metrics") as metrics_page:
                 gr.Markdown(METRICS_HELP, elem_id="metrics-pane")
 
-            with gr.Tab("7. Dataset"):
+            with gr.Column(visible=True, elem_id="page-dataset") as dataset_page:
                 with gr.Row(elem_id="dataset-layout"):
                     with gr.Column(scale=1):
                         dataset_selector = gr.Dropdown(
@@ -850,6 +1105,8 @@ def build_ui() -> gr.Blocks:
             save_checkpoints,
             update_live_charts,
             selected_model_prompt,
+            selected_cpu_threads,
+            selected_unload_after_task,
         ):
             empty = empty_figure()
             if not model_specs or not selected_records:
@@ -903,6 +1160,8 @@ def build_ui() -> gr.Blocks:
                     eval_mode=selected_eval_mode,
                     mock_noise=float(selected_noise),
                     timeout_seconds=float(selected_timeout or 0),
+                    cpu_threads=int(selected_cpu_threads or 1),
+                    unload_after_task=bool(selected_unload_after_task),
                     max_errors=int(selected_max_errors or 0),
                     model_prompt=selected_model_prompt,
                     trace=lambda event: RunCheckpoint(
@@ -954,7 +1213,10 @@ def build_ui() -> gr.Blocks:
                     if update.result is None:
                         continue
                     results.append(update.result)
-                    if save_checkpoints and checkpoint:
+                    # Checkpoints are durable by design. The legacy checkbox
+                    # remains for API compatibility, but a completed document
+                    # must never depend on a UI toggle to survive refresh/crash.
+                    if checkpoint:
                         checkpoint.write(results)
                     summary = summarize_results(results)
                     if update_live_charts:
@@ -1068,6 +1330,10 @@ def build_ui() -> gr.Blocks:
         def rendered_outputs(result):
             text = str(result.get("extracted_text") or "")
             raw = str(result.get("raw_response") or text)
+            late = _late_trace_for(result)
+            if late:
+                text = str(late.get("text") or text)
+                raw = str(late.get("raw_response") or text)
             return text, raw, text, text
 
         def show_detail(index, results, offset=0):
@@ -1100,6 +1366,10 @@ def build_ui() -> gr.Blocks:
             metrics = {key: value for key, value in result.items() if key not in hidden}
             if result.get("reasoning"):
                 metrics["reasoning"] = result["reasoning"]
+            late = _late_trace_for(result)
+            if late:
+                metrics["late_output"] = "Réponse reçue après timeout; conservée dans traces.jsonl"
+                metrics["late_latency"] = late.get("latency")
             identity = (
                 f"### {Path(result['image_path']).name}\n\n"
                 f"- **Modèle :** `{result['model']}`\n"
@@ -1134,6 +1404,25 @@ def build_ui() -> gr.Blocks:
 
         def select_detail(selection, results):
             return show_detail(int(selection or 0), results)
+
+        def reload_persisted_runs():
+            choices = available_run_choices()
+            return gr.update(choices=choices, value=(choices[0][1] if choices else None))
+
+        def open_persisted_run(run_id):
+            """Load a run from disk and feed it through the normal detail renderer."""
+            if not run_id:
+                return [[], *show_detail(0, []), "Aucun run sélectionné."]
+            safe_id = Path(str(run_id)).name
+            results_path = RUNS_DIR / safe_id / "results.json"
+            try:
+                with results_path.open("r", encoding="utf-8") as stream:
+                    restored = json.load(stream)
+                if not isinstance(restored, list):
+                    raise ValueError("results.json doit contenir une liste")
+                return [restored, *show_detail(0, restored), f"✅ Run `{safe_id}` rechargé ({len(restored)} résultat(s))."]
+            except Exception as exc:
+                return [[], *show_detail(0, []), f"❌ Impossible de recharger `{safe_id}` : {type(exc).__name__}: {exc}"]
 
         def browse_dataset(selection):
             if not selection:
@@ -1205,6 +1494,8 @@ def build_ui() -> gr.Blocks:
                 checkpoint_enabled,
                 live_charts_enabled,
                 model_prompt,
+                cpu_threads,
+                unload_after_task,
             ],
             [
                 summary_table,
@@ -1222,6 +1513,11 @@ def build_ui() -> gr.Blocks:
                 live_counters,
                 live_table,
             ],
+            # Keep one benchmark execution at a time, but isolate it in its
+            # own concurrency group. Navigation, dataset browsing and detail
+            # buttons must continue to be served while this generator yields.
+            concurrency_limit=1,
+            concurrency_id="benchmark-run",
         )
         stop.click(
             fn=None,
@@ -1241,41 +1537,68 @@ def build_ui() -> gr.Blocks:
             html_source,
             details,
         ]
-        details_tab.select(
-            show_current_detail,
-            [detail_index, run_state],
-            detail_outputs,
-        )
+        # Do not attach a ``Tab.select`` handler here. In Gradio 6 a select
+        # listener on a nested tab tree may be dispatched while *any* top-level
+        # page is changed, serialising the full ``run_state`` in the browser and
+        # freezing navigation. The explicit selector and previous/next buttons
+        # below still load the detail on demand without coupling it to routing.
         previous_result.click(
             show_previous_detail,
             [detail_index, run_state],
             detail_outputs,
+            queue=False,
         )
         next_result.click(
             show_next_detail,
             [detail_index, run_state],
             detail_outputs,
+            queue=False,
         )
-        run_state.change(
-            show_current_detail,
-            [detail_index, run_state],
-            detail_outputs,
-        )
+        # Do not bind ``run_state.change`` here. The benchmark generator emits
+        # a state update for every image; recalculating all detail components on
+        # every update caused the browser to serialize the growing result list
+        # repeatedly and made the completed run appear frozen. The tab selector
+        # and explicit previous/next controls are sufficient.
         result_selector.input(
             select_detail,
             [result_selector, run_state],
             detail_outputs,
+            queue=False,
+        )
+        refresh_runs.click(
+            reload_persisted_runs,
+            outputs=[persisted_runs],
+            queue=False,
+        )
+        open_run.click(
+            open_persisted_run,
+            inputs=[persisted_runs],
+            outputs=[run_state, *detail_outputs, persisted_run_status],
+            queue=False,
         )
         dataset_selector.change(
             browse_dataset,
             dataset_selector,
             [dataset_image, dataset_category, dataset_description, dataset_truth],
+            queue=False,
         )
         add_data_button.click(
             add_labeled_data,
             [upload_image, upload_label, upload_category, upload_description],
             [add_data_status, dataset_selector, catalog_component],
         )
+        # Only refresh the run selector during startup. Loading the full result
+        # payload is explicit, preventing a large raw response from blocking
+        # the initial Gradio page and its tabs.
+        app.load(
+            startup_run_info,
+            outputs=[persisted_runs, persisted_run_status],
+            queue=False,
+        )
+    # Gradio's default queue limit can serialize every event behind a long OCR
+    # request. A small global pool keeps lightweight UI actions responsive while
+    # the benchmark group above remains strictly single-model/single-run.
+    app.queue(default_concurrency_limit=4)
     return app
 
 
@@ -1292,6 +1615,11 @@ def main() -> None:
     parser.add_argument(
         "--eval-mode", default="Standard", choices=["Standard", "Bankmark"]
     )
+    parser.add_argument("--cpu-threads", type=int, default=None)
+    parser.add_argument(
+        "--unload-after-task", action=argparse.BooleanOptionalAction, default=True,
+        help="Décharger le modèle Ollama après chaque image (défaut: activé).",
+    )
     parser.add_argument("--host", default=os.getenv("GRADIO_SERVER_NAME", "127.0.0.1"))
     parser.add_argument("--port", type=int, default=int(os.getenv("GRADIO_SERVER_PORT", "7860")))
     parser.add_argument("--share", action="store_true")
@@ -1299,7 +1627,9 @@ def main() -> None:
 
     if args.cli:
         summary, _, run_id = run_benchmark(
-            args.models, args.category, args.noise, args.eval_mode
+            args.models, args.category, args.noise, args.eval_mode,
+            cpu_threads=args.cpu_threads,
+            unload_after_task=args.unload_after_task,
         )
         print(summary.to_string(index=False))
         print(f"Run ID: {run_id}")
@@ -1311,6 +1641,8 @@ def main() -> None:
         share=args.share,
         ssr_mode=False,
         css=APP_CSS,
+        js=APP_JS,
+        head=APP_HEAD,
     )
 
 
