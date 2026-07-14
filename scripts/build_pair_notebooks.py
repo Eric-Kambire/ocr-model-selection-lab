@@ -75,9 +75,13 @@ ROOT = Path("/content/ocr_pair_benchmark")
 ROOT.mkdir(parents=True, exist_ok=True)
 ARTIFACTS = ROOT / "artifacts"; ARTIFACTS.mkdir(exist_ok=True)
 TIMEOUT_SECONDS = 120
+DOWNLOAD_TIMEOUT_SECONDS = 180
 MAX_DOCUMENTS = 30
 SELECTED_MODELS = list(MODELS)  # Vous pouvez réduire à un seul modèle.
 assert 1 <= len(SELECTED_MODELS) <= 2
+os.environ.setdefault("HF_HUB_DOWNLOAD_TIMEOUT", str(DOWNLOAD_TIMEOUT_SECONDS))
+os.environ.setdefault("HF_HUB_ETAG_TIMEOUT", "30")
+os.environ.setdefault("HF_HUB_DISABLE_PROGRESS_BARS", "1")
 
 try:
     import torch
@@ -109,7 +113,10 @@ def _as_image(value):
 
 def load_cases(limit=MAX_DOCUMENTS):
     try:
-        ds = load_dataset(DATASET_ID, split=DATASET_SPLIT, streaming=False, trust_remote_code=False)
+        ds, status = _run_with_timeout(lambda: load_dataset(DATASET_ID, split=DATASET_SPLIT, streaming=False, trust_remote_code=False), DOWNLOAD_TIMEOUT_SECONDS)
+        if status != "success" or ds is None:
+            print(f"Dataset non disponible ({status}); vous pouvez déposer des images dans {ARTIFACTS}.")
+            return []
         image_cols, text_cols = _find_columns(ds)
         if not image_cols: raise ValueError(f"Aucune colonne image détectée: {ds.column_names}")
         image_col = image_cols[0]; text_col = text_cols[0] if text_cols else None
@@ -218,6 +225,19 @@ class Adapter:
         self.obj = None; gc.collect()
         if DEVICE == "cuda":
             import torch; torch.cuda.empty_cache()
+
+# Les téléchargements et chargements sont bornés eux aussi. Ainsi une cellule
+# ne reste pas bloquée avant l'inférence.
+_raw_download, _raw_load = Adapter.download, Adapter.load
+def _bounded_download(self):
+    value, status = _run_with_timeout(lambda: _raw_download(self), DOWNLOAD_TIMEOUT_SECONDS)
+    if status != "success": raise TimeoutError(f"download_status={status}")
+    return value
+def _bounded_load(self):
+    value, status = _run_with_timeout(lambda: _raw_load(self), DOWNLOAD_TIMEOUT_SECONDS)
+    if status != "success": raise TimeoutError(f"load_status={status}")
+    return value
+Adapter.download, Adapter.load = _bounded_download, _bounded_load
 '''
 
 BENCH = r'''
@@ -249,7 +269,10 @@ def run_benchmark():
         adapter = Adapter(name); t0 = time.perf_counter()
         row_base = {"model": name, "model_id": adapter.meta["id"]}
         try:
-            adapter.download(); adapter.load()
+            _, download_status = _run_with_timeout(adapter.download, DOWNLOAD_TIMEOUT_SECONDS)
+            if download_status != "success": raise TimeoutError(f"download_status={download_status}")
+            _, load_status = _run_with_timeout(adapter.load, DOWNLOAD_TIMEOUT_SECONDS)
+            if load_status != "success": raise TimeoutError(f"load_status={load_status}")
             for case in CASES:
                 started = time.perf_counter(); output, status = _run_with_timeout(lambda p=case["image_path"]: adapter.predict(p), TIMEOUT_SECONDS)
                 record = {**row_base, **case, "status": status, "output": output or "", "latency_s": time.perf_counter()-started,
