@@ -104,14 +104,25 @@ APP_CSS = """
     background: var(--body-background-fill) !important;
     color: var(--body-text-color) !important;
 }
-#main-tabs {
+#page-shell {
     min-height: calc(100vh - 190px) !important;
     overflow: visible !important;
 }
-#main-tabs > .tabitem {
-    min-height: calc(100vh - 240px) !important;
-    overflow: visible !important;
-    padding-bottom: 4px !important;
+#page-navigation .wrap {
+    display: flex !important;
+    flex-wrap: wrap !important;
+    gap: 6px !important;
+}
+#page-navigation label {
+    margin: 0 !important;
+}
+#page-settings,
+#page-charts,
+#page-details,
+#page-add-data,
+#page-metrics,
+#page-dataset {
+    display: none !important;
 }
 #benchmark-layout,
 #explorer-layout,
@@ -191,6 +202,62 @@ APP_CSS = """
 .hero h1 { margin: 0 0 3px 0; font-size: 26px; line-height: 1.15; }
 .hero p { margin: 0; opacity: .9; font-size: 14px; }
 """
+
+# Client-side routing deliberately avoids Gradio's lazy Tab mounting. Every
+# page is rendered once; the navigation only toggles CSS display and therefore
+# remains usable while a benchmark generator is running.
+APP_JS = r"""
+() => {
+  const labels = [
+    "1. Benchmark", "2. Paramètres", "3. Graphiques",
+    "4. Résultats détaillés", "5. Ajouter des données",
+    "6. Comprendre les métriques", "7. Dataset"
+  ];
+  const pageIds = [
+    "page-benchmark", "page-settings", "page-charts", "page-details",
+    "page-add-data", "page-metrics", "page-dataset"
+  ];
+  const install = () => {
+    const navigation = document.querySelector("#page-navigation");
+    if (!navigation || navigation.dataset.clientRouterInstalled) {
+      return Boolean(navigation);
+    }
+    navigation.dataset.clientRouterInstalled = "true";
+    const activate = (index) => {
+      pageIds.forEach((id, position) => {
+        const page = document.getElementById(id);
+        if (page) page.style.setProperty("display", position === index ? "flex" : "none", "important");
+      });
+      navigation.querySelectorAll("label").forEach((label, position) => {
+        const input = label.querySelector("input");
+        const selected = position === index;
+        if (input) {
+          input.checked = selected;
+          input.setAttribute("aria-checked", String(selected));
+        }
+        label.classList.toggle("selected", selected);
+      });
+    };
+    navigation.addEventListener("click", (event) => {
+      const label = event.target.closest("label");
+      if (!label || !navigation.contains(label)) return;
+      const choices = Array.from(navigation.querySelectorAll("label"));
+      const index = choices.indexOf(label);
+      if (index < 0) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      activate(index);
+    }, true);
+    activate(0);
+    return true;
+  };
+  if (!install()) {
+    const observer = new MutationObserver(() => { if (install()) observer.disconnect(); });
+    observer.observe(document.documentElement, { childList: true, subtree: true });
+  }
+}
+"""
+APP_HEAD = "<script>\n(" + APP_JS + ")();\n</script>"
 
 
 def select_dataset_items(
@@ -589,8 +656,21 @@ def build_ui() -> gr.Blocks:
         detail_index = gr.State(0)
         result_model = gr.Dropdown([], visible=False)
 
-        with gr.Tabs(elem_id="main-tabs"):
-            with gr.Tab("1. Benchmark"):
+        # Gradio Tabs lazy-mount inactive pages. With this dashboard, mounting
+        # an inactive page could freeze the browser. The pages remain mounted
+        # and a lightweight selector only changes their visibility.
+        with gr.Group(elem_id="page-shell"):
+            page_navigation = gr.Radio(
+                [
+                    "1. Benchmark", "2. Paramètres", "3. Graphiques",
+                    "4. Résultats détaillés", "5. Ajouter des données",
+                    "6. Comprendre les métriques", "7. Dataset",
+                ],
+                value="1. Benchmark",
+                label="Navigation",
+                elem_id="page-navigation",
+            )
+            with gr.Column(visible=True, elem_id="page-benchmark") as benchmark_page:
                 with gr.Row(equal_height=False):
                     with gr.Column(scale=1, elem_id="benchmark-config"):
                         models = gr.CheckboxGroup(
@@ -684,7 +764,7 @@ def build_ui() -> gr.Blocks:
                         "### Recommandation\n\nDisponible après les premiers résultats."
                     )
 
-            with gr.Tab("2. Paramètres"):
+            with gr.Column(visible=True, elem_id="page-settings") as settings_page:
                 gr.Markdown(
                     "Paramètres appliqués au prochain benchmark. Un appel fournisseur "
                     "ayant dépassé le timeout est marqué immédiatement ; le fournisseur "
@@ -765,7 +845,7 @@ def build_ui() -> gr.Blocks:
                     ),
                 )
 
-            with gr.Tab("3. Graphiques"):
+            with gr.Column(visible=True, elem_id="page-charts") as charts_page:
                 gr.Markdown(
                     "Les bulles du premier graphique représentent les modèles. "
                     "Le coin supérieur droit correspond au meilleur compromis qualité/vitesse."
@@ -778,7 +858,7 @@ def build_ui() -> gr.Blocks:
                         reliability_plot = gr.Plot(value=empty_figure(), elem_classes=["dashboard-chart"])
                         category_plot = gr.Plot(value=empty_figure(), elem_classes=["dashboard-chart"])
 
-            with gr.Tab("4. Résultats détaillés") as details_tab:
+            with gr.Column(visible=True, elem_id="page-details") as details_page:
                 with gr.Row():
                     persisted_runs = gr.Dropdown(
                         choices=available_run_choices(),
@@ -824,21 +904,21 @@ def build_ui() -> gr.Blocks:
                             with gr.Column():
                                 gr.Markdown("**Affichage de la sortie**")
                                 with gr.Tabs():
-                                    with gr.Tab("Texte extrait"):
+                                    with gr.Tab("Texte extrait", render_children=True):
                                         extracted = gr.Textbox(
                                             label="Transcription normalisée",
                                             lines=12,
                                             interactive=False,
                                         )
-                                    with gr.Tab("Sortie brute"):
+                                    with gr.Tab("Sortie brute", render_children=True):
                                         raw_output = gr.Textbox(
                                             label="Réponse brute du fournisseur",
                                             lines=12,
                                             interactive=False,
                                         )
-                                    with gr.Tab("Markdown rendu"):
+                                    with gr.Tab("Markdown rendu", render_children=True):
                                         markdown_output = gr.Markdown()
-                                    with gr.Tab("HTML source"):
+                                    with gr.Tab("HTML source", render_children=True):
                                         html_source = gr.Code(
                                             label=(
                                                 "Source HTML — non exécutée "
@@ -849,7 +929,7 @@ def build_ui() -> gr.Blocks:
                         with gr.Accordion("Toutes les mesures techniques", open=False):
                             details = gr.JSON(label="Mesures de ce document")
 
-            with gr.Tab("5. Ajouter des données"):
+            with gr.Column(visible=True, elem_id="page-add-data") as add_data_page:
                 with gr.Row():
                     with gr.Column(scale=1):
                         upload_image = gr.File(
@@ -880,10 +960,10 @@ def build_ui() -> gr.Blocks:
                         add_data_status = gr.Markdown()
                 gr.Markdown(DATA_FORMAT_HELP)
 
-            with gr.Tab("6. Comprendre les métriques"):
+            with gr.Column(visible=True, elem_id="page-metrics") as metrics_page:
                 gr.Markdown(METRICS_HELP, elem_id="metrics-pane")
 
-            with gr.Tab("7. Dataset"):
+            with gr.Column(visible=True, elem_id="page-dataset") as dataset_page:
                 with gr.Row(elem_id="dataset-layout"):
                     with gr.Column(scale=1):
                         dataset_selector = gr.Dropdown(
@@ -1373,12 +1453,11 @@ def build_ui() -> gr.Blocks:
             html_source,
             details,
         ]
-        details_tab.select(
-            show_current_detail,
-            [detail_index, run_state],
-            detail_outputs,
-            queue=False,
-        )
+        # Do not attach a ``Tab.select`` handler here. In Gradio 6 a select
+        # listener on a nested tab tree may be dispatched while *any* top-level
+        # page is changed, serialising the full ``run_state`` in the browser and
+        # freezing navigation. The explicit selector and previous/next buttons
+        # below still load the detail on demand without coupling it to routing.
         previous_result.click(
             show_previous_detail,
             [detail_index, run_state],
@@ -1478,6 +1557,8 @@ def main() -> None:
         share=args.share,
         ssr_mode=False,
         css=APP_CSS,
+        js=APP_JS,
+        head=APP_HEAD,
     )
 
 
