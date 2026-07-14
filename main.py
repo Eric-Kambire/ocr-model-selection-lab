@@ -1326,31 +1326,36 @@ def build_ui() -> gr.Blocks:
             show_current_detail,
             [detail_index, run_state],
             detail_outputs,
+            queue=False,
         )
         previous_result.click(
             show_previous_detail,
             [detail_index, run_state],
             detail_outputs,
+            queue=False,
         )
         next_result.click(
             show_next_detail,
             [detail_index, run_state],
             detail_outputs,
+            queue=False,
         )
-        run_state.change(
-            show_current_detail,
-            [detail_index, run_state],
-            detail_outputs,
-        )
+        # Do not bind ``run_state.change`` here. The benchmark generator emits
+        # a state update for every image; recalculating all detail components on
+        # every update caused the browser to serialize the growing result list
+        # repeatedly and made the completed run appear frozen. The tab selector
+        # and explicit previous/next controls are sufficient.
         result_selector.input(
             select_detail,
             [result_selector, run_state],
             detail_outputs,
+            queue=False,
         )
         dataset_selector.change(
             browse_dataset,
             dataset_selector,
             [dataset_image, dataset_category, dataset_description, dataset_truth],
+            queue=False,
         )
         add_data_button.click(
             add_labeled_data,
