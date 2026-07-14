@@ -124,6 +124,10 @@ class BenchmarkRunner:
                     model_prompt=model_prompt,
                     cpu_threads=cpu_threads,
                     unload_after_task=unload_after_task,
+                    # Forward the same budget to providers that support a
+                    # native network timeout (notably Ollama). The runner
+                    # timeout alone cannot cancel an HTTP request safely.
+                    timeout_seconds=timeout_seconds,
                 )
                 model_name = model.model_name
             except Exception as exc:
