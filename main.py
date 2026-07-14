@@ -572,6 +572,13 @@ def build_ui() -> gr.Blocks:
                 choices.append((run_dir.name, run_dir.name))
         return choices
 
+    def startup_run_info():
+        """Keep page startup light; payloads are loaded only on explicit open."""
+        choices = available_run_choices()
+        if not choices:
+            return gr.update(choices=[], value=None), "Aucun run sauvegardé."
+        return gr.update(choices=choices, value=choices[0][1]), f"Dernier run disponible : `{choices[0][1]}`. Cliquez sur **Ouvrir le run**."
+
     with gr.Blocks(title="OCR Model Selection Lab", fill_height=True) as app:
         gr.HTML(
             "<div class='hero'><h1>OCR Model Selection Lab</h1>"
@@ -1417,14 +1424,12 @@ def build_ui() -> gr.Blocks:
             [upload_image, upload_label, upload_category, upload_description],
             [add_data_status, dataset_selector, catalog_component],
         )
-        # Rehydrate the newest persisted run when the browser reconnects or
-        # the page is refreshed. This callback is lightweight: only
-        # ``results.json`` is read; raw traces remain on disk until opened.
+        # Only refresh the run selector during startup. Loading the full result
+        # payload is explicit, preventing a large raw response from blocking
+        # the initial Gradio page and its tabs.
         app.load(
-            lambda: open_persisted_run(available_run_choices()[0][1])
-            if available_run_choices()
-            else [[], *show_detail(0, []), "Aucun run sauvegardé."],
-            outputs=[run_state, *detail_outputs, persisted_run_status],
+            startup_run_info,
+            outputs=[persisted_runs, persisted_run_status],
             queue=False,
         )
     # Gradio's default queue limit can serialize every event behind a long OCR
