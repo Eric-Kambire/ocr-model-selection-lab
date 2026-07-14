@@ -23,7 +23,8 @@ class EasyOCRModel(BaseOCRModel):
         # gpu=True/False depending on CUDA availability
         self.reader = easyocr.Reader(['fr', 'en'], gpu=torch.cuda.is_available())
 
-    def perform_ocr(self, image_path: str) -> dict:
+    def perform_ocr(self, image_path: str, *, prompt: str | None = None) -> dict:
+        """Read an image; EasyOCR intentionally ignores generative prompts."""
         start_time = time.time()
         try:
             # Run EasyOCR

@@ -17,6 +17,7 @@ class BenchmarkCase:
     ground_truth: str
     category: str
     description: str = ""
+    prompt: str | None = None
 
     @classmethod
     def from_dict(cls, value: dict[str, Any]) -> "BenchmarkCase":
@@ -25,6 +26,7 @@ class BenchmarkCase:
             ground_truth=str(value["ground_truth"]),
             category=str(value["category"]),
             description=str(value.get("description", "")),
+            prompt=(str(value["prompt"]) if value.get("prompt") is not None else None),
         )
 
 

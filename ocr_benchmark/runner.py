@@ -188,13 +188,15 @@ class BenchmarkRunner:
         model,
         image_path: str,
         timeout_seconds: float | None,
+        *,
+        prompt: str | None = None,
         late_result: Callable[[Any | None, str | None], None] | None = None,
     ):
         if timeout_seconds is None or timeout_seconds <= 0:
-            return model.perform_ocr(image_path)
+            return _perform_model_call(model, image_path, prompt)
 
         executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
-        future = executor.submit(model.perform_ocr, image_path)
+        future = executor.submit(_perform_model_call, model, image_path, prompt)
         try:
             return future.result(timeout=timeout_seconds)
         except concurrent.futures.TimeoutError:
@@ -362,3 +364,10 @@ def summarize_results(results: list[dict[str, Any]]) -> pd.DataFrame:
 
 def _unique_join(values: pd.Series) -> str:
     return ", ".join(sorted({str(value) for value in values if value}))
+
+
+def _perform_model_call(model: Any, image_path: str, prompt: str | None) -> Any:
+    """Keep existing adapters compatible unless a structured prompt is supplied."""
+    if prompt is None:
+        return model.perform_ocr(image_path)
+    return model.perform_ocr(image_path, prompt=prompt)

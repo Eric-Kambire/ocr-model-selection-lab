@@ -107,6 +107,49 @@ def category_quality_chart(results: list[dict]) -> go.Figure:
     return style_figure(figure)
 
 
+def cni_accuracy_chart(results: list[dict]) -> go.Figure:
+    """Show CNI accuracy per model once an explicit label mapping exists."""
+    if not results:
+        return empty_figure("Lancez un benchmark CNI pour afficher les résultats.")
+    frame = pd.DataFrame(results)
+    if "accuracy" not in frame:
+        return empty_figure("Les labels CNI ne sont pas encore mappés à une accuracy.")
+    scored = frame.dropna(subset=["accuracy"])
+    if scored.empty:
+        return empty_figure("Aucune accuracy : importez des labels puis définissez leur mapping.")
+    grouped = scored.groupby("model", as_index=False)["accuracy"].mean()
+    grouped["Accuracy (%)"] = grouped["accuracy"] * 100
+    figure = px.bar(
+        grouped,
+        x="model",
+        y="Accuracy (%)",
+        color="model",
+        title="Accuracy CNI moyenne par modèle",
+        color_discrete_sequence=COLORS,
+    )
+    return style_figure(figure)
+
+
+def cni_latency_chart(results: list[dict]) -> go.Figure:
+    """Show mean CNI latency by selected model without needing labels."""
+    if not results:
+        return empty_figure("Lancez un benchmark CNI pour afficher les latences.")
+    frame = pd.DataFrame(results)
+    if "latency" not in frame or frame.empty:
+        return empty_figure("Aucune latence CNI disponible.")
+    grouped = frame.groupby("model", as_index=False)["latency"].mean()
+    figure = px.bar(
+        grouped,
+        x="model",
+        y="latency",
+        color="model",
+        title="Latence CNI moyenne par modèle",
+        labels={"latency": "Secondes", "model": "Modèle"},
+        color_discrete_sequence=COLORS,
+    )
+    return style_figure(figure)
+
+
 def style_figure(figure: go.Figure) -> go.Figure:
     figure.update_layout(
         template="plotly_white",

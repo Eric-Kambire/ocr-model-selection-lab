@@ -26,7 +26,8 @@ class OllamaOCRModel(BaseOCRModel):
             self.client = None
             print("Warning: 'ollama' Python library not installed. Please install it using pip.")
 
-    def perform_ocr(self, image_path: str) -> dict:
+    def perform_ocr(self, image_path: str, *, prompt: str | None = None) -> dict:
+        """Run OCR and allow a structured workflow to override one prompt."""
         if not self.client:
             return {
                 "text": "",
@@ -47,6 +48,7 @@ class OllamaOCRModel(BaseOCRModel):
                 "device": "ollama",
             }
 
+        effective_prompt = prompt.strip() if prompt and prompt.strip() else self.prompt
         start_time = time.time()
         
         try:
@@ -56,7 +58,7 @@ class OllamaOCRModel(BaseOCRModel):
                 messages=[
                     {
                         "role": "user",
-                        "content": self.prompt,
+                        "content": effective_prompt,
                         "images": [image_path]
                     }
                 ],

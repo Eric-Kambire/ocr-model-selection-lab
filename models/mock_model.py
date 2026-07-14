@@ -57,7 +57,8 @@ class MockOCRModel(BaseOCRModel):
                 
         return "".join(chars)
 
-    def perform_ocr(self, image_path: str) -> dict:
+    def perform_ocr(self, image_path: str, *, prompt: str | None = None) -> dict:
+        """Return the mock response; ``prompt`` is accepted for adapter parity."""
         start_time = time.time()
         
         # Simulate CPU processing delay

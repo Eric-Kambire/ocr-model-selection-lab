@@ -7,6 +7,8 @@ venv/
 .pytest_cache/
 .ruff_cache/
 runs/
+cni_imports/
+cni_test_data/
 benchmark_report.md
 dist/
 local-server.log

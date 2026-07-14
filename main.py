@@ -14,6 +14,8 @@ import pandas as pd
 
 import dataset_generator
 from models.ollama_model import DEFAULT_OCR_PROMPT
+from ocr_benchmark.cni import import_cni_zip, load_cni_field_config, materialize_cni_labels, scan_cni_clients
+from ocr_benchmark.cni_runner import iter_cni_benchmark
 from ocr_benchmark.domain import BenchmarkCase
 from ocr_benchmark.dataset_repository import DatasetRepository
 from ocr_benchmark.registry import build_default_registry
@@ -21,6 +23,8 @@ from ocr_benchmark.reporting import RunCheckpoint, save_run
 from ocr_benchmark.runner import BenchmarkRunner, summarize_results
 from ocr_benchmark.visualization import (
     category_quality_chart,
+    cni_accuracy_chart,
+    cni_latency_chart,
     empty_figure,
     latency_chart,
     quality_speed_chart,
@@ -31,6 +35,7 @@ ROOT_DIR = Path(__file__).resolve().parent
 DATASET_DIR = ROOT_DIR / "dataset"
 CATALOG_PATH = DATASET_DIR / "dataset.json"
 RUNS_DIR = ROOT_DIR / "runs"
+CNI_IMPORTS_DIR = ROOT_DIR / "cni_imports"
 
 METRICS_HELP = """
 ## Comment lire les résultats
@@ -323,6 +328,52 @@ def _live_result_table(results: list[dict[str, Any]]) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+def _cni_scan_table(records: list[dict[str, Any]]) -> pd.DataFrame:
+    """Build the non-sensitive readiness table for CNI input folders."""
+    return pd.DataFrame([
+        {
+            "Client dossier": item.get("folder_client_id"),
+            "Recto": "OK" if item.get("recto_pdf") else "Manquant",
+            "Verso": "OK" if item.get("verso_pdf") else "Manquant",
+            "Label": item.get("label_status", "—"),
+            "Statut": item.get("status", "—"),
+            "Alertes": ", ".join(item.get("issues") or []) or "—",
+        }
+        for item in records
+    ])
+
+
+def _cni_result_table(results: list[dict[str, Any]]) -> pd.DataFrame:
+    """Format CNI benchmark results; accuracy remains unscored until label mapping exists."""
+    return pd.DataFrame([
+        {
+            "Client": item.get("folder_client_id"),
+            "Modèle": item.get("model"),
+            "Statut": item.get("status"),
+            "Accuracy": "Non noté" if item.get("accuracy") is None else f"{float(item['accuracy']) * 100:.2f}%",
+            "Label": item.get("label_status", "—"),
+            "CIN recto": item.get("cin_recto") or "—",
+            "CIN verso": item.get("cin_verso") or "—",
+            "CIN cohérent": "Oui" if item.get("cin_coherent") is True else "Non" if item.get("cin_coherent") is False else "—",
+            "Latence (s)": round(float(item.get("latency") or 0), 3),
+        }
+        for item in results
+    ])
+
+
+def _read_json_if_available(path_value: Any) -> Any:
+    """Read one JSON artefact for Gradio, returning a visible status on failure."""
+    if not path_value:
+        return {"status": "not_available"}
+    path = Path(str(path_value))
+    if not path.is_file():
+        return {"status": "not_found"}
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        return {"status": "read_failed", "error": f"{type(exc).__name__}: {exc}"}
+
+
 def load_dataset() -> list[dict[str, Any]]:
     """Load and validate the catalog, generating it only when it is absent."""
     if not CATALOG_PATH.exists():
@@ -523,6 +574,8 @@ def build_ui() -> gr.Blocks:
         selection_state = gr.State([])
         detail_index = gr.State(0)
         result_model = gr.Dropdown([], visible=False)
+        cni_clients_state = gr.State([])
+        cni_results_state = gr.State([])
 
         with gr.Tabs(elem_id="main-tabs"):
             with gr.Tab("1. Benchmark"):
@@ -807,6 +860,73 @@ def build_ui() -> gr.Blocks:
                         dataset_truth = gr.Textbox(label="Ground truth", lines=16, interactive=False)
                     with gr.Column(scale=2, elem_id="dataset-catalog"):
                         catalog_component = gr.HTML(_catalog_html(dataset))
+
+            with gr.Tab("8. Benchmark CNI"):
+                gr.Markdown(
+                    "### Benchmark CNI\n\n"
+                    "Le nom du dossier client est la seule clé de label. Les PDFs peuvent porter un autre identifiant."
+                )
+                with gr.Row():
+                    with gr.Column(scale=1):
+                        cni_clients_root = gr.Textbox(label="Dossier clients", placeholder=r"D:\data\clients")
+                        cni_labels_root = gr.Textbox(label="Dossier labels JSONB externe", placeholder=r"D:\data\labels")
+                        cni_zip = gr.File(label="Ou importer une archive ZIP de test", file_types=[".zip"], type="filepath")
+                        with gr.Row():
+                            cni_import_zip = gr.Button("Importer le ZIP")
+                            cni_scan = gr.Button("Scanner les dossiers")
+                        cni_scan_status = gr.Markdown("Indiquez un dossier clients, puis scannez-le.")
+                    with gr.Column(scale=2):
+                        cni_scan_report = gr.Dataframe(
+                            headers=["Client dossier", "Recto", "Verso", "Label", "Statut", "Alertes"],
+                            label="Rapport de scan CNI", interactive=False,
+                        )
+                        cni_models = gr.CheckboxGroup(
+                            [choice for choice in model_choices if choice.startswith("ollama:")],
+                            label="Modèles Ollama à comparer",
+                            info="Les modèles cochés sont traités un par un.",
+                        )
+                        cni_refresh_models = gr.Button("Actualiser les modèles Ollama")
+                with gr.Accordion("⚙ Paramètres CNI", open=False):
+                    cni_strategy = gr.Radio(
+                        [
+                            ("Deux appels : recto puis verso — recommandé", "separate_calls"),
+                            ("Une image : recto en haut, verso en bas", "combined_vertical"),
+                        ],
+                        value="separate_calls", label="Stratégie d'envoi au modèle",
+                    )
+                    with gr.Row():
+                        cni_dpi = gr.Slider(150, 450, value=300, step=25, label="Résolution PDF (DPI)")
+                        cni_timeout = gr.Number(value=300, minimum=1, maximum=7200, precision=0, label="Temps maximum par appel (s)")
+                with gr.Row():
+                    cni_launch = gr.Button("Lancer le benchmark CNI", variant="primary")
+                    cni_stop = gr.Button("Annuler", variant="stop")
+                cni_run_status = gr.Textbox(label="État CNI", value="Prêt.", interactive=False)
+                cni_progress = gr.Slider(0, 100, value=0, step=0.1, label="Progression CNI (%)", interactive=False)
+                with gr.Row():
+                    cni_live_image = gr.Image(label="Face en cours", type="filepath", height=320)
+                    cni_live_result = gr.Markdown("Les JSON et mesures apparaîtront après le premier appel.")
+                with gr.Accordion("Résultats CNI et filtres", open=True):
+                    with gr.Row():
+                        cni_accuracy_min = gr.Slider(0, 100, value=0, step=1, label="Accuracy minimale (%)")
+                        cni_accuracy_max = gr.Slider(0, 100, value=100, step=1, label="Accuracy maximale (%)")
+                        cni_include_unscored = gr.Checkbox(value=True, label="Inclure non notés")
+                        cni_apply_filters = gr.Button("Appliquer les filtres")
+                    cni_results_table = gr.Dataframe(
+                        headers=["Client", "Modèle", "Statut", "Accuracy", "Label", "CIN recto", "CIN verso", "CIN cohérent", "Latence (s)"],
+                        label="Résultats CNI filtrés", interactive=False,
+                    )
+                    with gr.Row():
+                        cni_accuracy_plot = gr.Plot(value=cni_accuracy_chart([]))
+                        cni_latency_plot = gr.Plot(value=cni_latency_chart([]))
+                    cni_result_selector = gr.Dropdown(label="Client/modèle à inspecter", choices=[])
+                    with gr.Row():
+                        cni_recto_preview = gr.Image(label="Recto traité", type="filepath", height=280)
+                        cni_verso_preview = gr.Image(label="Verso traité", type="filepath", height=280)
+                    with gr.Row():
+                        cni_label_json = gr.JSON(label="Label attendu (JSON converti)")
+                        cni_recto_json = gr.JSON(label="Extraction recto")
+                        cni_verso_json = gr.JSON(label="Extraction verso")
+                    cni_global_json = gr.JSON(label="Fusion globale")
 
         def on_prepare(
             model_specs,
@@ -1179,6 +1299,117 @@ def build_ui() -> gr.Blocks:
                     _catalog_html(dataset),
                 )
 
+        def import_cni_test_zip(zip_path):
+            if not zip_path:
+                return gr.update(), gr.update(), "❌ Sélectionnez une archive ZIP."
+            try:
+                imported = import_cni_zip(Path(zip_path), CNI_IMPORTS_DIR)
+                root = Path(imported["import_root"])
+                clients_path = root / "clients" if (root / "clients").is_dir() else root
+                labels_path = root / "labels"
+                return (
+                    gr.update(value=str(clients_path)),
+                    gr.update(value=str(labels_path) if labels_path.is_dir() else ""),
+                    f"✅ ZIP importé : {imported['files']} fichier(s). Vérifiez les chemins puis scannez.",
+                )
+            except Exception as exc:
+                return gr.update(), gr.update(), f"❌ Import ZIP impossible : {type(exc).__name__}: {exc}"
+
+        def scan_cni_input(clients_root_text, labels_root_text):
+            if not clients_root_text or not str(clients_root_text).strip():
+                return [], pd.DataFrame(), "❌ Indiquez le dossier clients."
+            try:
+                clients_root = Path(str(clients_root_text).strip()).expanduser()
+                labels_root = Path(str(labels_root_text).strip()).expanduser() if labels_root_text and str(labels_root_text).strip() else None
+                if labels_root is not None and not labels_root.is_dir():
+                    return [], pd.DataFrame(), f"❌ Dossier labels introuvable : `{labels_root}`"
+                records = materialize_cni_labels(scan_cni_clients(clients_root, labels_root))
+                ready = sum(record["status"] == "ready" for record in records)
+                return records, _cni_scan_table(records), f"✅ {len(records)} client(s) détecté(s), {ready} prêt(s)."
+            except Exception as exc:
+                return [], pd.DataFrame(), f"❌ Scan CNI impossible : {type(exc).__name__}: {exc}"
+
+        def refresh_cni_models(selected_models):
+            choices = [f"ollama:{name}" for name in get_installed_ollama_models()]
+            return gr.update(choices=choices, value=[name for name in (selected_models or []) if name in choices])
+
+        def cni_choices(results):
+            return [
+                (f"{result.get('folder_client_id')} · {result.get('model')} · {result.get('status')}", index)
+                for index, result in enumerate(results or [])
+            ]
+
+        def filter_cni_results(results, minimum, maximum, include_unscored):
+            lower, upper = sorted((float(minimum or 0), float(maximum or 100)))
+            selected = []
+            for result in results or []:
+                accuracy = result.get("accuracy")
+                if accuracy is None:
+                    if include_unscored:
+                        selected.append(result)
+                elif lower <= float(accuracy) * 100 <= upper:
+                    selected.append(result)
+            return _cni_result_table(selected)
+
+        def show_cni_result(selection, results):
+            if selection is None or not results:
+                empty = {"status": "not_selected"}
+                return None, None, empty, empty, empty, empty
+            try:
+                result = results[int(selection)]
+            except (TypeError, ValueError, IndexError):
+                invalid = {"status": "invalid_selection"}
+                return None, None, invalid, invalid, invalid, invalid
+            return (
+                result.get("recto_image_path"),
+                result.get("verso_image_path"),
+                _read_json_if_available(result.get("label_path")),
+                _read_json_if_available(result.get("recto_json_path")),
+                _read_json_if_available(result.get("verso_json_path")),
+                _read_json_if_available(result.get("global_json_path")),
+            )
+
+        def on_cni_run(model_specs, client_records, strategy, dpi, timeout):
+            empty = empty_figure()
+            if not model_specs:
+                yield "❌ Sélectionnez au moins un modèle Ollama.", 0, None, "", [], pd.DataFrame(), gr.update(choices=[]), empty, empty
+                return
+            if not client_records:
+                yield "❌ Scannez d'abord un dossier clients valide.", 0, None, "", [], pd.DataFrame(), gr.update(choices=[]), empty, empty
+                return
+            fields = load_cni_field_config(ROOT_DIR / "config" / "cni_fields.json")
+            results: list[dict[str, Any]] = []
+            try:
+                for event in iter_cni_benchmark(
+                    build_default_registry(), list(model_specs), list(client_records), RUNS_DIR,
+                    strategy=str(strategy), dpi=int(dpi), timeout_seconds=float(timeout or 0),
+                    fields=fields,
+                ):
+                    total, completed = int(event.get("total", 0)), int(event.get("completed", 0))
+                    progress = completed / total * 100 if total else 0
+                    if event.get("stage") == "processing":
+                        yield (
+                            f"Analyse de {event.get('folder_client_id')} ({event.get('side')})…",
+                            progress, event.get("image_path"),
+                            f"### Analyse CNI en direct\n\n- **Client :** `{event.get('folder_client_id')}`\n- **Modèle :** `{event.get('model')}`\n- **Face :** `{event.get('side')}`",
+                            results, _cni_result_table(results), gr.update(choices=cni_choices(results)),
+                            cni_accuracy_chart(results), cni_latency_chart(results),
+                        )
+                        continue
+                    result = event.get("result")
+                    if result:
+                        results.append(result)
+                    yield (
+                        event.get("message") or f"Résultat CNI reçu : {event.get('folder_client_id', '—')}",
+                        progress, (result or {}).get("recto_image_path"),
+                        f"### Dernier résultat\n\n- **Statut :** `{(result or {}).get('status', '—')}`\n- **Label :** `{(result or {}).get('label_status', '—')}`",
+                        results, _cni_result_table(results),
+                        gr.update(choices=cni_choices(results), value=(len(results) - 1 if results else None)),
+                        cni_accuracy_chart(results), cni_latency_chart(results),
+                    )
+            except Exception as exc:
+                yield f"❌ Benchmark CNI interrompu : {type(exc).__name__}: {exc}", 0, None, "Consultez le terminal.", results, _cni_result_table(results), gr.update(choices=cni_choices(results)), cni_accuracy_chart(results), cni_latency_chart(results)
+
         prepare_run.click(
             on_prepare,
             [
@@ -1275,6 +1506,42 @@ def build_ui() -> gr.Blocks:
             add_labeled_data,
             [upload_image, upload_label, upload_category, upload_description],
             [add_data_status, dataset_selector, catalog_component],
+        )
+        cni_import_zip.click(
+            import_cni_test_zip,
+            inputs=[cni_zip],
+            outputs=[cni_clients_root, cni_labels_root, cni_scan_status],
+            queue=False,
+        )
+        cni_scan.click(
+            scan_cni_input,
+            inputs=[cni_clients_root, cni_labels_root],
+            outputs=[cni_clients_state, cni_scan_report, cni_scan_status],
+            queue=False,
+        )
+        cni_refresh_models.click(refresh_cni_models, inputs=[cni_models], outputs=[cni_models], queue=False)
+        cni_event = cni_launch.click(
+            on_cni_run,
+            inputs=[cni_models, cni_clients_state, cni_strategy, cni_dpi, cni_timeout],
+            outputs=[
+                cni_run_status, cni_progress, cni_live_image, cni_live_result,
+                cni_results_state, cni_results_table, cni_result_selector,
+                cni_accuracy_plot, cni_latency_plot,
+            ],
+            concurrency_limit=1,
+            concurrency_id="cni-benchmark-run",
+        )
+        cni_stop.click(fn=None, cancels=[cni_event])
+        cni_apply_filters.click(
+            filter_cni_results,
+            inputs=[cni_results_state, cni_accuracy_min, cni_accuracy_max, cni_include_unscored],
+            outputs=[cni_results_table], queue=False,
+        )
+        cni_result_selector.input(
+            show_cni_result,
+            inputs=[cni_result_selector, cni_results_state],
+            outputs=[cni_recto_preview, cni_verso_preview, cni_label_json, cni_recto_json, cni_verso_json, cni_global_json],
+            queue=False,
         )
     return app
 
