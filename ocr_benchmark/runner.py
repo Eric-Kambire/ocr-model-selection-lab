@@ -186,6 +186,7 @@ class BenchmarkRunner:
                             model,
                             case.image_path,
                             timeout_seconds,
+                            prompt=case.prompt,
                             late_result=lambda late_raw, late_error: self._emit_trace(
                                 trace,
                                 run_id,
@@ -271,10 +272,12 @@ class BenchmarkRunner:
         model,
         image_path: str,
         timeout_seconds: float | None,
+        *,
+        prompt: str | None = None,
         late_result: Callable[[Any | None, str | None], None] | None = None,
     ):
         if timeout_seconds is None or timeout_seconds <= 0:
-            return model.perform_ocr(image_path)
+            return _perform_model_call(model, image_path, prompt)
 
         result_holder: list[Any] = []
         error_holder: list[BaseException] = []
@@ -282,7 +285,7 @@ class BenchmarkRunner:
 
         def worker() -> None:
             try:
-                result_holder.append(model.perform_ocr(image_path))
+                result_holder.append(_perform_model_call(model, image_path, prompt))
             except BaseException as exc:  # propagate through the caller thread
                 error_holder.append(exc)
             finally:
@@ -466,3 +469,15 @@ def summarize_results(results: list[dict[str, Any]]) -> pd.DataFrame:
 
 def _unique_join(values: pd.Series) -> str:
     return ", ".join(sorted({str(value) for value in values if value}))
+
+
+def _perform_model_call(model: Any, image_path: str, prompt: str | None) -> Any:
+    """Invoke an adapter without breaking older third-party adapters.
+
+    Existing adapters only implement ``perform_ocr(image_path)``.  The optional
+    prompt keyword is passed exclusively when a structured workflow actually
+    supplies one; ordinary benchmark calls keep the original public contract.
+    """
+    if prompt is None:
+        return model.perform_ocr(image_path)
+    return model.perform_ocr(image_path, prompt=prompt)

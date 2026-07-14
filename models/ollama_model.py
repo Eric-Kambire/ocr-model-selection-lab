@@ -54,7 +54,8 @@ class OllamaOCRModel(BaseOCRModel):
             self.client = None
             LOGGER.exception("Ollama Python library is not installed | model=%s", self.model_name)
 
-    def perform_ocr(self, image_path: str) -> dict:
+    def perform_ocr(self, image_path: str, *, prompt: str | None = None) -> dict:
+        """Run one image through Ollama, optionally overriding this call's prompt."""
         if not self.client:
             LOGGER.error("Ollama call skipped: Python client unavailable | model=%s", self.model_name)
             return {
@@ -77,10 +78,11 @@ class OllamaOCRModel(BaseOCRModel):
                 "device": "ollama",
             }
 
+        effective_prompt = prompt.strip() if prompt and prompt.strip() else self.prompt
         start_time = time.time()
         LOGGER.info(
-            "Ollama request started | model=%s | image=%s | temperature=0.0",
-            self.model_name, image_path,
+            "Ollama request started | model=%s | image=%s | temperature=0.0 | prompt_chars=%d",
+            self.model_name, image_path, len(effective_prompt),
         )
         
         try:
@@ -92,7 +94,7 @@ class OllamaOCRModel(BaseOCRModel):
                 messages=[
                     {
                         "role": "user",
-                        "content": self.prompt,
+                        "content": effective_prompt,
                         "images": [image_path]
                     }
                 ],
