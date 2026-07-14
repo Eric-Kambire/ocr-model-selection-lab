@@ -562,6 +562,16 @@ def build_ui() -> gr.Blocks:
         if any(item["category"] == name for item in dataset)
     ]
 
+    def available_run_choices() -> list[tuple[str, str]]:
+        """Return persisted runs newest first without loading their payloads."""
+        if not RUNS_DIR.exists():
+            return []
+        choices = []
+        for run_dir in sorted((p for p in RUNS_DIR.iterdir() if p.is_dir()), reverse=True):
+            if (run_dir / "results.json").exists():
+                choices.append((run_dir.name, run_dir.name))
+        return choices
+
     with gr.Blocks(title="OCR Model Selection Lab", fill_height=True) as app:
         gr.HTML(
             "<div class='hero'><h1>OCR Model Selection Lab</h1>"
@@ -760,6 +770,16 @@ def build_ui() -> gr.Blocks:
                         category_plot = gr.Plot(value=empty_figure(), elem_classes=["dashboard-chart"])
 
             with gr.Tab("4. Résultats détaillés") as details_tab:
+                with gr.Row():
+                    persisted_runs = gr.Dropdown(
+                        choices=available_run_choices(),
+                        label="Runs sauvegardés",
+                        info="Recharge un benchmark après actualisation de la page.",
+                        scale=3,
+                    )
+                    refresh_runs = gr.Button("Actualiser la liste")
+                    open_run = gr.Button("Ouvrir le run", variant="secondary")
+                persisted_run_status = gr.Markdown("Les runs terminés sont conservés dans `runs/`.")
                 result_selector = gr.Dropdown(
                     [],
                     label="Liste des éléments testés — cliquez pour sélectionner",
@@ -1209,6 +1229,25 @@ def build_ui() -> gr.Blocks:
         def select_detail(selection, results):
             return show_detail(int(selection or 0), results)
 
+        def reload_persisted_runs():
+            choices = available_run_choices()
+            return gr.update(choices=choices, value=(choices[0][1] if choices else None))
+
+        def open_persisted_run(run_id):
+            """Load a run from disk and feed it through the normal detail renderer."""
+            if not run_id:
+                return [[], *show_detail(0, []), "Aucun run sélectionné."]
+            safe_id = Path(str(run_id)).name
+            results_path = RUNS_DIR / safe_id / "results.json"
+            try:
+                with results_path.open("r", encoding="utf-8") as stream:
+                    restored = json.load(stream)
+                if not isinstance(restored, list):
+                    raise ValueError("results.json doit contenir une liste")
+                return [restored, *show_detail(0, restored), f"✅ Run `{safe_id}` rechargé ({len(restored)} résultat(s))."]
+            except Exception as exc:
+                return [[], *show_detail(0, []), f"❌ Impossible de recharger `{safe_id}` : {type(exc).__name__}: {exc}"]
+
         def browse_dataset(selection):
             if not selection:
                 return None, "", "", ""
@@ -1351,6 +1390,17 @@ def build_ui() -> gr.Blocks:
             detail_outputs,
             queue=False,
         )
+        refresh_runs.click(
+            reload_persisted_runs,
+            outputs=[persisted_runs],
+            queue=False,
+        )
+        open_run.click(
+            open_persisted_run,
+            inputs=[persisted_runs],
+            outputs=[run_state, *detail_outputs, persisted_run_status],
+            queue=False,
+        )
         dataset_selector.change(
             browse_dataset,
             dataset_selector,
@@ -1361,6 +1411,16 @@ def build_ui() -> gr.Blocks:
             add_labeled_data,
             [upload_image, upload_label, upload_category, upload_description],
             [add_data_status, dataset_selector, catalog_component],
+        )
+        # Rehydrate the newest persisted run when the browser reconnects or
+        # the page is refreshed. This callback is lightweight: only
+        # ``results.json`` is read; raw traces remain on disk until opened.
+        app.load(
+            lambda: open_persisted_run(available_run_choices()[0][1])
+            if available_run_choices()
+            else [[], *show_detail(0, []), "Aucun run sauvegardé."],
+            outputs=[run_state, *detail_outputs, persisted_run_status],
+            queue=False,
         )
     # Gradio's default queue limit can serialize every event behind a long OCR
     # request. A small global pool keeps lightweight UI actions responsive while
