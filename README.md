@@ -4,6 +4,58 @@ Plateforme extensible pour comparer des modèles OCR sur la qualité, la vitesse
 la fiabilité. Elle fonctionne en interface Gradio ou en CLI, sur CPU local, dans
 Docker, et sur CPU/GPU dans Google Colab.
 
+## Architecture locale
+
+Le projet est organisé en couches simples :
+
+```text
+main.py                         # démarrage Gradio ou CLI, configuration et flux UI
+ocr_benchmark/domain.py         # objets métier : cas, inférence, résultat, statuts
+ocr_benchmark/runner.py         # orchestration séquentielle, timeout et progression
+ocr_benchmark/registry.py       # frontière entre un nom de modèle et son adaptateur
+ocr_benchmark/dataset_repository.py # lecture/écriture contrôlée du catalogue
+ocr_benchmark/reporting.py      # exports JSON/CSV/Markdown et traces JSONL
+models/                         # adaptateurs EasyOCR, Ollama et Mock
+dataset/                        # catalogue et images, jamais de secret
+runs/<run_id>/                  # artefacts d'une exécution, ignorés par Git
+```
+
+Le flux d'une image est : `dataset → registry → adapter → runner → evaluator →
+reporting/UI`. Le runner charge un seul modèle à la fois, traite les documents,
+appelle `close()` dans un bloc `finally`, puis passe au modèle suivant. Cette
+contrainte est volontaire : elle évite de garder plusieurs modèles en mémoire
+sur un poste CPU ou une petite carte GPU.
+
+## Timeout et sorties tardives
+
+Le timeout du runner protège l'interface, mais Python ne peut pas tuer sans risque
+un thread fournisseur déjà engagé. L'appel est donc marqué `timeout` au moment
+limite et exclu des scores. Si le fournisseur finit plus tard, sa réponse brute
+est enregistrée dans `traces.jsonl` avec `timing: "late_after_timeout"`; elle ne
+réapparaît jamais comme un succès. Pour Ollama, configurez aussi le timeout HTTP
+dans les paramètres afin d'arrêter la requête réseau réelle.
+
+## Débogage local
+
+Activez les logs détaillés avant de démarrer :
+
+```powershell
+$env:LOG_LEVEL = "DEBUG"
+python main.py
+```
+
+Les événements importants sont écrits dans le terminal : création du modèle,
+début/fin de chaque inférence, statut, latence, tokens, timeout et libération de
+la mémoire. Pour une exécution reproductible, utilisez le CLI :
+
+```powershell
+python main.py --cli --models mock:MockOCR-V1 --category cheques
+```
+
+Si une image échoue, vérifiez d'abord `runs/<run_id>/traces.jsonl`, puis
+`details.csv`. Une erreur d'adaptateur est isolée au document concerné et ne doit
+pas empêcher les autres modèles de produire leurs résultats.
+
 ## Démarrage local CPU
 
 ```powershell

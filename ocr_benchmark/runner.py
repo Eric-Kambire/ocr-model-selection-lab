@@ -37,7 +37,13 @@ class RunnerProgress:
 
 
 class BenchmarkRunner:
-    """Runs models against immutable cases and produces normalized results."""
+    """Execute a benchmark while isolating provider failures.
+
+    The runner intentionally owns the lifecycle of one adapter at a time:
+    create -> process every selected case -> close.  This is important for
+    local machines with limited RAM/VRAM and also prevents one broken provider
+    from aborting the remaining models.
+    """
 
     def __init__(self, registry: ModelRegistry) -> None:
         self.registry = registry
@@ -105,6 +111,9 @@ class BenchmarkRunner:
         errors = 0
         started_at = time.monotonic()
 
+        # Models are processed serially.  Do not turn this into a worker pool:
+        # loading two vision models concurrently is the main source of OOMs on
+        # the supported CPU-only developer machines.
         for model_spec in model_specs:
             model = None
             model_name = str(model_spec).split(":", 1)[-1]
@@ -166,6 +175,9 @@ class BenchmarkRunner:
                         error_count=errors,
                     )
                     try:
+                        # The adapter boundary is deliberately narrow.  Any
+                        # provider exception becomes a failed document rather
+                        # than stopping the whole run.
                         raw = self._perform_with_timeout(
                             model,
                             case.image_path,
@@ -272,9 +284,9 @@ class BenchmarkRunner:
             finally:
                 finished.set()
 
-        # Daemon prevents a provider that ignores cancellation from keeping
-        # the application alive forever. Provider-specific HTTP timeouts (e.g.
-        # Ollama) still stop the actual network call.
+        # A Python thread cannot safely be force-killed.  The daemon flag lets
+        # the UI continue after a timeout; provider-specific timeouts (Ollama,
+        # HTTP clients, etc.) must still be configured to stop the real call.
         thread = threading.Thread(target=worker, name="ocr-inference", daemon=True)
         thread.start()
         if finished.wait(timeout_seconds):
@@ -285,6 +297,9 @@ class BenchmarkRunner:
         if not finished.is_set():
             LOGGER.warning("Inference timeout | model=%s | image=%s | timeout=%.2fs", getattr(model, "model_name", "unknown"), image_path, timeout_seconds)
             if late_result:
+                # Keep observing the provider in the background only to persist
+                # its eventual raw response. It is never reintroduced into the
+                # quality score or the progress counter.
                 def capture_late() -> None:
                     finished.wait()
                     try:

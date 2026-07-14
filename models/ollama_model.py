@@ -16,7 +16,12 @@ Rules:
 
 class OllamaOCRModel(BaseOCRModel):
     """
-    An OCR model wrapper that uses a local Ollama vision model (e.g., gemma3:1b, llama3.2-vision).
+    OCR adapter for Ollama's local HTTP API.
+
+    The application talks to Ollama through ``client.chat`` rather than
+    starting a subprocess. ``request_timeout`` limits the network call,
+    ``num_thread`` controls CPU parallelism, and ``keep_alive=0`` asks Ollama
+    to unload the model after this request when memory is constrained.
     """
     def __init__(
         self,
@@ -32,7 +37,8 @@ class OllamaOCRModel(BaseOCRModel):
         self.cpu_threads = int(cpu_threads) if cpu_threads and int(cpu_threads) > 0 else None
         self.unload_after_task = bool(unload_after_task)
         self.request_timeout = float(request_timeout) if request_timeout and float(request_timeout) > 0 else None
-        # Import ollama here to avoid dependency issues if not installed
+        # Import lazily: mock/EasyOCR-only installations must not require the
+        # optional Ollama Python package just to start the application.
         try:
             import ollama
             if self.request_timeout is not None:
@@ -78,7 +84,9 @@ class OllamaOCRModel(BaseOCRModel):
         )
         
         try:
-            # Call Ollama chat API with images
+            # Ollama accepts a local image path in ``images``. Keeping the
+            # prompt and image in one chat message makes this adapter compatible
+            # with both text-only OCR prompts and vision-capable models.
             response = self.client.chat(
                 model=self.model_name,
                 messages=[
@@ -113,7 +121,9 @@ class OllamaOCRModel(BaseOCRModel):
                 output_tokens = getattr(response, "eval_count", None)
                 eval_duration = getattr(response, "eval_duration", None)
             
-            # Clean up potential markdown formatting code blocks wrapped by LLM (e.g. ```markdown ... ```)
+            # Some models ignore the OCR-only instruction and wrap their answer
+            # in a Markdown fence. Remove only that outer fence; never rewrite
+            # the actual transcription content.
             if extracted_text.startswith("```"):
                 lines = extracted_text.split("\n")
                 if len(lines) >= 2 and lines[-1].startswith("```"):

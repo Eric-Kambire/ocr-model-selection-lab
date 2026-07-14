@@ -31,6 +31,9 @@ class DatasetRepository:
         category: str,
         description: str = "",
     ) -> dict[str, Any]:
+        # Resolve the source before validation so paths cannot escape the
+        # caller's filesystem silently. The destination is always generated
+        # below our controlled ``dataset/user_uploads`` directory.
         source = Path(source_path).resolve()
         label = ground_truth.strip()
         normalized_category = category.strip().lower().replace(" ", "_")
@@ -65,6 +68,9 @@ class DatasetRepository:
             "source": "user_upload",
         }
 
+        # The lock protects concurrent Gradio callbacks. Copying the image and
+        # replacing the JSON catalogue are one logical operation: on failure,
+        # remove the copied file so the catalogue never points at a ghost file.
         with _WRITE_LOCK:
             catalog = self._read_catalog()
             shutil.copy2(source, destination)
@@ -84,6 +90,9 @@ class DatasetRepository:
         return catalog
 
     def _atomic_write(self, catalog: list[dict[str, Any]]) -> None:
+        # os.replace is atomic on the same filesystem, so readers see either
+        # the old complete catalogue or the new complete catalogue, never a
+        # partially-written JSON document.
         temporary = self.catalog_path.with_suffix(".json.tmp")
         temporary.write_text(
             json.dumps(catalog, indent=2, ensure_ascii=False),
