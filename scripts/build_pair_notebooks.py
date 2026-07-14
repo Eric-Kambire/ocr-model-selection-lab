@@ -41,23 +41,54 @@ def code(value: str) -> dict:
 
 
 COMMON_INSTALL = r'''
-# Installation reproductible. Exécutez cette cellule dans un runtime Colab frais.
-import os, subprocess, sys, importlib
+# Installation reproductible mais différentielle : Colab possède déjà la
+# plupart des paquets. On n'écrase donc pas inutilement l'environnement.
+import os, re, subprocess, sys
+from importlib.metadata import PackageNotFoundError, version as installed_version
+from packaging.version import Version
+from packaging.requirements import Requirement
 
 PINNED = [
     "numpy==1.26.4", "pillow==11.1.0",
     "huggingface_hub>=0.30,<1", "datasets>=3.5,<4", "kagglehub>=0.3,<1", "requests>=2.32,<3", "plotly>=5.24,<7", "gradio>=6.0,<7",
     "accelerate>=1.6,<2",
 ]
-subprocess.run([sys.executable, "-m", "pip", "install", "-q", "--upgrade", "--force-reinstall", "--no-cache-dir", *PINNED], check=True)
-print("Dépendances réinstallées ensemble. IMPORTANT : redémarrez maintenant le runtime Colab (Exécution → Redémarrer la session), puis reprenez à la cellule de vérification.")
+
+def _dist_name(spec):
+    return re.split(r"[<>=!~ ]", spec, maxsplit=1)[0].lower().replace("_", "-")
+
+def _installed(name):
+    try: return installed_version(name)
+    except PackageNotFoundError: return None
+
+def _needs(spec):
+    requirement = Requirement(spec)
+    current = _installed(requirement.name)
+    return current is None or (bool(requirement.specifier) and Version(current) not in requirement.specifier)
+
+numpy_now = _installed("numpy")
+if numpy_now is None or Version(numpy_now) >= Version("2.0.0"):
+    subprocess.run([sys.executable, "-m", "pip", "install", "-q", "--prefer-binary", "numpy==1.26.4"], check=True)
+    print("NumPy 1.26.4 installé. Redémarrez le runtime avant de continuer.")
+
+missing = [spec for spec in PINNED if _needs(spec) and not spec.startswith("numpy")]
+if missing:
+    subprocess.run([sys.executable, "-m", "pip", "install", "-q", "--prefer-binary", *missing], check=True)
+    print("Paquets manquants installés:", missing)
+else:
+    print("Dépendances déjà présentes : aucune réinstallation lourde nécessaire.")
 '''
 
 NUMPY_GUARD = r'''
 # Garde explicite contre NumPy 2.x (incompatibilités ABI avec certaines roues
 # OCR/vision). Cette cellule est volontairement séparée pour être identifiable.
-subprocess.run([sys.executable, "-m", "pip", "install", "-q", "--upgrade", "--force-reinstall", "--no-cache-dir", "numpy<2.0.0"], check=True)
-print("numpy<2.0.0 installé. Redémarrez le runtime avant la cellule suivante si Colab indique que NumPy était déjà chargé.")
+from importlib.metadata import version as _numpy_version
+from packaging.version import Version
+if Version(_numpy_version("numpy")) >= Version("2.0.0"):
+    subprocess.run([sys.executable, "-m", "pip", "install", "-q", "--prefer-binary", "numpy==1.26.4"], check=True)
+    print("NumPy 1.26.4 installé. Redémarrez le runtime avant la cellule suivante.")
+else:
+    print("NumPy compatible déjà présent:", _numpy_version("numpy"))
 '''
 
 RUNTIME = r'''
@@ -436,7 +467,7 @@ def make_notebook(number: str, left: str, right: str) -> dict:
         code(f"MODELS = {left!r}, {right!r}\nprint('Modèles de ce notebook:', MODELS)"),
         code(COMMON_INSTALL),
         code(NUMPY_GUARD),
-        code("EXTRA_PACKAGES = " + repr(extras) + "\nif EXTRA_PACKAGES:\n    subprocess.run([sys.executable, '-m', 'pip', 'install', '-q', '--upgrade', *EXTRA_PACKAGES], check=True)\nprint('Dépendances spécifiques:', EXTRA_PACKAGES or 'aucune')"),
+        code("EXTRA_PACKAGES = " + repr(extras) + "\nif EXTRA_PACKAGES:\n    _missing_extra = [p for p in EXTRA_PACKAGES if _needs(p)]\n    if _missing_extra: subprocess.run([sys.executable, '-m', 'pip', 'install', '-q', '--prefer-binary', *_missing_extra], check=True)\n    print('Dépendances spécifiques installées/manquantes:', _missing_extra)\nelse: print('Dépendances spécifiques: aucune')"),
         code(RUNTIME),
         md("## Secrets (facultatif)\nAjoutez `HF_TOKEN` et `KAGGLE_API_TOKEN` dans Colab → Secrets si nécessaire. Le token n'est jamais affiché. Les quatre sources du notebook principal sont tentées : Hugging Face MultiFin, Hugging Face chèques, Kaggle IAM Forms et le dépôt GitHub handwritten forms. Les images Kaggle/GitHub sans transcription exploitable restent visibles mais ne reçoivent pas de CER/WER."),
         code("try:\n    from google.colab import userdata\n    os.environ['HF_TOKEN'] = userdata.get('HF_TOKEN') or ''\n    os.environ['KAGGLE_API_TOKEN'] = userdata.get('KAGGLE_API_TOKEN') or userdata.get('KAGGLE_TOKEN') or ''\nexcept Exception:\n    os.environ.setdefault('HF_TOKEN', '')\n    os.environ.setdefault('KAGGLE_API_TOKEN', '')\nprint('HF_TOKEN présent:', bool(os.environ.get('HF_TOKEN')), '| KAGGLE token présent:', bool(os.environ.get('KAGGLE_API_TOKEN')))"),
