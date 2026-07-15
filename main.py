@@ -1399,6 +1399,7 @@ def build_ui() -> gr.Blocks:
                 )
 
         def import_cni_test_zip(zip_path):
+            """Importe un ZIP de test et préremplit les chemins clients/labels."""
             if not zip_path:
                 return gr.update(), gr.update(), "❌ Sélectionnez une archive ZIP."
             try:
@@ -1415,12 +1416,7 @@ def build_ui() -> gr.Blocks:
                 return gr.update(), gr.update(), f"❌ Import ZIP impossible : {type(exc).__name__}: {exc}"
 
         def scan_cni_input(clients_root_text, labels_root_text):
-            """Audit source folders and refresh the run state plus preview choices.
-
-            The UI receives only records emitted by the scanner, which keeps
-            label matching tied to client directories rather than arbitrary
-            browser-provided paths.
-            """
+            """Scanne les dossiers et met à jour l'état CNI et les aperçus."""
             if not clients_root_text or not str(clients_root_text).strip():
                 return [], pd.DataFrame(), "❌ Indiquez le dossier clients.", gr.update(choices=_cni_source_choices([]), value=None)
             try:
@@ -1428,6 +1424,8 @@ def build_ui() -> gr.Blocks:
                 labels_root = Path(str(labels_root_text).strip()).expanduser() if labels_root_text and str(labels_root_text).strip() else None
                 if labels_root is not None and not labels_root.is_dir():
                     return [], pd.DataFrame(), f"❌ Dossier labels introuvable : `{labels_root}`", gr.update(choices=_cni_source_choices([]), value=None)
+                # L'interface ne propose que les clients et PDF issus du scan :
+                # le rapprochement reste donc fondé sur le dossier client.
                 records = materialize_cni_labels(scan_cni_clients(clients_root, labels_root))
                 ready = sum(record["status"] == "ready" for record in records)
                 return records, _cni_scan_table(records), f"✅ {len(records)} client(s) détecté(s), {ready} prêt(s).", gr.update(choices=_cni_source_choices(records), value=None)
@@ -1435,18 +1433,19 @@ def build_ui() -> gr.Blocks:
                 return [], pd.DataFrame(), f"❌ Scan CNI impossible : {type(exc).__name__}: {exc}", gr.update(choices=_cni_source_choices([]), value=None)
 
         def refresh_cni_models(selected_models):
+            """Actualise les modèles Ollama en conservant les choix encore valides."""
             choices = [f"ollama:{name}" for name in get_installed_ollama_models()]
             return gr.update(choices=choices, value=[name for name in (selected_models or []) if name in choices])
 
         def cni_choices(results):
-            """Build stable inspection-dropdown entries from result-list indexes."""
+            """Construit des libellés stables liés aux index des résultats."""
             return [
                 (f"{result.get('folder_client_id')} · {result.get('model')} · {result.get('status')}", index)
                 for index, result in enumerate(results or [])
             ]
 
         def filter_cni_results(results, minimum, maximum, include_unscored):
-            """Apply the configured accuracy range without hiding unscored rows by default."""
+            """Filtre l'accuracy sans masquer par défaut les lignes non notées."""
             lower, upper = sorted((float(minimum or 0), float(maximum or 100)))
             selected = []
             for result in results or []:
@@ -1459,7 +1458,7 @@ def build_ui() -> gr.Blocks:
             return _cni_result_table(selected)
 
         def show_cni_result(selection, results):
-            """Load the two crops and all persisted JSON artifacts for one result."""
+            """Charge les deux crops et les trois JSON d'un résultat choisi."""
             if selection is None or not results:
                 empty = {"status": "not_selected"}
                 return None, None, empty, empty, empty, empty
@@ -1478,12 +1477,7 @@ def build_ui() -> gr.Blocks:
             )
 
         def on_cni_run(model_specs, client_records, strategy, dpi, timeout):
-            """Stream runner events into the live view without computing label accuracy.
-
-            The runner owns model lifetime and checkpoints. This UI generator
-            only converts those events to Gradio updates and keeps completed
-            rows available for filters, charts and detailed inspection.
-            """
+            """Transforme les événements runner en mises à jour live Gradio."""
             empty = empty_figure()
             if not model_specs:
                 yield "❌ Sélectionnez au moins un modèle Ollama.", 0, None, "", [], pd.DataFrame(), gr.update(choices=[]), empty, empty
@@ -1492,6 +1486,8 @@ def build_ui() -> gr.Blocks:
                 yield "❌ Scannez d'abord un dossier clients valide.", 0, None, "", [], pd.DataFrame(), gr.update(choices=[]), empty, empty
                 return
             fields = load_cni_field_config(ROOT_DIR / "config" / "cni_fields.json")
+            # Le runner gère durée de vie modèle et checkpoints ; ce générateur
+            # garde seulement les lignes nécessaires aux filtres et graphiques.
             results: list[dict[str, Any]] = []
             try:
                 for event in iter_cni_benchmark(
