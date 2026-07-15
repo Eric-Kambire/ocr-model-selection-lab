@@ -4,6 +4,76 @@ Plateforme extensible pour comparer des modèles OCR sur la qualité, la vitesse
 la fiabilité. Elle fonctionne en interface Gradio ou en CLI, sur CPU local, dans
 Docker, et sur CPU/GPU dans Google Colab.
 
+## Architecture locale
+
+Le projet est organisé en couches simples :
+
+```text
+main.py                         # démarrage Gradio ou CLI, configuration et flux UI
+ocr_benchmark/domain.py         # objets métier : cas, inférence, résultat, statuts
+ocr_benchmark/runner.py         # orchestration séquentielle, timeout et progression
+ocr_benchmark/registry.py       # frontière entre un nom de modèle et son adaptateur
+ocr_benchmark/dataset_repository.py # lecture/écriture contrôlée du catalogue
+ocr_benchmark/reporting.py      # exports JSON/CSV/Markdown et traces JSONL
+models/                         # adaptateurs EasyOCR, Ollama et Mock
+dataset/                        # catalogue et images, jamais de secret
+runs/<run_id>/                  # artefacts d'une exécution, ignorés par Git
+```
+
+### Sous-système CNI marocaines
+
+Le flux CNI n’est pas concentré dans un seul gros fichier :
+
+```text
+ocr_benchmark/cni_ingestion.py  # scan client, import ZIP, JSONB externe → JSON local
+ocr_benchmark/cni_images.py     # PDF une page → PNG, crop CNI, image recto/verso
+ocr_benchmark/cni_schema.py     # champs configurables, prompt, parsing et fusion JSON
+ocr_benchmark/cni_runner.py     # exécution séquentielle, live events, artefacts de run
+ocr_benchmark/cni.py            # façade d'import compatible pour le reste de l'application
+config/cni_fields.json          # champs d'extraction modifiables sans changer le code
+docs/CNI_BENCHMARK_IMPLEMENTATION_PLAN.md # contrat de données et décisions métier
+```
+
+Chaque module a une seule responsabilité. Un problème de fichier, de crop,
+de réponse JSON ou d’exécution peut donc être retrouvé immédiatement dans le
+bon module, sans modifier l’interface ni les imports existants.
+
+Le flux d'une image est : `dataset → registry → adapter → runner → evaluator →
+reporting/UI`. Le runner charge un seul modèle à la fois, traite les documents,
+appelle `close()` dans un bloc `finally`, puis passe au modèle suivant. Cette
+contrainte est volontaire : elle évite de garder plusieurs modèles en mémoire
+sur un poste CPU ou une petite carte GPU.
+
+## Timeout et sorties tardives
+
+Le timeout du runner protège l'interface, mais Python ne peut pas tuer sans risque
+un thread fournisseur déjà engagé. L'appel est donc marqué `timeout` au moment
+limite et exclu des scores. Si le fournisseur finit plus tard, sa réponse brute
+est enregistrée dans `traces.jsonl` avec `timing: "late_after_timeout"`; elle ne
+réapparaît jamais comme un succès. Pour Ollama, configurez aussi le timeout HTTP
+dans les paramètres afin d'arrêter la requête réseau réelle.
+
+## Débogage local
+
+Activez les logs détaillés avant de démarrer :
+
+```powershell
+$env:LOG_LEVEL = "DEBUG"
+python main.py
+```
+
+Les événements importants sont écrits dans le terminal : création du modèle,
+début/fin de chaque inférence, statut, latence, tokens, timeout et libération de
+la mémoire. Pour une exécution reproductible, utilisez le CLI :
+
+```powershell
+python main.py --cli --models mock:MockOCR-V1 --category cheques
+```
+
+Si une image échoue, vérifiez d'abord `runs/<run_id>/traces.jsonl`, puis
+`details.csv`. Une erreur d'adaptateur est isolée au document concerné et ne doit
+pas empêcher les autres modèles de produire leurs résultats.
+
 ## Démarrage local CPU
 
 ```powershell

@@ -11,6 +11,20 @@ Les libellés sont bilingues arabe/français. Les valeurs évaluées dans cette
 première version sont les valeurs latines visibles sur la carte ; aucune
 traduction ni translittération n’est demandée au modèle.
 
+## Carte des modules
+
+| Emplacement | Responsabilité | Ne fait pas |
+|---|---|---|
+| `ocr_benchmark/cni_ingestion.py` | Dossiers clients, ZIP, conversion JSONB → JSON | OCR et prompt |
+| `ocr_benchmark/cni_images.py` | PDF mono-page, rendu PNG, crop, composition recto/verso | Labels et modèle |
+| `ocr_benchmark/cni_schema.py` | Champs, prompts, parsing JSON, fusion globale | Fichiers et appels IA |
+| `ocr_benchmark/cni_runner.py` | Un modèle à la fois, live events, artefacts de run | Contrat de données |
+| `ocr_benchmark/cni.py` | Façade d’import compatible | Logique métier nouvelle |
+
+Cette séparation permet d’isoler une erreur par son origine : données, image,
+réponse du modèle ou orchestration. Les fonctions publiques sont typées et
+documentent leurs entrées, sorties et erreurs attendues.
+
 ## Répertoires et identifiants
 
 ```text
