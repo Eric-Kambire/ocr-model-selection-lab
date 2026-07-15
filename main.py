@@ -139,29 +139,53 @@ APP_CSS = """
     display: none !important;
 }
 #page-navigation .wrap {
-    display: flex !important;
-    flex-wrap: wrap !important;
-    gap: 4px !important;
+    display: grid !important;
+    grid-template-columns: repeat(8, minmax(0, 1fr)) !important;
+    gap: 6px !important;
 }
 #page-navigation label {
     margin: 0 !important;
-    min-height: 34px !important;
-    padding: 7px 10px !important;
-    border: 1px solid transparent !important;
-    border-radius: 8px !important;
-    background: transparent !important;
-    transition: background-color .12s ease, border-color .12s ease !important;
+    min-height: 44px !important;
+    padding: 9px 12px !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    gap: 7px !important;
+    border: 1px solid var(--block-border-color) !important;
+    border-radius: 9px !important;
+    background: var(--background-fill-secondary) !important;
+    cursor: pointer !important;
+    user-select: none !important;
+    transition: background-color .14s ease, border-color .14s ease, transform .14s ease !important;
 }
 #page-navigation label.selected {
-    border-color: var(--block-border-color) !important;
-    background: var(--button-secondary-background-fill) !important;
+    border-color: rgba(245, 137, 43, .72) !important;
+    background: rgba(245, 137, 43, .14) !important;
     font-weight: 600 !important;
 }
 #page-navigation label:hover {
-    background: var(--background-fill-secondary) !important;
+    border-color: rgba(245, 137, 43, .48) !important;
+    transform: translateY(-1px) !important;
 }
 #page-navigation label span {
     white-space: nowrap !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+    font-size: 12px !important;
+    font-weight: 600 !important;
+}
+#page-navigation label input,
+#cni-navigation label input {
+    width: 11px !important;
+    height: 11px !important;
+    margin: 0 !important;
+    accent-color: #f5892b !important;
+    flex: 0 0 auto !important;
+}
+#page-navigation label:focus-visible,
+#cni-navigation label:focus-visible {
+    outline: 2px solid #f5892b !important;
+    outline-offset: 2px !important;
 }
 #page-settings,
 #page-charts,
@@ -291,18 +315,36 @@ APP_CSS = """
     margin: 0 !important;
 }
 #cni-navigation .wrap {
-    gap: 5px !important;
+    display: grid !important;
+    grid-template-columns: repeat(3, minmax(0, 180px)) !important;
+    gap: 7px !important;
 }
 #cni-navigation label {
-    min-height: 36px !important;
-    padding: 7px 12px !important;
-    border: 1px solid transparent !important;
-    border-radius: 8px !important;
+    min-height: 44px !important;
+    padding: 9px 14px !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    gap: 7px !important;
+    border: 1px solid var(--block-border-color) !important;
+    border-radius: 9px !important;
+    background: var(--background-fill-secondary) !important;
+    cursor: pointer !important;
+    user-select: none !important;
+    transition: background-color .14s ease, border-color .14s ease, transform .14s ease !important;
 }
 #cni-navigation label.selected {
-    border-color: var(--block-border-color) !important;
-    background: var(--button-secondary-background-fill) !important;
+    border-color: rgba(245, 137, 43, .72) !important;
+    background: rgba(245, 137, 43, .14) !important;
     font-weight: 600;
+}
+#cni-navigation label:hover {
+    border-color: rgba(245, 137, 43, .48) !important;
+    transform: translateY(-1px) !important;
+}
+#cni-navigation label span {
+    font-size: 13px !important;
+    font-weight: 600 !important;
 }
 #cni-step-live,
 #cni-step-results {
@@ -399,6 +441,16 @@ APP_CSS = """
     #page-navigation {
         position: static !important;
     }
+    #page-navigation .wrap {
+        grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    }
+    #cni-navigation .wrap {
+        grid-template-columns: 1fr !important;
+    }
+    #page-navigation label,
+    #cni-navigation label {
+        justify-content: flex-start !important;
+    }
     #benchmark-config {
         max-width: none !important;
         padding-right: 0 !important;
@@ -428,79 +480,84 @@ APP_CSS = """
 # reste donc utilisable pendant qu'un générateur de benchmark tourne.
 APP_JS = r"""
 () => {
-  const labels = [
-    "1. Benchmark", "2. Paramètres", "3. Graphiques",
-    "4. Résultats détaillés", "5. Ajouter des données",
-    "6. Comprendre les métriques", "7. Dataset", "8. Benchmark CNI"
-  ];
   const pageIds = [
     "page-benchmark", "page-settings", "page-charts", "page-details",
     "page-add-data", "page-metrics", "page-dataset", "page-cni"
   ];
-  const install = () => {
-    const navigation = document.querySelector("#page-navigation");
+  const installRouter = (selector, targetIds, initialIndex = 0) => {
+    const navigation = document.querySelector(selector);
     if (!navigation || navigation.dataset.clientRouterInstalled) {
       return Boolean(navigation);
     }
     navigation.dataset.clientRouterInstalled = "true";
-    const activate = (index) => {
-      pageIds.forEach((id, position) => {
+    const choices = () => Array.from(navigation.querySelectorAll("label"));
+    const activate = (index, notifyGradio = false) => {
+      const labels = choices();
+      const selectedIndex = Math.max(0, Math.min(index, labels.length - 1));
+      targetIds.forEach((id, position) => {
         const page = document.getElementById(id);
-        if (page) page.style.setProperty("display", position === index ? "flex" : "none", "important");
+        if (page) page.style.setProperty("display", position === selectedIndex ? "flex" : "none", "important");
       });
-      navigation.querySelectorAll("label").forEach((label, position) => {
+      labels.forEach((label, position) => {
         const input = label.querySelector("input");
-        const selected = position === index;
+        const selected = position === selectedIndex;
+        label.classList.toggle("selected", selected);
+        label.setAttribute("role", "tab");
+        label.setAttribute("aria-selected", String(selected));
+        label.tabIndex = selected ? 0 : -1;
         if (input) {
+          const changed = input.checked !== selected;
           input.checked = selected;
           input.setAttribute("aria-checked", String(selected));
+          // La valeur Gradio est synchronisée, sans faire dépendre le routage
+          // d'un rendu serveur : les onglets restent donc cliquables en live.
+          if (notifyGradio && selected && changed) {
+            input.dispatchEvent(new Event("input", { bubbles: true }));
+            input.dispatchEvent(new Event("change", { bubbles: true }));
+          }
         }
-        label.classList.toggle("selected", selected);
       });
+      return selectedIndex;
     };
+    const selectLabel = (label) => {
+      const index = choices().indexOf(label);
+      if (index < 0) return;
+      const selectedIndex = activate(index, true);
+      choices()[selectedIndex]?.focus();
+    };
+    navigation.setAttribute("role", "tablist");
     navigation.addEventListener("click", (event) => {
       const label = event.target.closest("label");
       if (!label || !navigation.contains(label)) return;
-      const choices = Array.from(navigation.querySelectorAll("label"));
-      const index = choices.indexOf(label);
-      if (index < 0) return;
       event.preventDefault();
       event.stopImmediatePropagation();
-      activate(index);
+      selectLabel(label);
     }, true);
-    const cniNavigation = document.querySelector("#cni-navigation");
-    const cniPageIds = ["cni-step-setup", "cni-step-live", "cni-step-results"];
-    if (cniNavigation && !cniNavigation.dataset.clientRouterInstalled) {
-      cniNavigation.dataset.clientRouterInstalled = "true";
-      const activateCni = (index) => {
-        cniPageIds.forEach((id, position) => {
-          const page = document.getElementById(id);
-          if (page) page.style.setProperty("display", position === index ? "flex" : "none", "important");
-        });
-        cniNavigation.querySelectorAll("label").forEach((label, position) => {
-          const input = label.querySelector("input");
-          const selected = position === index;
-          if (input) {
-            input.checked = selected;
-            input.setAttribute("aria-checked", String(selected));
-          }
-          label.classList.toggle("selected", selected);
-        });
-      };
-      cniNavigation.addEventListener("click", (event) => {
-        const label = event.target.closest("label");
-        if (!label || !cniNavigation.contains(label)) return;
-        const choices = Array.from(cniNavigation.querySelectorAll("label"));
-        const index = choices.indexOf(label);
-        if (index < 0) return;
+    navigation.addEventListener("keydown", (event) => {
+      const label = event.target.closest("label");
+      if (!label || !navigation.contains(label)) return;
+      const labels = choices();
+      const current = labels.indexOf(label);
+      if (current < 0) return;
+      if (event.key === "Enter" || event.key === " ") {
         event.preventDefault();
-        event.stopImmediatePropagation();
-        activateCni(index);
-      }, true);
-      activateCni(0);
-    }
-    activate(0);
+        selectLabel(label);
+      } else if (["ArrowRight", "ArrowDown", "ArrowLeft", "ArrowUp", "Home", "End"].includes(event.key)) {
+        event.preventDefault();
+        const next = event.key === "Home" ? 0 : event.key === "End" ? labels.length - 1 :
+          (current + (event.key === "ArrowRight" || event.key === "ArrowDown" ? 1 : -1) + labels.length) % labels.length;
+        const selectedIndex = activate(next, true);
+        labels[selectedIndex]?.focus();
+      }
+    });
+    activate(initialIndex);
     return true;
+  };
+  const install = () => {
+    const cniPageIds = ["cni-step-setup", "cni-step-live", "cni-step-results"];
+    const mainReady = installRouter("#page-navigation", pageIds);
+    installRouter("#cni-navigation", cniPageIds);
+    return mainReady;
   };
   if (!install()) {
     const observer = new MutationObserver(() => { if (install()) observer.disconnect(); });
