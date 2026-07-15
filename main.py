@@ -407,9 +407,9 @@ APP_CSS = """
 }
 """
 
-# Client-side routing deliberately avoids Gradio's lazy Tab mounting. Every
-# page is rendered once; the navigation only toggles CSS display and therefore
-# remains usable while a benchmark generator is running.
+# Le routage navigateur évite le montage paresseux des Tabs Gradio. Chaque page
+# est rendue une fois ; la navigation ne fait que masquer/afficher la page et
+# reste donc utilisable pendant qu'un générateur de benchmark tourne.
 APP_JS = r"""
 () => {
   const labels = [
@@ -1811,13 +1811,13 @@ def build_ui() -> gr.Blocks:
                 )
 
         def refresh_cni_models(selected_models):
-            """Refresh the Ollama choices without changing the generic benchmark list."""
+            """Actualise les modèles Ollama sans modifier le benchmark général."""
             choices = [f"ollama:{name}" for name in get_installed_ollama_models()]
             kept = [name for name in (selected_models or []) if name in choices]
             return gr.update(choices=choices, value=kept)
 
         def import_cni_test_zip(zip_path):
-            """Import a test archive and prefill conventional clients/labels roots."""
+            """Importe un ZIP de test et préremplit les chemins clients/labels."""
             if not zip_path:
                 return gr.update(), gr.update(), "❌ Sélectionnez une archive ZIP."
             try:
@@ -1839,12 +1839,7 @@ def build_ui() -> gr.Blocks:
                 return gr.update(), gr.update(), f"❌ Import ZIP impossible : {type(exc).__name__}: {exc}"
 
         def scan_cni_input(clients_root_text, labels_root_text):
-            """Audit input folders, then copy valid external JSONB labels locally.
-
-            The returned state is the only source of CNI clients for a run. It
-            also refreshes the preview list, so users cannot pick an arbitrary
-            local path through the interface.
-            """
+            """Scanne les dossiers et copie les JSONB valides près des clients."""
             if not clients_root_text or not str(clients_root_text).strip():
                 return [], pd.DataFrame(), "❌ Indiquez le dossier clients.", gr.update(choices=_cni_source_choices([]), value=None)
             try:
@@ -1852,6 +1847,8 @@ def build_ui() -> gr.Blocks:
                 labels_root = Path(str(labels_root_text).strip()).expanduser() if labels_root_text and str(labels_root_text).strip() else None
                 if labels_root is not None and not labels_root.is_dir():
                     return [], pd.DataFrame(), f"❌ Dossier labels introuvable : `{labels_root}`", gr.update(choices=_cni_source_choices([]), value=None)
+                # L'état retourné est l'unique source clients d'un run. La liste
+                # d'aperçu est donc elle aussi limitée aux PDF détectés au scan.
                 records = materialize_cni_labels(scan_cni_clients(clients_root, labels_root))
                 ready = sum(record["status"] == "ready" for record in records)
                 labels = sum(record.get("label_status") == "label_materialized" for record in records)
@@ -1867,7 +1864,7 @@ def build_ui() -> gr.Blocks:
                 return [], pd.DataFrame(), f"❌ Scan CNI impossible : {type(exc).__name__}: {exc}", gr.update(choices=_cni_source_choices([]), value=None)
 
         def cni_result_choices(results):
-            """Create stable dropdown labels that point to result-list indexes."""
+            """Crée des libellés de liste liés aux index stables des résultats."""
             return [
                 (
                     f"{result.get('folder_client_id')} · {result.get('model')} · {result.get('status')}",
@@ -1877,7 +1874,7 @@ def build_ui() -> gr.Blocks:
             ]
 
         def filter_cni_results(results, minimum, maximum, include_unscored):
-            """Apply the future-proof accuracy range filter without hiding unscored labels by default."""
+            """Filtre l'intervalle d'accuracy sans cacher les lignes non notées."""
             lower, upper = sorted((float(minimum or 0), float(maximum or 100)))
             filtered = []
             for result in results or []:
@@ -1891,7 +1888,7 @@ def build_ui() -> gr.Blocks:
             return _cni_result_table(filtered)
 
         def show_cni_result(selection, results):
-            """Load source crops, label and the three persisted JSON artefacts for one result."""
+            """Charge les crops, le label et les trois JSON d'un résultat choisi."""
             if selection is None or not results:
                 return None, None, {"status": "not_selected"}, {"status": "not_selected"}, {"status": "not_selected"}, {"status": "not_selected"}
             try:
@@ -1908,12 +1905,7 @@ def build_ui() -> gr.Blocks:
             )
 
         def on_cni_run(model_specs, client_records, strategy, dpi, timeout, threads, unload):
-            """Stream a CNI run while one model and one face request stay active.
-
-            This generator mirrors runner events into the live view. It keeps
-            completed rows in local state for filters/graphs and never performs
-            the future label-to-field accuracy mapping itself.
-            """
+            """Diffuse les événements CNI en live, un modèle et une face à la fois."""
             empty = empty_figure()
             if not model_specs:
                 yield "❌ Sélectionnez au moins un modèle Ollama.", 0, None, "", [], pd.DataFrame(), gr.update(choices=[]), empty, empty
@@ -1921,6 +1913,8 @@ def build_ui() -> gr.Blocks:
             if not client_records:
                 yield "❌ Scannez d'abord un dossier clients valide.", 0, None, "", [], pd.DataFrame(), gr.update(choices=[]), empty, empty
                 return
+            # Le même fichier de champs pilote le prompt, le parsing et les
+            # futurs comparateurs ; aucun champ n'est dupliqué ici en dur.
             cni_fields = load_cni_field_config(ROOT_DIR / "config" / "cni_fields.json")
             results: list[dict[str, Any]] = []
             try:
@@ -1940,8 +1934,8 @@ def build_ui() -> gr.Blocks:
                     total, completed = int(event.get("total", 0)), int(event.get("completed", 0))
                     progress = completed / total * 100 if total else 0
                     if event.get("stage") == "processing":
-                        # A processing event intentionally has no result yet:
-                        # it updates only the live image and contextual text.
+                        # Cet événement n'a volontairement aucun résultat : il
+                        # met seulement à jour l'image et le contexte live.
                         side = event.get("side", "document")
                         live = (
                             "### Analyse CNI en direct\n\n"
@@ -2119,8 +2113,8 @@ def build_ui() -> gr.Blocks:
             outputs=[cni_clients_root, cni_labels_root, cni_scan_status],
             queue=False,
         )
-        # Changing source mode only alters visibility; entered paths stay in
-        # their components so a user can switch back without losing input.
+        # Changer de mode ne modifie que la visibilité : un chemin saisi reste
+        # mémorisé si l'utilisateur revient ensuite au mode dossier.
         cni_input_mode.change(
             _cni_source_mode_visibility,
             inputs=[cni_input_mode],
@@ -2133,7 +2127,7 @@ def build_ui() -> gr.Blocks:
             outputs=[cni_clients_state, cni_scan_table, cni_scan_status, cni_source_selector],
             queue=False,
         )
-        # Source preview is read-only and comes exclusively from scan results.
+        # L'aperçu est en lecture seule et provient uniquement du scan courant.
         cni_source_selector.change(
             _preview_cni_source,
             inputs=[cni_source_selector],
