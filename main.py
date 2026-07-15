@@ -176,7 +176,8 @@ APP_CSS = """
 }
 #benchmark-layout,
 #explorer-layout,
-#dataset-layout {
+#dataset-layout,
+#cni-explorer-layout {
     height: 100% !important;
     align-items: stretch !important;
 }
@@ -313,6 +314,21 @@ APP_CSS = """
 #cni-live-image,
 #cni-results-table {
     min-height: 280px !important;
+}
+#cni-results-filterbar {
+    align-items: end !important;
+    gap: 8px !important;
+}
+#cni-results-navigation {
+    align-items: center !important;
+    gap: 8px !important;
+}
+#cni-result-position {
+    text-align: center;
+    padding-top: 8px;
+}
+#cni-result-identity {
+    min-height: 92px;
 }
 #cni-settings {
     margin-top: 2px !important;
@@ -986,6 +1002,7 @@ def build_ui() -> gr.Blocks:
         run_state = gr.State([])
         selection_state = gr.State([])
         detail_index = gr.State(0)
+        cni_detail_index = gr.State(0)
         result_model = gr.Dropdown([], visible=False)
         cni_clients_state = gr.State([])
         cni_results_state = gr.State([])
@@ -1390,25 +1407,51 @@ def build_ui() -> gr.Blocks:
                         cni_live_image = gr.Image(label="Face en cours", type="filepath", height=430, elem_id="cni-live-image")
                         cni_live_result = gr.Markdown("Les JSON et mesures apparaîtront après le premier appel.")
                 with gr.Column(elem_id="cni-step-results"):
-                    with gr.Accordion("Résultats, filtres et inspection", open=True, elem_id="cni-results"):
-                        with gr.Row():
-                            cni_accuracy_min = gr.Slider(0, 100, value=0, step=1, label="Accuracy minimale (%)")
-                            cni_accuracy_max = gr.Slider(0, 100, value=100, step=1, label="Accuracy maximale (%)")
-                            cni_include_unscored = gr.Checkbox(value=True, label="Inclure les résultats non notés")
-                            cni_apply_filters = gr.Button("Appliquer les filtres")
-                        cni_results_table = gr.Dataframe(headers=["Client", "Modèle", "Statut", "Accuracy", "Label", "CIN recto", "CIN verso", "CIN cohérent", "Latence (s)"], label="Résultats CNI filtrés", interactive=False, elem_id="cni-results-table")
-                        with gr.Row():
-                            cni_accuracy_plot = gr.Plot(value=cni_accuracy_chart([]), elem_classes=["dashboard-chart"])
-                            cni_latency_plot = gr.Plot(value=cni_latency_chart([]), elem_classes=["dashboard-chart"])
-                        cni_result_selector = gr.Dropdown(label="Client/modèle à inspecter", choices=[])
-                        with gr.Row():
-                            cni_recto_preview = gr.Image(label="Recto traité", type="filepath", height=300)
-                            cni_verso_preview = gr.Image(label="Verso traité", type="filepath", height=300)
-                        with gr.Row():
-                            cni_label_json = gr.JSON(label="Label attendu (JSON converti)")
-                            cni_recto_json = gr.JSON(label="Extraction recto")
-                            cni_verso_json = gr.JSON(label="Extraction verso")
-                        cni_global_json = gr.JSON(label="Fusion globale")
+                    # La structure reprend l'explorateur de « 4. Résultats
+                    # détaillés » : filtre, liste, navigation puis inspecteur.
+                    gr.Markdown("### Résultats détaillés CNI\n\nFiltrez les évaluations puis inspectez une paire recto/verso.")
+                    with gr.Row(elem_id="cni-results-filterbar"):
+                        cni_accuracy_min = gr.Slider(0, 100, value=0, step=1, label="Accuracy minimale (%)")
+                        cni_accuracy_max = gr.Slider(0, 100, value=100, step=1, label="Accuracy maximale (%)")
+                        cni_include_unscored = gr.Checkbox(value=True, label="Inclure les résultats non notés")
+                        cni_apply_filters = gr.Button("Appliquer les filtres")
+                    cni_results_table = gr.Dataframe(
+                        headers=["Client", "Modèle", "Statut", "Accuracy", "Label", "CIN recto", "CIN verso", "CIN cohérent", "Latence (s)"],
+                        label="Éléments passés par le benchmark",
+                        interactive=False,
+                        elem_id="cni-results-table",
+                    )
+                    with gr.Row():
+                        cni_accuracy_plot = gr.Plot(value=cni_accuracy_chart([]), elem_classes=["dashboard-chart"])
+                        cni_latency_plot = gr.Plot(value=cni_latency_chart([]), elem_classes=["dashboard-chart"])
+                    cni_result_selector = gr.Dropdown(
+                        label="Liste des paires testées — cliquez pour sélectionner",
+                        info="La liste contient les paires client/modèle effectivement passées par le benchmark.",
+                        choices=[],
+                    )
+                    with gr.Row(elem_id="cni-results-navigation"):
+                        cni_previous_result = gr.Button("← Précédent")
+                        cni_result_position = gr.Markdown("**Aucune paire testée pour le moment.**", elem_id="cni-result-position")
+                        cni_next_result = gr.Button("Suivant →")
+                    with gr.Row(elem_id="cni-explorer-layout"):
+                        with gr.Column():
+                            cni_recto_preview = gr.Image(label="Recto traité", type="filepath", height=265)
+                            cni_verso_preview = gr.Image(label="Verso traité", type="filepath", height=265)
+                            cni_result_identity = gr.Markdown("Le client et le modèle apparaîtront ici.", elem_id="cni-result-identity")
+                        with gr.Column(scale=2):
+                            cni_detail_metrics = gr.Markdown("### Mesures\n\nAucun résultat sélectionné.")
+                            with gr.Row():
+                                with gr.Column():
+                                    cni_label_json = gr.JSON(label="Label attendu (JSON converti)")
+                                with gr.Column():
+                                    gr.Markdown("**Sorties structurées du modèle**")
+                                    with gr.Tabs():
+                                        with gr.Tab("Extraction recto", render_children=True):
+                                            cni_recto_json = gr.JSON(label="JSON recto")
+                                        with gr.Tab("Extraction verso", render_children=True):
+                                            cni_verso_json = gr.JSON(label="JSON verso")
+                                        with gr.Tab("Fusion globale", render_children=True):
+                                            cni_global_json = gr.JSON(label="JSON global")
 
         def on_prepare(
             model_specs,
@@ -1896,22 +1939,70 @@ def build_ui() -> gr.Blocks:
                     filtered.append(result)
             return _cni_result_table(filtered)
 
-        def show_cni_result(selection, results):
-            """Charge les crops, le label et les trois JSON d'un résultat choisi."""
-            if selection is None or not results:
-                return None, None, {"status": "not_selected"}, {"status": "not_selected"}, {"status": "not_selected"}, {"status": "not_selected"}
-            try:
-                result = results[int(selection)]
-            except (TypeError, ValueError, IndexError):
-                return None, None, {"status": "invalid_selection"}, {"status": "invalid_selection"}, {"status": "invalid_selection"}, {"status": "invalid_selection"}
+        def cni_detail_metric_summary(result):
+            """Présente les mesures CNI dans le même format que l'explorateur général."""
+            input_tokens = result.get("input_tokens")
+            output_tokens = result.get("output_tokens")
+            token_speed = result.get("tokens_per_second")
+            token_speed_text = f"{float(token_speed):.2f}" if token_speed is not None else "N/A"
             return (
+                "### Mesures principales\n\n"
+                f"**Temps total :** {float(result.get('latency') or 0):.3f} s · "
+                f"**Accuracy :** {_metric_percent(result.get('accuracy'))} · "
+                f"**Statut :** `{result.get('status', '—')}`\n\n"
+                f"**Tokens entrée :** {input_tokens if input_tokens is not None else 'N/A'} · "
+                f"**Tokens sortie :** {output_tokens if output_tokens is not None else 'N/A'} · "
+                f"**Tokens/s :** {token_speed_text}\n\n"
+                f"**CIN recto/verso cohérent :** {_cni_boolean(result.get('cin_coherent'))} · "
+                f"**Label :** `{result.get('label_status') or 'absent'}`"
+            )
+
+        def show_cni_detail(index, results, offset=0):
+            """Charge une paire CNI, avec boutons précédent/suivant sans bloquer le run."""
+            results = results or []
+            empty_json = {"status": "not_selected"}
+            if not results:
+                return (
+                    gr.update(choices=[], value=None), 0,
+                    "**Aucune paire testée pour le moment.**", None, None,
+                    "Lancez un benchmark pour alimenter cet onglet.",
+                    "### Mesures\n\nAucun résultat sélectionné.",
+                    empty_json, empty_json, empty_json, empty_json,
+                )
+            position = max(0, min(int(index or 0) + offset, len(results) - 1))
+            result = results[position]
+            identity = (
+                f"### Client `{result.get('folder_client_id', '—')}`\n\n"
+                f"- **Modèle :** `{result.get('model', '—')}`\n"
+                f"- **Stratégie :** `{result.get('strategy', '—')}`\n"
+                f"- **Statut :** `{result.get('status', '—')}`\n"
+                f"- **Erreur :** {result.get('error') or '—'}"
+            )
+            return (
+                gr.update(choices=cni_result_choices(results), value=position),
+                position,
+                f"**Paire testée {position + 1} / {len(results)}** · {len(results)} évaluation(s) disponible(s)",
                 result.get("recto_image_path"),
                 result.get("verso_image_path"),
+                identity,
+                cni_detail_metric_summary(result),
                 _read_json_if_available(result.get("label_path")),
                 _read_json_if_available(result.get("recto_json_path")),
                 _read_json_if_available(result.get("verso_json_path")),
                 _read_json_if_available(result.get("global_json_path")),
             )
+
+        def select_cni_detail(selection, results):
+            """Sélectionne explicitement une ligne de la liste CNI."""
+            return show_cni_detail(int(selection or 0), results)
+
+        def show_previous_cni_detail(index, results):
+            """Passe à la paire CNI précédente."""
+            return show_cni_detail(index, results, -1)
+
+        def show_next_cni_detail(index, results):
+            """Passe à la paire CNI suivante."""
+            return show_cni_detail(index, results, 1)
 
         def on_cni_run(model_specs, client_records, strategy, dpi, timeout, threads, unload, continue_without_label):
             """Diffuse les événements CNI en live, un modèle et une face à la fois."""
@@ -2195,17 +2286,38 @@ def build_ui() -> gr.Blocks:
             outputs=[cni_results_table],
             queue=False,
         )
+        # Comme sur la page de résultats générale, l'exploration détaillée est
+        # volontairement indépendante du générateur de benchmark : l'UI reste
+        # réactive pendant l'arrivée progressive des nouveaux résultats.
+        cni_detail_outputs = [
+            cni_result_selector,
+            cni_detail_index,
+            cni_result_position,
+            cni_recto_preview,
+            cni_verso_preview,
+            cni_result_identity,
+            cni_detail_metrics,
+            cni_label_json,
+            cni_recto_json,
+            cni_verso_json,
+            cni_global_json,
+        ]
+        cni_previous_result.click(
+            show_previous_cni_detail,
+            inputs=[cni_detail_index, cni_results_state],
+            outputs=cni_detail_outputs,
+            queue=False,
+        )
+        cni_next_result.click(
+            show_next_cni_detail,
+            inputs=[cni_detail_index, cni_results_state],
+            outputs=cni_detail_outputs,
+            queue=False,
+        )
         cni_result_selector.input(
-            show_cni_result,
+            select_cni_detail,
             inputs=[cni_result_selector, cni_results_state],
-            outputs=[
-                cni_recto_preview,
-                cni_verso_preview,
-                cni_label_json,
-                cni_recto_json,
-                cni_verso_json,
-                cni_global_json,
-            ],
+            outputs=cni_detail_outputs,
             queue=False,
         )
         # Only refresh the run selector during startup. Loading the full result
