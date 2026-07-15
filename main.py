@@ -19,6 +19,7 @@ from ocr_benchmark.cni import (
     import_cni_zip,
     load_cni_field_config,
     materialize_cni_labels,
+    render_single_page_pdf,
     scan_cni_clients,
 )
 from ocr_benchmark.cni_runner import iter_cni_benchmark
@@ -42,6 +43,7 @@ DATASET_DIR = ROOT_DIR / "dataset"
 CATALOG_PATH = DATASET_DIR / "dataset.json"
 RUNS_DIR = ROOT_DIR / "runs"
 CNI_IMPORTS_DIR = ROOT_DIR / "cni_imports"
+CNI_EXAMPLES_DIR = ROOT_DIR / "cni_test_data" / "morocco_cni_examples"
 
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
 logging.basicConfig(
@@ -673,6 +675,52 @@ def _cni_scan_table(records: list[dict[str, Any]]) -> pd.DataFrame:
     )
 
 
+def _cni_source_choices(records: list[dict[str, Any]]) -> list[tuple[str, str]]:
+    """Return readable choices for CNI source preview without changing inputs.
+
+    The four local examples are preview-only and deliberately remain outside
+    the benchmark PDF contract. Scanned client PDFs are appended afterwards.
+    """
+    choices: list[tuple[str, str]] = []
+    example_labels = {
+        "old_cin_recto.png": "Exemple — ancienne CNI · recto",
+        "old_cin_verso.png": "Exemple — ancienne CNI · verso",
+        "new_cin_recto.png": "Exemple — nouvelle CNI · recto",
+        "new_cin_verso.png": "Exemple — nouvelle CNI · verso",
+    }
+    for filename, label in example_labels.items():
+        path = CNI_EXAMPLES_DIR / filename
+        if path.is_file():
+            choices.append((label, str(path)))
+    for record in records:
+        client_id = str(record.get("folder_client_id") or "Client inconnu")
+        for side in ("recto", "verso"):
+            path_value = record.get(f"{side}_pdf")
+            if path_value:
+                choices.append((f"{client_id} — {side.title()} (PDF)", str(path_value)))
+    return choices
+
+
+def _preview_cni_source(path_value: str | None) -> tuple[str | None, str]:
+    """Return a direct image or a temporary PNG rendering of a selected PDF."""
+    if not path_value:
+        return None, "Sélectionnez un exemple ou un PDF détecté pour l’aperçu."
+    source = Path(path_value)
+    if not source.is_file():
+        return None, "⚠️ Le fichier sélectionné n’est plus disponible sur le disque."
+    if source.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp"}:
+        return str(source), f"**Aperçu :** `{source.name}` · image locale d’exemple"
+    if source.suffix.lower() != ".pdf":
+        return None, f"⚠️ Format non pris en charge pour l’aperçu : `{source.suffix}`"
+    preview_path = RUNS_DIR / "cni_source_previews" / f"{source.stem}-{source.stat().st_mtime_ns}.png"
+    try:
+        render_single_page_pdf(source, preview_path, dpi=150)
+    except Exception as exc:
+        LOGGER.exception("CNI source preview failed | source=%s", source)
+        return None, f"⚠️ Aperçu PDF impossible : `{type(exc).__name__}: {exc}`"
+    return str(preview_path), f"**Aperçu :** `{source.name}` · PDF rendu à 150 DPI"
+
+
 def _cni_result_table(results: list[dict[str, Any]]) -> pd.DataFrame:
     """Present CNI outcomes while labels are not yet mapped to an accuracy score."""
     rows = []
@@ -1295,6 +1343,18 @@ def build_ui() -> gr.Blocks:
                                 cni_import_zip = gr.Button("Importer le ZIP")
                                 cni_scan = gr.Button("Scanner les dossiers", variant="secondary")
                             cni_scan_status = gr.Markdown("Indiquez un dossier clients, puis scannez-le.")
+                            with gr.Accordion("Explorer les documents", open=False):
+                                cni_source_selector = gr.Dropdown(
+                                    choices=_cni_source_choices([]),
+                                    label="Document à prévisualiser",
+                                    info="Les quatre exemples locaux et les PDF détectés après un scan sont listés ici.",
+                                )
+                                cni_source_preview = gr.Image(
+                                    label="Aperçu du document source", type="filepath", height=260
+                                )
+                                cni_source_preview_info = gr.Markdown(
+                                    "Sélectionnez un exemple ou un PDF détecté pour l’aperçu."
+                                )
                         with gr.Column(scale=2, elem_id="cni-models"):
                             gr.Markdown("#### Contrôle avant lancement")
                             cni_scan_table = gr.Dataframe(headers=["Client dossier", "Recto", "Verso", "Label", "Statut", "Alertes"], label="Rapport de scan CNI", interactive=False)
@@ -1774,20 +1834,25 @@ def build_ui() -> gr.Blocks:
         def scan_cni_input(clients_root_text, labels_root_text):
             """Audit client folders and materialize external JSONB labels when present."""
             if not clients_root_text or not str(clients_root_text).strip():
-                return [], pd.DataFrame(), "❌ Indiquez le dossier clients."
+                return [], pd.DataFrame(), "❌ Indiquez le dossier clients.", gr.update(choices=_cni_source_choices([]), value=None)
             try:
                 clients_root = Path(str(clients_root_text).strip()).expanduser()
                 labels_root = Path(str(labels_root_text).strip()).expanduser() if labels_root_text and str(labels_root_text).strip() else None
                 if labels_root is not None and not labels_root.is_dir():
-                    return [], pd.DataFrame(), f"❌ Dossier labels introuvable : `{labels_root}`"
+                    return [], pd.DataFrame(), f"❌ Dossier labels introuvable : `{labels_root}`", gr.update(choices=_cni_source_choices([]), value=None)
                 records = materialize_cni_labels(scan_cni_clients(clients_root, labels_root))
                 ready = sum(record["status"] == "ready" for record in records)
                 labels = sum(record.get("label_status") == "label_materialized" for record in records)
                 LOGGER.info("CNI input scanned | clients=%d | ready=%d | labels=%d", len(records), ready, labels)
-                return records, _cni_scan_table(records), f"✅ {len(records)} client(s) détecté(s), {ready} prêt(s), {labels} label(s) converti(s)."
+                return (
+                    records,
+                    _cni_scan_table(records),
+                    f"✅ {len(records)} client(s) détecté(s), {ready} prêt(s), {labels} label(s) converti(s).",
+                    gr.update(choices=_cni_source_choices(records), value=None),
+                )
             except Exception as exc:
                 LOGGER.exception("CNI input scan failed")
-                return [], pd.DataFrame(), f"❌ Scan CNI impossible : {type(exc).__name__}: {exc}"
+                return [], pd.DataFrame(), f"❌ Scan CNI impossible : {type(exc).__name__}: {exc}", gr.update(choices=_cni_source_choices([]), value=None)
 
         def cni_result_choices(results):
             return [
@@ -2037,7 +2102,13 @@ def build_ui() -> gr.Blocks:
         cni_scan.click(
             scan_cni_input,
             inputs=[cni_clients_root, cni_labels_root],
-            outputs=[cni_clients_state, cni_scan_table, cni_scan_status],
+            outputs=[cni_clients_state, cni_scan_table, cni_scan_status, cni_source_selector],
+            queue=False,
+        )
+        cni_source_selector.change(
+            _preview_cni_source,
+            inputs=[cni_source_selector],
+            outputs=[cni_source_preview, cni_source_preview_info],
             queue=False,
         )
         cni_refresh_models.click(
