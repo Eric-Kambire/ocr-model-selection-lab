@@ -43,7 +43,6 @@ DATASET_DIR = ROOT_DIR / "dataset"
 CATALOG_PATH = DATASET_DIR / "dataset.json"
 RUNS_DIR = ROOT_DIR / "runs"
 CNI_IMPORTS_DIR = ROOT_DIR / "cni_imports"
-CNI_EXAMPLES_DIR = ROOT_DIR / "cni_test_data" / "morocco_cni_examples"
 
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
 logging.basicConfig(
@@ -681,22 +680,8 @@ def _cni_scan_table(records: list[dict[str, Any]]) -> pd.DataFrame:
 
 
 def _cni_source_choices(records: list[dict[str, Any]]) -> list[tuple[str, str]]:
-    """Return readable choices for CNI source preview without changing inputs.
-
-    The four local examples are preview-only and deliberately remain outside
-    the benchmark PDF contract. Scanned client PDFs are appended afterwards.
-    """
+    """Return readable recto/verso PDF choices after a client-folder scan."""
     choices: list[tuple[str, str]] = []
-    example_labels = {
-        "old_cin_recto.png": "Exemple — ancienne CNI · recto",
-        "old_cin_verso.png": "Exemple — ancienne CNI · verso",
-        "new_cin_recto.png": "Exemple — nouvelle CNI · recto",
-        "new_cin_verso.png": "Exemple — nouvelle CNI · verso",
-    }
-    for filename, label in example_labels.items():
-        path = CNI_EXAMPLES_DIR / filename
-        if path.is_file():
-            choices.append((label, str(path)))
     for record in records:
         client_id = str(record.get("folder_client_id") or "Client inconnu")
         for side in ("recto", "verso"):
@@ -714,7 +699,7 @@ def _preview_cni_source(path_value: str | None) -> tuple[Any, str]:
     if not source.is_file():
         return gr.update(value=None, visible=False), "⚠️ Le fichier sélectionné n’est plus disponible sur le disque."
     if source.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp"}:
-        return gr.update(value=str(source), visible=True), f"**Aperçu :** `{source.name}` · image locale d’exemple"
+        return gr.update(value=str(source), visible=True), f"**Aperçu :** `{source.name}` · image locale"
     if source.suffix.lower() != ".pdf":
         return gr.update(value=None, visible=False), f"⚠️ Format non pris en charge pour l’aperçu : `{source.suffix}`"
     preview_path = RUNS_DIR / "cni_source_previews" / f"{source.stem}-{source.stat().st_mtime_ns}.png"
@@ -1362,7 +1347,7 @@ def build_ui() -> gr.Blocks:
                                         cni_source_selector = gr.Dropdown(
                                             choices=_cni_source_choices([]),
                                             label="Document",
-                                            info="Exemples locaux et PDF détectés après un scan.",
+                                            info="Les PDF recto/verso détectés après un scan apparaissent ici.",
                                         )
                                         cni_source_preview_info = gr.Markdown("Sélectionnez un document.")
                                     with gr.Column(scale=1):
