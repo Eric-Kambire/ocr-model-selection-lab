@@ -180,6 +180,33 @@ APP_CSS = """
     min-height: calc(100vh - 310px) !important;
     padding-top: 12px !important;
 }
+#cni-prep-grid {
+    gap: 18px !important;
+    padding: 4px 0 8px;
+    border-bottom: 1px solid var(--block-border-color);
+}
+#cni-source {
+    padding-right: 18px;
+    border-right: 1px solid var(--block-border-color);
+}
+#cni-source,
+#cni-control {
+    gap: 8px !important;
+}
+.cni-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 16px;
+    padding: 2px 0 10px;
+    border-bottom: 1px solid var(--block-border-color);
+}
+.cni-header h2 { margin: 0; font-size: 22px; line-height: 1.2; }
+.cni-header span { color: var(--body-text-color-subdued); font-size: 13px; }
+.cni-section-title { display: flex; gap: 8px; align-items: baseline; margin: 0 0 2px; font-size: 15px; font-weight: 650; }
+.cni-section-title span { color: var(--body-text-color-subdued); font-size: 12px; font-weight: 500; }
+#cni-runbar { align-items: end !important; gap: 8px !important; padding-top: 2px; }
+#cni-runbar > button { min-height: 38px !important; }
 #cni-live-workspace {
     gap: 16px !important;
 }
@@ -926,52 +953,60 @@ def build_ui() -> gr.Blocks:
                         catalog_component = gr.HTML(_catalog_html(dataset))
 
             with gr.Tab("8. Benchmark CNI"):
-                gr.Markdown(
-                    "### Benchmark CNI\n\n"
-                    "Préparez la source, suivez l'extraction en direct, puis inspectez les résultats. "
-                    "Changer de vue ne modifie pas l'exécution en cours."
+                gr.HTML(
+                    "<header class='cni-header'><h2>Benchmark CNI</h2>"
+                    "<span>Extraction structurée · exécution séquentielle</span></header>"
                 )
                 with gr.Tabs(elem_id="cni-tabs"):
                     with gr.Tab("1. Préparer"):
-                        with gr.Row():
-                            with gr.Column(scale=1):
+                        with gr.Row(elem_id="cni-prep-grid"):
+                            with gr.Column(scale=1, elem_id="cni-source"):
+                                gr.HTML("<div class='cni-section-title'>01 <span>Source des documents</span></div>")
                                 cni_input_mode = gr.Radio(
                                     [("Dossier local", "folder"), ("Archive ZIP", "zip")],
                                     value="folder",
-                                    label="Mode d’ajout",
+                                    label="Source",
                                 )
                                 with gr.Group(visible=True) as cni_folder_source:
                                     cni_clients_root = gr.Textbox(label="Dossier clients", placeholder=r"D:\data\clients")
-                                    cni_labels_root = gr.Textbox(label="Dossier labels JSONB externe", placeholder=r"D:\data\labels")
+                                    cni_labels_root = gr.Textbox(label="Labels JSONB (optionnel)", placeholder=r"D:\data\labels")
                                     cni_scan = gr.Button("Scanner les dossiers")
                                 with gr.Group(visible=False) as cni_zip_source:
                                     cni_zip = gr.File(label="Archive ZIP de test", file_types=[".zip"], type="filepath")
                                     cni_import_zip = gr.Button("Importer le ZIP")
                                 cni_scan_status = gr.Markdown("Indiquez un dossier clients, puis scannez-le.")
-                                gr.Markdown("#### Documents détectés et aperçu")
-                                with gr.Row():
-                                    with gr.Column(scale=1):
-                                        cni_source_selector = gr.Dropdown(
-                                            choices=_cni_source_choices([]),
-                                            label="Document à prévisualiser",
-                                            info="Exemples locaux et PDF ajoutés après un scan.",
-                                        )
-                                        cni_source_preview_info = gr.Markdown(
-                                            "Sélectionnez un exemple ou un PDF détecté pour l’aperçu."
-                                        )
-                                    with gr.Column(scale=1):
-                                        cni_source_preview = gr.Image(label="Aperçu", type="filepath", height=220, visible=False)
-                            with gr.Column(scale=2):
-                                cni_scan_report = gr.Dataframe(headers=["Client dossier", "Recto", "Verso", "Label", "Statut", "Alertes"], label="Rapport de scan CNI", interactive=False)
-                                cni_models = gr.CheckboxGroup([choice for choice in model_choices if choice.startswith("ollama:")], label="Modèles Ollama à comparer", info="Les modèles cochés sont traités un par un.")
-                                cni_refresh_models = gr.Button("Actualiser les modèles Ollama")
-                        with gr.Accordion("⚙ Paramètres CNI", open=False):
+                                with gr.Accordion("Aperçu d’un document", open=False):
+                                    with gr.Row():
+                                        with gr.Column(scale=1):
+                                            cni_source_selector = gr.Dropdown(
+                                                choices=_cni_source_choices([]),
+                                                label="Document",
+                                                info="Exemples locaux et PDF détectés après un scan.",
+                                            )
+                                            cni_source_preview_info = gr.Markdown("Sélectionnez un document.")
+                                        with gr.Column(scale=1):
+                                            cni_source_preview = gr.Image(label="Aperçu", type="filepath", height=220, visible=False)
+                            with gr.Column(scale=2, elem_id="cni-control"):
+                                gr.HTML("<div class='cni-section-title'>02 <span>Contrôle avant lancement</span></div>")
+                                cni_models = gr.CheckboxGroup(
+                                    [choice for choice in model_choices if choice.startswith("ollama:")],
+                                    label="Modèles Ollama",
+                                    info="Les modèles sont exécutés strictement un par un.",
+                                )
+                                cni_refresh_models = gr.Button("Actualiser les modèles", size="sm")
+                                with gr.Accordion("Diagnostic des dossiers", open=False):
+                                    cni_scan_report = gr.Dataframe(
+                                        headers=["Client dossier", "Recto", "Verso", "Label", "Statut", "Alertes"],
+                                        label="Rapport de scan CNI", interactive=False,
+                                    )
+                        with gr.Accordion("Options d’exécution", open=False):
                             cni_strategy = gr.Radio([("Deux appels : recto puis verso — recommandé", "separate_calls"), ("Une image : recto en haut, verso en bas", "combined_vertical")], value="separate_calls", label="Stratégie d'envoi au modèle")
                             with gr.Row():
                                 cni_dpi = gr.Slider(150, 450, value=300, step=25, label="Résolution PDF (DPI)")
                                 cni_timeout = gr.Number(value=300, minimum=1, maximum=7200, precision=0, label="Temps maximum par appel (s)")
-                        with gr.Row():
-                            cni_launch = gr.Button("Lancer le benchmark CNI", variant="primary")
+                        with gr.Row(elem_id="cni-runbar"):
+                            gr.Markdown("**03 · Lancement**\n\nLe suivi détaillé apparaît dans la vue suivante.")
+                            cni_launch = gr.Button("Lancer", variant="primary")
                             cni_stop = gr.Button("Annuler", variant="stop")
                     with gr.Tab("2. Suivi en direct"):
                         cni_run_status = gr.Textbox(label="État CNI", value="Prêt.", interactive=False)
