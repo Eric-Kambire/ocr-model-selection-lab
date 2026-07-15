@@ -118,6 +118,71 @@ APP_CSS = """
     background: var(--body-background-fill) !important;
     color: var(--body-text-color) !important;
 }
+#workspace-switcher-title {
+    margin: 4px 0 -4px !important;
+}
+#workspace-switcher-title h2 {
+    margin: 0 !important;
+    font-size: 17px !important;
+}
+#workspace-switcher-title p {
+    margin: 3px 0 0 !important;
+    color: var(--body-text-color-subdued) !important;
+    font-size: 13px !important;
+}
+#app-navigation {
+    margin: 0 !important;
+    padding: 8px !important;
+    border: 1px solid var(--block-border-color) !important;
+    border-radius: 14px !important;
+    background: var(--body-background-fill) !important;
+}
+#app-navigation > [data-testid="block-info"] {
+    display: none !important;
+}
+#app-navigation .wrap {
+    display: grid !important;
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    gap: 8px !important;
+}
+#app-navigation label {
+    margin: 0 !important;
+    min-height: 58px !important;
+    padding: 12px 16px !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    gap: 9px !important;
+    border: 1px solid var(--block-border-color) !important;
+    border-radius: 10px !important;
+    background: var(--background-fill-secondary) !important;
+    cursor: pointer !important;
+    user-select: none !important;
+    transition: background-color .14s ease, border-color .14s ease, transform .14s ease !important;
+}
+#app-navigation label.selected {
+    border-color: rgba(245, 137, 43, .78) !important;
+    background: rgba(245, 137, 43, .15) !important;
+    font-weight: 700 !important;
+}
+#app-navigation label:hover {
+    border-color: rgba(245, 137, 43, .52) !important;
+    transform: translateY(-1px) !important;
+}
+#app-navigation label span {
+    font-size: 14px !important;
+    font-weight: 650 !important;
+}
+#app-navigation label input {
+    width: 13px !important;
+    height: 13px !important;
+    margin: 0 !important;
+    accent-color: #f5892b !important;
+}
+#app-navigation label:focus-visible {
+    outline: 2px solid #f5892b !important;
+    outline-offset: 2px !important;
+}
 #page-shell {
     min-height: calc(100vh - 190px) !important;
     overflow: visible !important;
@@ -140,7 +205,7 @@ APP_CSS = """
 }
 #page-navigation .wrap {
     display: grid !important;
-    grid-template-columns: repeat(8, minmax(0, 1fr)) !important;
+    grid-template-columns: repeat(7, minmax(0, 1fr)) !important;
     gap: 6px !important;
 }
 #page-navigation label {
@@ -444,6 +509,9 @@ APP_CSS = """
     #page-navigation .wrap {
         grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
     }
+    #app-navigation .wrap {
+        grid-template-columns: 1fr !important;
+    }
     #cni-navigation .wrap {
         grid-template-columns: 1fr !important;
     }
@@ -482,7 +550,7 @@ APP_JS = r"""
 () => {
   const pageIds = [
     "page-benchmark", "page-settings", "page-charts", "page-details",
-    "page-add-data", "page-metrics", "page-dataset", "page-cni"
+    "page-add-data", "page-metrics", "page-dataset"
   ];
   const installRouter = (selector, targetIds, initialIndex = 0) => {
     const navigation = document.querySelector(selector);
@@ -553,11 +621,85 @@ APP_JS = r"""
     activate(initialIndex);
     return true;
   };
+  const installWorkspaceSelector = () => {
+    const navigation = document.querySelector("#app-navigation");
+    const classicNavigation = document.querySelector("#page-navigation");
+    const cniPage = document.getElementById("page-cni");
+    if (!navigation || !classicNavigation || !cniPage || navigation.dataset.clientRouterInstalled) {
+      return Boolean(navigation && classicNavigation && cniPage);
+    }
+    navigation.dataset.clientRouterInstalled = "true";
+    const choices = () => Array.from(navigation.querySelectorAll("label"));
+    const showWorkspace = (index, notifyGradio = false) => {
+      const labels = choices();
+      const selectedIndex = Math.max(0, Math.min(index, labels.length - 1));
+      const showCni = selectedIndex === 1;
+      const selectedClassicIndex = Math.max(0, Array.from(classicNavigation.querySelectorAll("label")).findIndex((label) => label.classList.contains("selected")));
+      classicNavigation.style.setProperty("display", showCni ? "none" : "block", "important");
+      pageIds.forEach((id, position) => {
+        const page = document.getElementById(id);
+        if (page) page.style.setProperty("display", !showCni && position === selectedClassicIndex ? "flex" : "none", "important");
+      });
+      cniPage.style.setProperty("display", showCni ? "flex" : "none", "important");
+      labels.forEach((label, position) => {
+        const input = label.querySelector("input");
+        const selected = position === selectedIndex;
+        label.classList.toggle("selected", selected);
+        label.setAttribute("role", "tab");
+        label.setAttribute("aria-selected", String(selected));
+        label.tabIndex = selected ? 0 : -1;
+        if (input) {
+          const changed = input.checked !== selected;
+          input.checked = selected;
+          input.setAttribute("aria-checked", String(selected));
+          if (notifyGradio && selected && changed) {
+            input.dispatchEvent(new Event("input", { bubbles: true }));
+            input.dispatchEvent(new Event("change", { bubbles: true }));
+          }
+        }
+      });
+      return selectedIndex;
+    };
+    const selectLabel = (label) => {
+      const index = choices().indexOf(label);
+      if (index < 0) return;
+      const selectedIndex = showWorkspace(index, true);
+      choices()[selectedIndex]?.focus();
+    };
+    navigation.setAttribute("role", "tablist");
+    navigation.addEventListener("click", (event) => {
+      const label = event.target.closest("label");
+      if (!label || !navigation.contains(label)) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      selectLabel(label);
+    }, true);
+    navigation.addEventListener("keydown", (event) => {
+      const label = event.target.closest("label");
+      if (!label || !navigation.contains(label)) return;
+      const labels = choices();
+      const current = labels.indexOf(label);
+      if (current < 0) return;
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        selectLabel(label);
+      } else if (["ArrowRight", "ArrowDown", "ArrowLeft", "ArrowUp", "Home", "End"].includes(event.key)) {
+        event.preventDefault();
+        const next = event.key === "Home" ? 0 : event.key === "End" ? labels.length - 1 :
+          (current + (event.key === "ArrowRight" || event.key === "ArrowDown" ? 1 : -1) + labels.length) % labels.length;
+        const selectedIndex = showWorkspace(next, true);
+        labels[selectedIndex]?.focus();
+      }
+    });
+    showWorkspace(0);
+    return true;
+  };
   const install = () => {
     const cniPageIds = ["cni-step-setup", "cni-step-live", "cni-step-results"];
     const mainReady = installRouter("#page-navigation", pageIds);
     installRouter("#cni-navigation", cniPageIds);
-    return mainReady;
+    const workspaceReady = installWorkspaceSelector();
+    return mainReady && workspaceReady;
   };
   if (!install()) {
     const observer = new MutationObserver(() => { if (install()) observer.disconnect(); });
@@ -1064,15 +1206,28 @@ def build_ui() -> gr.Blocks:
         cni_clients_state = gr.State([])
         cni_results_state = gr.State([])
 
-        # Gradio Tabs lazy-mount inactive pages. With this dashboard, mounting
-        # an inactive page could freeze the browser. The pages remain mounted
-        # and a lightweight selector only changes their visibility.
+        # Deux espaces séparés : le benchmark classique et le flux CNI n'ont
+        # pas les mêmes données, vues ni paramètres. Cela évite de coupler les
+        # layouts et rend le débogage du module CNI plus direct.
+        gr.HTML(
+            "<div id='workspace-switcher-title'><h2>Choisir un espace de travail</h2>"
+            "<p>Sélectionnez le benchmark adapté à votre type de document.</p></div>"
+        )
+        workspace_navigation = gr.Radio(
+            ["1. Benchmark classique", "2. Benchmark CNI"],
+            value="1. Benchmark classique",
+            label="Espace de travail",
+            elem_id="app-navigation",
+        )
+
+        # Les pages restent montées ; le routeur navigateur change uniquement
+        # leur visibilité. Ainsi, un benchmark actif ne fige pas la navigation.
         with gr.Group(elem_id="page-shell"):
             page_navigation = gr.Radio(
                 [
                     "1. Benchmark", "2. Paramètres", "3. Graphiques",
                     "4. Résultats détaillés", "5. Ajouter des données",
-                    "6. Comprendre les métriques", "7. Dataset", "8. Benchmark CNI",
+                    "6. Comprendre les métriques", "7. Dataset",
                 ],
                 value="1. Benchmark",
                 label="Navigation",
