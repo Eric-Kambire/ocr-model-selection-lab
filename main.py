@@ -1376,6 +1376,11 @@ def build_ui() -> gr.Blocks:
                             cni_unload = gr.Checkbox(value=True, label="Décharger le modèle après chaque appel")
                     with gr.Row(elem_id="cni-runbar"):
                         gr.Markdown("**03 · Lancement**\n\nLe suivi détaillé apparaît dans la vue suivante.")
+                        cni_continue_without_label = gr.Checkbox(
+                            value=False,
+                            label="Continuer sans labels",
+                            info="Extraction et mesures techniques uniquement ; aucun score de comparaison.",
+                        )
                         cni_launch = gr.Button("Lancer", variant="primary")
                         cni_stop = gr.Button("Annuler", variant="stop")
                 with gr.Column(elem_id="cni-step-live"):
@@ -1852,11 +1857,15 @@ def build_ui() -> gr.Blocks:
                 records = materialize_cni_labels(scan_cni_clients(clients_root, labels_root))
                 ready = sum(record["status"] == "ready" for record in records)
                 labels = sum(record.get("label_status") == "label_materialized" for record in records)
+                unlabeled = sum(record["status"] == "ready" and record.get("label_status") != "label_materialized" for record in records)
                 LOGGER.info("CNI input scanned | clients=%d | ready=%d | labels=%d", len(records), ready, labels)
                 return (
                     records,
                     _cni_scan_table(records),
-                    f"✅ {len(records)} client(s) détecté(s), {ready} prêt(s), {labels} label(s) converti(s).",
+                    (
+                        f"✅ {len(records)} client(s) détecté(s), {ready} prêt(s), {labels} label(s) converti(s)."
+                        + (" Cochez **Continuer sans labels** pour lancer les PDF non notés." if unlabeled else "")
+                    ),
                     gr.update(choices=_cni_source_choices(records), value=None),
                 )
             except Exception as exc:
@@ -1904,7 +1913,7 @@ def build_ui() -> gr.Blocks:
                 _read_json_if_available(result.get("global_json_path")),
             )
 
-        def on_cni_run(model_specs, client_records, strategy, dpi, timeout, threads, unload):
+        def on_cni_run(model_specs, client_records, strategy, dpi, timeout, threads, unload, continue_without_label):
             """Diffuse les événements CNI en live, un modèle et une face à la fois."""
             empty = empty_figure()
             if not model_specs:
@@ -1912,6 +1921,19 @@ def build_ui() -> gr.Blocks:
                 return
             if not client_records:
                 yield "❌ Scannez d'abord un dossier clients valide.", 0, None, "", [], pd.DataFrame(), gr.update(choices=[]), empty, empty
+                return
+            # Les PDFs valides restent exploitables sans labels. La confirmation
+            # explicite évite seulement de lancer par erreur un benchmark non noté.
+            unlabeled = [
+                record for record in client_records
+                if record.get("status") == "ready" and record.get("label_status") != "label_materialized"
+            ]
+            if unlabeled and not continue_without_label:
+                yield (
+                    f"⚠️ {len(unlabeled)} client(s) n'ont pas de label exploitable. "
+                    "Cochez **Continuer sans labels** pour lancer l'extraction non notée.",
+                    0, None, "", [], pd.DataFrame(), gr.update(choices=[]), empty, empty,
+                )
                 return
             # Le même fichier de champs pilote le prompt, le parsing et les
             # futurs comparateurs ; aucun champ n'est dupliqué ici en dur.
@@ -2150,6 +2172,7 @@ def build_ui() -> gr.Blocks:
                 cni_timeout,
                 cni_cpu_threads,
                 cni_unload,
+                cni_continue_without_label,
             ],
             outputs=[
                 cni_run_status,
