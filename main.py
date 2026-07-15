@@ -224,6 +224,83 @@ APP_CSS = """
 #cni-workspace {
     gap: 14px !important;
 }
+#page-cni {
+    gap: 14px !important;
+}
+.cni-intro {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 24px;
+    align-items: end;
+    padding: 4px 0 14px;
+    border-bottom: 1px solid var(--block-border-color);
+}
+.cni-intro h2 {
+    margin: 0 0 4px;
+    font-size: 24px;
+    line-height: 1.15;
+}
+.cni-intro p {
+    max-width: 720px;
+    margin: 0;
+    color: var(--body-text-color-subdued);
+}
+.cni-flow {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    color: var(--body-text-color-subdued);
+    font-size: 12px;
+    white-space: nowrap;
+}
+.cni-flow span {
+    padding: 5px 8px;
+    border: 1px solid var(--block-border-color);
+    border-radius: 999px;
+}
+#cni-setup {
+    align-items: stretch !important;
+    gap: 22px !important;
+    padding-bottom: 4px;
+    border-bottom: 1px solid var(--block-border-color);
+}
+#cni-source {
+    padding-right: 22px;
+    border-right: 1px solid var(--block-border-color);
+}
+#cni-models .wrap {
+    max-height: 118px !important;
+    overflow-y: auto !important;
+    scrollbar-width: thin;
+}
+#cni-actions {
+    align-items: end !important;
+    gap: 10px !important;
+}
+#cni-navigation {
+    margin: 0 !important;
+}
+#cni-navigation .wrap {
+    gap: 5px !important;
+}
+#cni-navigation label {
+    min-height: 36px !important;
+    padding: 7px 12px !important;
+    border: 1px solid transparent !important;
+    border-radius: 8px !important;
+}
+#cni-navigation label.selected {
+    border-color: var(--block-border-color) !important;
+    background: var(--button-secondary-background-fill) !important;
+    font-weight: 600;
+}
+#cni-step-live,
+#cni-step-results {
+    display: none !important;
+}
+#cni-run-status textarea {
+    font-weight: 600 !important;
+}
 #cni-live-image,
 #cni-results-table {
     min-height: 280px !important;
@@ -307,6 +384,20 @@ APP_CSS = """
     #page-benchmark > .row {
         gap: 14px !important;
     }
+    .cni-intro {
+        grid-template-columns: 1fr;
+        gap: 10px;
+    }
+    .cni-flow {
+        flex-wrap: wrap;
+        white-space: normal;
+    }
+    #cni-source {
+        padding-right: 0;
+        padding-bottom: 14px;
+        border-right: 0;
+        border-bottom: 1px solid var(--block-border-color);
+    }
 }
 """
 
@@ -355,6 +446,37 @@ APP_JS = r"""
       event.stopImmediatePropagation();
       activate(index);
     }, true);
+    const cniNavigation = document.querySelector("#cni-navigation");
+    const cniPageIds = ["cni-step-setup", "cni-step-live", "cni-step-results"];
+    if (cniNavigation && !cniNavigation.dataset.clientRouterInstalled) {
+      cniNavigation.dataset.clientRouterInstalled = "true";
+      const activateCni = (index) => {
+        cniPageIds.forEach((id, position) => {
+          const page = document.getElementById(id);
+          if (page) page.style.setProperty("display", position === index ? "flex" : "none", "important");
+        });
+        cniNavigation.querySelectorAll("label").forEach((label, position) => {
+          const input = label.querySelector("input");
+          const selected = position === index;
+          if (input) {
+            input.checked = selected;
+            input.setAttribute("aria-checked", String(selected));
+          }
+          label.classList.toggle("selected", selected);
+        });
+      };
+      cniNavigation.addEventListener("click", (event) => {
+        const label = event.target.closest("label");
+        if (!label || !cniNavigation.contains(label)) return;
+        const choices = Array.from(cniNavigation.querySelectorAll("label"));
+        const index = choices.indexOf(label);
+        if (index < 0) return;
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        activateCni(index);
+      }, true);
+      activateCni(0);
+    }
     activate(0);
     return true;
   };
@@ -1149,100 +1271,72 @@ def build_ui() -> gr.Blocks:
                         catalog_component = gr.HTML(_catalog_html(dataset))
 
             with gr.Column(visible=True, elem_id="page-cni") as cni_page:
-                gr.Markdown(
-                    "### Benchmark CNI\n\n"
-                    "Choisissez un dossier local ou une archive ZIP. Le nom du dossier client "
-                    "sert de clé de label ; les modèles lisent le recto et le verso séquentiellement."
+                gr.HTML(
+                    "<section class='cni-intro'>"
+                    "<div><h2>Benchmark CNI</h2>"
+                    "<p>Préparez les dossiers, choisissez les modèles, puis inspectez chaque face et son JSON en direct.</p></div>"
+                    "<div class='cni-flow'><span>1 · Source</span><span>2 · Extraction</span><span>3 · Résultats</span></div>"
+                    "</section>"
                 )
-                with gr.Row(elem_id="cni-workspace"):
-                    with gr.Column(scale=1):
-                        cni_clients_root = gr.Textbox(
-                            label="Dossier clients",
-                            placeholder=r"D:\data\clients",
-                            info="Un sous-dossier par client. Son nom est l'identifiant canonique.",
-                        )
-                        cni_labels_root = gr.Textbox(
-                            label="Dossier labels JSONB externe",
-                            placeholder=r"D:\data\labels",
-                            info="Cherche <id_dossier>.jsonb ; le JSON converti sera ajouté au dossier client.",
-                        )
-                        cni_zip = gr.File(
-                            label="Ou importer une archive ZIP de test",
-                            file_types=[".zip"],
-                            type="filepath",
-                        )
+                cni_navigation = gr.Radio(
+                    ["1. Préparer", "2. Suivi en direct", "3. Résultats"],
+                    value="1. Préparer",
+                    label="Espace CNI",
+                    elem_id="cni-navigation",
+                )
+                with gr.Column(elem_id="cni-step-setup"):
+                    with gr.Row(elem_id="cni-setup"):
+                        with gr.Column(scale=1, elem_id="cni-source"):
+                            gr.Markdown("#### Source des documents")
+                            cni_clients_root = gr.Textbox(label="Dossier clients", placeholder=r"D:\data\clients", info="Un sous-dossier par client. Son nom est l'identifiant canonique.")
+                            cni_labels_root = gr.Textbox(label="Dossier labels JSONB externe", placeholder=r"D:\data\labels", info="Cherche <id_dossier>.jsonb ; le JSON converti sera ajouté au dossier client.")
+                            cni_zip = gr.File(label="Ou importer une archive ZIP de test", file_types=[".zip"], type="filepath")
+                            with gr.Row():
+                                cni_import_zip = gr.Button("Importer le ZIP")
+                                cni_scan = gr.Button("Scanner les dossiers", variant="secondary")
+                            cni_scan_status = gr.Markdown("Indiquez un dossier clients, puis scannez-le.")
+                        with gr.Column(scale=2, elem_id="cni-models"):
+                            gr.Markdown("#### Contrôle avant lancement")
+                            cni_scan_table = gr.Dataframe(headers=["Client dossier", "Recto", "Verso", "Label", "Statut", "Alertes"], label="Rapport de scan CNI", interactive=False)
+                            cni_models = gr.CheckboxGroup([choice for choice in model_choices if choice.startswith("ollama:")], label="Modèles Ollama à comparer", info="Plusieurs modèles peuvent être cochés ; ils restent exécutés un à un.")
+                            cni_refresh_models = gr.Button("Actualiser les modèles Ollama")
+                    with gr.Accordion("⚙ Paramètres CNI", open=False, elem_id="cni-settings"):
                         with gr.Row():
-                            cni_import_zip = gr.Button("Importer le ZIP")
-                            cni_scan = gr.Button("Scanner les dossiers", variant="secondary")
-                        cni_scan_status = gr.Markdown("Indiquez un dossier clients, puis scannez-le.")
-                    with gr.Column(scale=2):
-                        cni_scan_table = gr.Dataframe(
-                            headers=["Client dossier", "Recto", "Verso", "Label", "Statut", "Alertes"],
-                            label="Rapport de scan CNI",
-                            interactive=False,
-                        )
-                        cni_models = gr.CheckboxGroup(
-                            [choice for choice in model_choices if choice.startswith("ollama:")],
-                            label="Modèles Ollama à comparer",
-                            info="Plusieurs modèles peuvent être cochés ; ils restent exécutés un à un.",
-                        )
-                        cni_refresh_models = gr.Button("Actualiser les modèles Ollama")
-                with gr.Accordion("⚙ Paramètres CNI", open=False, elem_id="cni-settings"):
-                    with gr.Row():
-                        cni_strategy = gr.Radio(
-                            [
-                                ("Deux appels : recto puis verso — recommandé", "separate_calls"),
-                                ("Une image : recto en haut, verso en bas", "combined_vertical"),
-                            ],
-                            value="separate_calls",
-                            label="Stratégie d'envoi au modèle",
-                        )
-                        cni_dpi = gr.Slider(150, 450, value=300, step=25, label="Résolution PDF (DPI)")
-                    with gr.Row():
-                        cni_timeout = gr.Number(value=300, minimum=1, maximum=7200, precision=0, label="Temps maximum par appel (s)")
-                        cni_cpu_threads = gr.Number(
-                            value=max(1, min(8, os.cpu_count() or 1)),
-                            minimum=1,
-                            maximum=max(1, os.cpu_count() or 1),
-                            precision=0,
-                            label="Threads CPU Ollama",
-                        )
-                        cni_unload = gr.Checkbox(
-                            value=True,
-                            label="Décharger le modèle après chaque appel",
-                        )
-                with gr.Row():
-                    cni_launch = gr.Button("Lancer le benchmark CNI", variant="primary")
-                    cni_stop = gr.Button("Annuler", variant="stop")
-                cni_run_status = gr.Textbox(label="État CNI", value="Prêt.", interactive=False)
-                cni_progress = gr.Slider(0, 100, value=0, step=0.1, label="Progression CNI (%)", interactive=False)
-                with gr.Row(elem_id="cni-workspace"):
-                    cni_live_image = gr.Image(label="Face en cours", type="filepath", height=330, elem_id="cni-live-image")
-                    cni_live_result = gr.Markdown("Les JSON et mesures apparaîtront après le premier appel.")
-                with gr.Accordion("Résultats CNI et filtres", open=True):
-                    with gr.Row():
-                        cni_accuracy_min = gr.Slider(0, 100, value=0, step=1, label="Accuracy minimale (%)")
-                        cni_accuracy_max = gr.Slider(0, 100, value=100, step=1, label="Accuracy maximale (%)")
-                        cni_include_unscored = gr.Checkbox(value=True, label="Inclure les résultats non notés")
-                        cni_apply_filters = gr.Button("Appliquer les filtres")
-                    cni_results_table = gr.Dataframe(
-                        headers=["Client", "Modèle", "Statut", "Accuracy", "Label", "CIN recto", "CIN verso", "CIN cohérent", "Latence (s)"],
-                        label="Résultats CNI filtrés",
-                        interactive=False,
-                        elem_id="cni-results-table",
-                    )
-                    with gr.Row():
-                        cni_accuracy_plot = gr.Plot(value=cni_accuracy_chart([]), elem_classes=["dashboard-chart"])
-                        cni_latency_plot = gr.Plot(value=cni_latency_chart([]), elem_classes=["dashboard-chart"])
-                    cni_result_selector = gr.Dropdown(label="Client/modèle à inspecter", choices=[])
-                    with gr.Row():
-                        cni_recto_preview = gr.Image(label="Recto traité", type="filepath", height=300)
-                        cni_verso_preview = gr.Image(label="Verso traité", type="filepath", height=300)
-                    with gr.Row():
-                        cni_label_json = gr.JSON(label="Label attendu (JSON converti)")
-                        cni_recto_json = gr.JSON(label="Extraction recto")
-                        cni_verso_json = gr.JSON(label="Extraction verso")
-                    cni_global_json = gr.JSON(label="Fusion globale")
+                            cni_strategy = gr.Radio([("Deux appels : recto puis verso — recommandé", "separate_calls"), ("Une image : recto en haut, verso en bas", "combined_vertical")], value="separate_calls", label="Stratégie d'envoi au modèle")
+                            cni_dpi = gr.Slider(150, 450, value=300, step=25, label="Résolution PDF (DPI)")
+                        with gr.Row():
+                            cni_timeout = gr.Number(value=300, minimum=1, maximum=7200, precision=0, label="Temps maximum par appel (s)")
+                            cni_cpu_threads = gr.Number(value=max(1, min(8, os.cpu_count() or 1)), minimum=1, maximum=max(1, os.cpu_count() or 1), precision=0, label="Threads CPU Ollama")
+                            cni_unload = gr.Checkbox(value=True, label="Décharger le modèle après chaque appel")
+                    with gr.Row(elem_id="cni-actions"):
+                        cni_launch = gr.Button("Lancer le benchmark CNI", variant="primary")
+                        cni_stop = gr.Button("Annuler", variant="stop")
+                with gr.Column(elem_id="cni-step-live"):
+                    cni_run_status = gr.Textbox(label="État de l'exécution", value="Prêt.", interactive=False, elem_id="cni-run-status")
+                    cni_progress = gr.Slider(0, 100, value=0, step=0.1, label="Progression CNI (%)", interactive=False)
+                    with gr.Row(elem_id="cni-workspace"):
+                        cni_live_image = gr.Image(label="Face en cours", type="filepath", height=430, elem_id="cni-live-image")
+                        cni_live_result = gr.Markdown("Les JSON et mesures apparaîtront après le premier appel.")
+                with gr.Column(elem_id="cni-step-results"):
+                    with gr.Accordion("Résultats, filtres et inspection", open=True, elem_id="cni-results"):
+                        with gr.Row():
+                            cni_accuracy_min = gr.Slider(0, 100, value=0, step=1, label="Accuracy minimale (%)")
+                            cni_accuracy_max = gr.Slider(0, 100, value=100, step=1, label="Accuracy maximale (%)")
+                            cni_include_unscored = gr.Checkbox(value=True, label="Inclure les résultats non notés")
+                            cni_apply_filters = gr.Button("Appliquer les filtres")
+                        cni_results_table = gr.Dataframe(headers=["Client", "Modèle", "Statut", "Accuracy", "Label", "CIN recto", "CIN verso", "CIN cohérent", "Latence (s)"], label="Résultats CNI filtrés", interactive=False, elem_id="cni-results-table")
+                        with gr.Row():
+                            cni_accuracy_plot = gr.Plot(value=cni_accuracy_chart([]), elem_classes=["dashboard-chart"])
+                            cni_latency_plot = gr.Plot(value=cni_latency_chart([]), elem_classes=["dashboard-chart"])
+                        cni_result_selector = gr.Dropdown(label="Client/modèle à inspecter", choices=[])
+                        with gr.Row():
+                            cni_recto_preview = gr.Image(label="Recto traité", type="filepath", height=300)
+                            cni_verso_preview = gr.Image(label="Verso traité", type="filepath", height=300)
+                        with gr.Row():
+                            cni_label_json = gr.JSON(label="Label attendu (JSON converti)")
+                            cni_recto_json = gr.JSON(label="Extraction recto")
+                            cni_verso_json = gr.JSON(label="Extraction verso")
+                        cni_global_json = gr.JSON(label="Fusion globale")
 
         def on_prepare(
             model_specs,
