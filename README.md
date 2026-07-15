@@ -20,6 +20,24 @@ dataset/                        # catalogue et images, jamais de secret
 runs/<run_id>/                  # artefacts d'une exécution, ignorés par Git
 ```
 
+### Sous-système CNI marocaines
+
+Le flux CNI n’est pas concentré dans un seul gros fichier :
+
+```text
+ocr_benchmark/cni_ingestion.py  # scan client, import ZIP, JSONB externe → JSON local
+ocr_benchmark/cni_images.py     # PDF une page → PNG, crop CNI, image recto/verso
+ocr_benchmark/cni_schema.py     # champs configurables, prompt, parsing et fusion JSON
+ocr_benchmark/cni_runner.py     # exécution séquentielle, live events, artefacts de run
+ocr_benchmark/cni.py            # façade d'import compatible pour le reste de l'application
+config/cni_fields.json          # champs d'extraction modifiables sans changer le code
+docs/CNI_BENCHMARK_IMPLEMENTATION_PLAN.md # contrat de données et décisions métier
+```
+
+Chaque module a une seule responsabilité. Un problème de fichier, de crop,
+de réponse JSON ou d’exécution peut donc être retrouvé immédiatement dans le
+bon module, sans modifier l’interface ni les imports existants.
+
 Le flux d'une image est : `dataset → registry → adapter → runner → evaluator →
 reporting/UI`. Le runner charge un seul modèle à la fois, traite les documents,
 appelle `close()` dans un bloc `finally`, puis passe au modèle suivant. Cette

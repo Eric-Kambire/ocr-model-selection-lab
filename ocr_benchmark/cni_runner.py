@@ -15,16 +15,15 @@ import uuid
 from pathlib import Path
 from typing import Any, Iterator
 
-from .cni import (
+# The runner orchestrates focused modules, rather than owning their details.
+from .cni_images import build_vertical_cni_composite, crop_cni_from_a4, render_single_page_pdf
+from .cni_ingestion import write_cni_json
+from .cni_schema import (
     build_cni_global_json,
     build_cni_prompt,
     build_combined_cni_prompt,
-    build_vertical_cni_composite,
-    crop_cni_from_a4,
     parse_cni_json_response,
     parse_combined_cni_json_response,
-    render_single_page_pdf,
-    write_cni_json,
 )
 from .domain import InferenceResult, InferenceStatus
 from .registry import ModelRegistry
