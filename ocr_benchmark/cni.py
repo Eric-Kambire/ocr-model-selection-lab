@@ -1,15 +1,12 @@
-"""Public compatibility facade for the Moroccan CNI benchmark helpers.
+"""Façade publique des outils de benchmark des CNI marocaines.
 
-Responsibilities live in focused modules:
-
-* :mod:`ocr_benchmark.cni_ingestion` — folders, external JSONB labels and ZIPs;
-* :mod:`ocr_benchmark.cni_images` — one-page PDF rendering and card crops;
-* :mod:`ocr_benchmark.cni_schema` — fields, prompts, response parsing and merge.
-
-Existing callers can keep importing from ``ocr_benchmark.cni``. New code may
-import the focused module directly when that makes its dependency clearer.
+Ce fichier conserve les anciens imports stables. La logique est séparée dans
+des modules spécialisés afin de pouvoir déboguer données, images, contrat JSON
+et exécution indépendamment.
 """
 
+# Façade de compatibilité : l'interface peut importer ``cni`` sans dépendre du
+# rangement interne des modules spécialisés.
 from .cni_images import build_vertical_cni_composite, crop_cni_from_a4, render_single_page_pdf
 from .cni_ingestion import import_cni_zip, materialize_cni_labels, scan_cni_clients, write_cni_json
 from .cni_schema import (

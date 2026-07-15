@@ -1,7 +1,7 @@
-"""CNI input discovery, external-label materialisation and safe ZIP import.
+"""Découverte des entrées CNI, import des labels JSONB et ZIP sécurisé.
 
-The folder name is the only canonical client identifier. A PDF prefix is kept
-as document metadata, but is deliberately never used to find a label.
+Le nom du dossier est l'identifiant client canonique. Le préfixe du PDF reste
+une métadonnée et ne sert jamais à rechercher un label.
 """
 
 from __future__ import annotations
@@ -17,23 +17,15 @@ from typing import Any
 
 LOGGER = logging.getLogger(__name__)
 _SIDE_FILENAME = {
-    # ``document_id`` may differ from the parent folder/client ID. Keeping the
-    # two concepts separate prevents a scanner-generated filename from breaking
-    # the label association.
+    # ``document_id`` peut différer de l'ID du dossier client. Les garder
+    # séparés évite qu'un nom généré par le scanner casse le rapprochement label.
     "recto": re.compile(r"^(?P<document_id>.+)_cin_recto\.pdf$", re.IGNORECASE),
     "verso": re.compile(r"^(?P<document_id>.+)_cin_verso\.pdf$", re.IGNORECASE),
 }
 
 
 def scan_cni_clients(clients_root: Path, labels_root: Path | None = None) -> list[dict[str, Any]]:
-    """Build one readiness record per client subfolder.
-
-    ``status`` concerns only input validity (one recto and one verso PDF).
-    ``label_status`` is separate so an OCR run can proceed even when the future
-    accuracy score is unavailable. The returned records are plain dictionaries
-    on purpose: they can be rendered by Gradio and persisted without a custom
-    serializer.
-    """
+    """Construit un diagnostic d'entrée pour chaque sous-dossier client."""
     if not clients_root.is_dir():
         raise FileNotFoundError(f"Clients folder not found: {clients_root}")
     records: list[dict[str, Any]] = []
@@ -46,8 +38,8 @@ def scan_cni_clients(clients_root: Path, labels_root: Path | None = None) -> lis
             "label_status": "label_root_not_set" if labels_root is None else "label_not_found",
             "status": "ready", "issues": [],
         }
-        # Only the two strict PDF patterns belong to the benchmark contract;
-        # source PNGs or arbitrary files may coexist in the client directory.
+        # Seuls les deux PDF respectant le contrat comptent. Les PNG source ou
+        # autres fichiers peuvent rester dans le dossier sans gêner le scan.
         for candidate in folder.iterdir():
             if not candidate.is_file():
                 continue
@@ -60,6 +52,8 @@ def scan_cni_clients(clients_root: Path, labels_root: Path | None = None) -> lis
                 else:
                     record[f"{side}_pdf"] = str(candidate)
                     record[f"{side}_document_id"] = match.group("document_id")
+        # L'absence d'une face invalide l'entrée, sans effacer les informations
+        # déjà relevées : le tableau de diagnostic reste donc exploitable.
         for side in ("recto", "verso"):
             if record[f"{side}_pdf"] is None:
                 record["issues"].append(f"missing_{side}_pdf")
@@ -75,13 +69,7 @@ def scan_cni_clients(clients_root: Path, labels_root: Path | None = None) -> lis
 
 
 def materialize_cni_labels(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Copy valid external UTF-8 JSONB text into the matching client folder.
-
-    The current integration assumes ``.jsonb`` contains text JSON. It parses
-    before replacing the target so a corrupt label never destroys a previously
-    materialised JSON file. Missing or malformed labels remain explicit status
-    values rather than silent empty dictionaries.
-    """
+    """Copie un JSONB texte UTF-8 valide dans le dossier client correspondant."""
     updated: list[dict[str, Any]] = []
     for original in records:
         record = dict(original)
@@ -91,10 +79,14 @@ def materialize_cni_labels(records: list[dict[str, Any]]) -> list[dict[str, Any]
             continue
         source, target = Path(source_text), Path(target_text)
         if not source.is_file():
+            # Un label manquant n'empêche pas l'extraction OCR ; il rend
+            # simplement l'évaluation d'accuracy indisponible pour ce client.
             record["label_status"] = "label_not_found"
             updated.append(record)
             continue
         try:
+            # Parser avant l'écriture protège un JSON déjà matérialisé contre
+            # un nouveau fichier JSONB illisible ou incomplet.
             value = json.loads(source.read_text(encoding="utf-8"))
             if not isinstance(value, (dict, list)):
                 raise ValueError("JSON label must be an object or array")
@@ -110,12 +102,7 @@ def materialize_cni_labels(records: list[dict[str, Any]]) -> list[dict[str, Any]
 
 
 def import_cni_zip(zip_path: Path, imports_root: Path) -> dict[str, Any]:
-    """Extract a portable test archive below ``imports_root``.
-
-    Archives are user input. Absolute paths and ``..`` components are rejected
-    before writing anything, which prevents ZIP-slip writes outside the local
-    import directory. A failed import removes its partial destination.
-    """
+    """Extrait une archive de test dans le répertoire local d'import."""
     if not zip_path.is_file() or zip_path.suffix.lower() != ".zip":
         raise ValueError("A .zip archive is required for CNI import.")
     imports_root.mkdir(parents=True, exist_ok=True)
@@ -126,6 +113,8 @@ def import_cni_zip(zip_path: Path, imports_root: Path) -> dict[str, Any]:
         with zipfile.ZipFile(zip_path) as archive:
             for member in archive.infolist():
                 relative = PurePosixPath(member.filename)
+                # Protection ZIP-slip : une archive ne peut pas écrire hors du
+                # dossier d'import avec un chemin absolu ou contenant ``..``.
                 if relative.is_absolute() or ".." in relative.parts:
                     raise ValueError(f"Unsafe ZIP path: {member.filename}")
                 if member.is_dir():
@@ -136,6 +125,8 @@ def import_cni_zip(zip_path: Path, imports_root: Path) -> dict[str, Any]:
                     shutil.copyfileobj(source, output)
                 extracted += 1
     except Exception:
+        # Ne jamais laisser un import partiel qui serait ensuite pris pour un
+        # jeu de test valide par le scanner.
         shutil.rmtree(destination, ignore_errors=True)
         raise
     LOGGER.info("CNI ZIP imported | archive=%s | destination=%s | files=%d", zip_path, destination, extracted)
@@ -143,13 +134,14 @@ def import_cni_zip(zip_path: Path, imports_root: Path) -> dict[str, Any]:
 
 
 def write_cni_json(path: Path, value: dict[str, Any]) -> None:
-    """Persist one CNI artefact atomically as readable UTF-8 JSON."""
+    """Écrit un artefact CNI en JSON UTF-8 lisible de façon atomique."""
     _atomic_write_json(path, value)
 
 
 def _atomic_write_json(path: Path, value: Any) -> None:
-    """Write to a sibling temporary file, then replace the final artefact."""
+    """Écrit d'abord un temporaire voisin, puis remplace l'artefact final."""
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_suffix(path.suffix + ".tmp")
     temporary.write_text(json.dumps(value, ensure_ascii=False, indent=2), encoding="utf-8")
+    # ``replace`` évite qu'un refresh de l'interface lise un JSON à moitié écrit.
     temporary.replace(path)
