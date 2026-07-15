@@ -1,8 +1,7 @@
-"""Sequential CNI extraction runner built from small functions.
+"""Runner séquentiel d'extraction CNI, conçu pour une mémoire limitée.
 
-One adapter is created for one selected model, then every client is processed
-before that adapter is released.  This deliberately mirrors the low-memory
-execution policy of the generic benchmark.
+Un adaptateur est créé pour un modèle, tous les clients passent par ce modèle,
+puis il est libéré avant de charger le modèle suivant.
 """
 
 from __future__ import annotations
@@ -15,7 +14,8 @@ import uuid
 from pathlib import Path
 from typing import Any, Iterator
 
-# The runner orchestrates focused modules, rather than owning their details.
+# Le runner orchestre les modules spécialisés ; il ne contient ni logique de
+# scan de dossiers, ni règle de crop, ni définition du contrat JSON.
 from .cni_images import build_vertical_cni_composite, crop_cni_from_a4, render_single_page_pdf
 from .cni_ingestion import write_cni_json
 from .cni_schema import (
@@ -45,26 +45,25 @@ def iter_cni_benchmark(
     unload_after_task: bool = True,
     fields: dict[str, list[dict[str, str]]] | None = None,
 ) -> Iterator[dict[str, Any]]:
-    """Yield live CNI events and persist one artefact set per model/client pair.
+    """Émet des événements live et persiste un jeu d'artefacts par modèle/client.
 
-    Args:
-        registry: Model registry used by the rest of the application.
-        model_specs: One or more model specifications, processed sequentially.
-        clients: Records returned by ``scan_cni_clients`` and optionally
-            enriched by ``materialize_cni_labels``.
-        runs_root: Root directory for persistent benchmark artefacts.
-        strategy: ``separate_calls`` or ``combined_vertical``.
-        dpi: PDF render resolution.
-        timeout_seconds: Maximum duration per model request.
+    Paramètres :
+        registry: registre qui construit les adaptateurs de modèles.
+        model_specs: un ou plusieurs modèles, traités séquentiellement.
+        clients: diagnostics issus de ``scan_cni_clients``.
+        runs_root: répertoire racine des artefacts persistants.
+        strategy: ``separate_calls`` ou ``combined_vertical``.
+        dpi: résolution de rendu des PDF.
+        timeout_seconds: durée maximale d'un appel modèle.
 
-    Yields:
-        Dictionaries with ``stage`` equal to ``processing`` or ``completed``.
-        Completed events include a flat result row plus paths to recto, verso,
-        global and raw artefacts. Labels are deliberately not compared here.
+    Émet :
+        des dictionnaires ``processing`` ou ``completed``. Un événement final
+        contient la ligne synthèse et les chemins vers les artefacts recto,
+        verso, global et sortie brute. Le label n'est pas comparé ici.
 
-    A model is released in ``finally`` before the next one is created. This is
-    the central low-memory guarantee: selecting several models never means that
-    several model weights remain resident at the same time.
+    Le modèle est libéré dans ``finally`` avant le suivant. C'est la garantie
+    mémoire principale : cocher plusieurs modèles ne les garde jamais tous en
+    mémoire simultanément.
     """
     if strategy not in {"separate_calls", "combined_vertical"}:
         raise ValueError("CNI strategy must be 'separate_calls' or 'combined_vertical'.")
@@ -96,8 +95,8 @@ def iter_cni_benchmark(
         model = None
         model_name = model_spec.split(":", 1)[-1]
         try:
-            # Loading failure is reported once per client so the UI still shows
-            # a complete expected matrix: model × valid client.
+            # Une erreur de chargement est produite pour chaque client afin que
+            # l'interface conserve la matrice complète modèle × client.
             model = registry.create(
                 model_spec,
                 cpu_threads=cpu_threads,
@@ -129,6 +128,8 @@ def iter_cni_benchmark(
                     yield _completed_event(run_id, completed, total, result, started_at)
                     continue
 
+                # L'événement est émis avant l'appel modèle : l'interface peut
+                # afficher l'image en cours pendant que l'inférence travaille.
                 yield _processing_event(run_id, completed, total, model_name, client, "recto" if strategy == "separate_calls" else "recto_verso", prepared, started_at)
                 result = _extract_one_cni_client(
                     model,
@@ -155,18 +156,17 @@ def iter_cni_benchmark(
 
 
 def prepare_cni_client_images(client: dict[str, Any], artefacts_dir: Path, dpi: int) -> dict[str, Any]:
-    """Render, crop and compose one client’s input pair before inference.
-
-    All intermediate images and the preparation metadata live inside the run
-    directory, never beside the user’s source PDFs. The combined image is also
-    created for the separate strategy because it is useful during diagnosis.
-    """
+    """Rend, recadre et compose la paire d'entrée avant l'inférence."""
+    # Tout est écrit dans le run, jamais à côté des PDF utilisateur : les
+    # sources restent intactes et chaque benchmark peut être rejoué/analyse.
     recto_page = artefacts_dir / "recto_page.png"
     verso_page = artefacts_dir / "verso_page.png"
     recto_render = render_single_page_pdf(Path(str(client["recto_pdf"])), recto_page, dpi)
     verso_render = render_single_page_pdf(Path(str(client["verso_pdf"])), verso_page, dpi)
     recto_crop = crop_cni_from_a4(recto_page, artefacts_dir / "crop_recto.png")
     verso_crop = crop_cni_from_a4(verso_page, artefacts_dir / "crop_verso.png")
+    # Même en mode séparé, conserver le composite facilite une inspection
+    # humaine ultérieure et un éventuel nouvel essai en mode combiné.
     combined_path = build_vertical_cni_composite(
         Path(recto_crop["image_path"]), Path(verso_crop["image_path"]), artefacts_dir / "recto_verso_composite.png"
     )
@@ -196,14 +196,11 @@ def _extract_one_cni_client(
     timeout_seconds: float | None,
     fields: dict[str, list[dict[str, str]]] | None,
 ) -> dict[str, Any]:
-    """Run one strategy and persist recto, verso and global JSON artifacts.
-
-    Separate calls deliberately make two independent requests. Combined mode
-    makes one request but still writes the same three JSON files, keeping the
-    downstream UI and future evaluator independent of the chosen strategy.
-    """
+    """Exécute une stratégie et écrit les JSON recto, verso et global."""
     artefacts_dir = Path(prepared["recto_crop"]["image_path"]).parent
     if strategy == "combined_vertical":
+        # Un seul appel reçoit le composite, mais le parsing produit toujours
+        # deux dictionnaires afin de préserver le contrat des artefacts.
         inference = _perform_cni_call(
             model,
             Path(prepared["combined_image"]),
@@ -216,6 +213,8 @@ def _extract_one_cni_client(
         recto_inference = verso_inference = inference
         recto_parse_error = verso_parse_error = parse_error
     else:
+        # Deux appels indépendants sont le mode de diagnostic recommandé : on
+        # sait immédiatement quelle face a posé problème.
         recto_inference = _perform_cni_call(
             model,
             Path(prepared["recto_crop"]["image_path"]),
@@ -235,8 +234,8 @@ def _extract_one_cni_client(
         recto, recto_parse_error = parse_cni_json_response(recto_inference.text, "recto", fields)
         verso, verso_parse_error = parse_cni_json_response(verso_inference.text, "verso", fields)
 
-    # Persist side payloads first; the global document then references the
-    # result even if the cross-side fusion reports an inconsistency.
+    # Écrire d'abord chaque face : le JSON global peut ensuite signaler une
+    # incohérence sans perdre les lectures originales.
     recto_payload = _side_payload("recto", recto, recto_inference, recto_parse_error, prepared["recto_crop"])
     verso_payload = _side_payload("verso", verso, verso_inference, verso_parse_error, prepared["verso_crop"])
     write_cni_json(artefacts_dir / "recto.extraction.json", recto_payload)
@@ -288,13 +287,10 @@ def _extract_one_cni_client(
 
 
 def _perform_cni_call(model: Any, image_path: Path, prompt: str, timeout_seconds: float | None, artefacts_dir: Path, side: str) -> InferenceResult:
-    """Call one image while preserving raw and late responses for debugging.
-
-    The generic timeout wrapper may return before a provider thread finishes.
-    ``late_result`` keeps that eventual response in a separate file, but the
-    benchmark result remains a timeout and is never upgraded to success later.
-    """
+    """Appelle une image et conserve sortie brute ou sortie tardive."""
     def save_late(raw: Any | None, error: str | None) -> None:
+        # Une réponse arrivée après timeout est précieuse pour le débogage, mais
+        # elle ne doit jamais transformer rétroactivement un timeout en succès.
         try:
             value = raw if isinstance(raw, dict) else {"raw": str(raw) if raw is not None else None}
             value.update({"timing": "late_after_timeout", "error": error})
@@ -302,6 +298,8 @@ def _perform_cni_call(model: Any, image_path: Path, prompt: str, timeout_seconds
         except Exception:
             LOGGER.exception("Unable to persist late CNI response | side=%s", side)
 
+    # Le runner générique centralise le timeout fournisseur et le mécanisme de
+    # réponse tardive afin que CNI et benchmark général se comportent pareil.
     raw = BenchmarkRunner._perform_with_timeout(
         model,
         str(image_path),
@@ -317,7 +315,7 @@ def _perform_cni_call(model: Any, image_path: Path, prompt: str, timeout_seconds
 
 
 def _side_payload(side: str, fields: dict[str, str | None], inference: InferenceResult, parse_error: str | None, crop: dict[str, Any]) -> dict[str, Any]:
-    """Build the on-disk schema for one face, including model and crop metadata."""
+    """Construit le JSON d'une face avec données modèle et métadonnées de crop."""
     status = inference.status.value if parse_error is None else "invalid_json"
     return {
         "side": side,
@@ -334,7 +332,7 @@ def _side_payload(side: str, fields: dict[str, str | None], inference: Inference
 
 
 def _overall_status(recto_status: str, verso_status: str, recto_parse_error: str | None, verso_parse_error: str | None) -> str:
-    """Collapse two side outcomes with timeout taking precedence over parsing."""
+    """Réduit les deux statuts en un statut global, timeout prioritaire."""
     if recto_status == "timeout" or verso_status == "timeout":
         return "timeout"
     if recto_status != "success" or verso_status != "success":
@@ -345,7 +343,7 @@ def _overall_status(recto_status: str, verso_status: str, recto_parse_error: str
 
 
 def _processing_event(run_id: str, completed: int, total: int, model_name: str, client: dict[str, Any], side: str, prepared: dict[str, Any], started_at: float) -> dict[str, Any]:
-    """Build the lightweight live event consumed by the Gradio progress view."""
+    """Construit l'événement léger consommé par la vue live Gradio."""
     image = prepared["combined_image"] if side == "recto_verso" else prepared[f"{side}_crop"]["image_path"]
     return {
         "stage": "processing",
@@ -362,7 +360,7 @@ def _processing_event(run_id: str, completed: int, total: int, model_name: str, 
 
 
 def _completed_event(run_id: str, completed: int, total: int, result: dict[str, Any], started_at: float) -> dict[str, Any]:
-    """Build a completed event after its result has already been checkpointed."""
+    """Construit l'événement de fin après le checkpoint du résultat."""
     return {
         "stage": "completed",
         "run_id": run_id,
@@ -376,7 +374,7 @@ def _completed_event(run_id: str, completed: int, total: int, result: dict[str, 
 
 
 def _failed_client_result(run_id: str, model_name: str, client: dict[str, Any], strategy: str, error: str) -> dict[str, Any]:
-    """Return a normal-shaped failure row so one bad client never stops a run."""
+    """Retourne une ligne d'échec normale pour ne jamais arrêter tout le run."""
     return {
         "run_id": run_id,
         "model": model_name,
@@ -396,24 +394,24 @@ def _failed_client_result(run_id: str, model_name: str, client: dict[str, Any], 
 
 
 def _write_results_index(run_dir: Path, results: list[dict[str, Any]]) -> None:
-    """Atomically checkpoint the growing result list after every client."""
+    """Checkpoint atomiquement la liste qui grandit après chaque client."""
     temporary = run_dir / "cni_results.json.tmp"
     temporary.write_text(json.dumps(results, ensure_ascii=False, indent=2), encoding="utf-8")
     temporary.replace(run_dir / "cni_results.json")
 
 
 def _safe_name(value: str) -> str:
-    """Convert a model/client label to one portable directory segment."""
+    """Transforme un nom modèle/client en segment de dossier portable."""
     return re.sub(r"[^A-Za-z0-9._-]+", "_", value).strip("._") or "unknown"
 
 
 def _sum_optional(first: int | None, second: int | None) -> int | None:
-    """Sum provider counters only when at least one side exposed the metric."""
+    """Additionne les compteurs seulement si le fournisseur les expose."""
     values = [value for value in (first, second) if value is not None]
     return sum(values) if values else None
 
 
 def _join_errors(*errors: str | None) -> str | None:
-    """Keep both side errors visible in one compact result-table cell."""
+    """Garde les deux erreurs de face visibles dans une cellule compacte."""
     values = [error for error in errors if error]
     return " | ".join(values) if values else None
