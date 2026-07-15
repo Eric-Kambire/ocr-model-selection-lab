@@ -383,23 +383,28 @@ def _cni_source_choices(records: list[dict[str, Any]]) -> list[tuple[str, str]]:
     return choices
 
 
-def _preview_cni_source(path_value: str | None) -> tuple[str | None, str]:
-    """Preview an example image or render the selected one-page CNI PDF."""
+def _preview_cni_source(path_value: str | None) -> tuple[Any, str]:
+    """Show the source preview only when a document is selected."""
     if not path_value:
-        return None, "Sélectionnez un exemple ou un PDF détecté pour l’aperçu."
+        return gr.update(value=None, visible=False), "Sélectionnez un exemple ou un PDF détecté pour l’aperçu."
     source = Path(path_value)
     if not source.is_file():
-        return None, "⚠️ Le fichier sélectionné n’est plus disponible sur le disque."
+        return gr.update(value=None, visible=False), "⚠️ Le fichier sélectionné n’est plus disponible sur le disque."
     if source.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp"}:
-        return str(source), f"**Aperçu :** `{source.name}` · image locale d’exemple"
+        return gr.update(value=str(source), visible=True), f"**Aperçu :** `{source.name}` · image locale d’exemple"
     if source.suffix.lower() != ".pdf":
-        return None, f"⚠️ Format non pris en charge : `{source.suffix}`"
+        return gr.update(value=None, visible=False), f"⚠️ Format non pris en charge : `{source.suffix}`"
     preview_path = RUNS_DIR / "cni_source_previews" / f"{source.stem}-{source.stat().st_mtime_ns}.png"
     try:
         render_single_page_pdf(source, preview_path, dpi=150)
     except Exception as exc:
-        return None, f"⚠️ Aperçu PDF impossible : `{type(exc).__name__}: {exc}`"
-    return str(preview_path), f"**Aperçu :** `{source.name}` · PDF rendu à 150 DPI"
+        return gr.update(value=None, visible=False), f"⚠️ Aperçu PDF impossible : `{type(exc).__name__}: {exc}`"
+    return gr.update(value=str(preview_path), visible=True), f"**Aperçu :** `{source.name}` · PDF rendu à 150 DPI"
+
+
+def _cni_source_mode_visibility(mode: str) -> tuple[Any, Any]:
+    """Keep the local-folder and ZIP entry paths visually separate."""
+    return gr.update(visible=mode == "folder"), gr.update(visible=mode == "zip")
 
 
 def _cni_result_table(results: list[dict[str, Any]]) -> pd.DataFrame:
@@ -930,12 +935,18 @@ def build_ui() -> gr.Blocks:
                     with gr.Tab("1. Préparer"):
                         with gr.Row():
                             with gr.Column(scale=1):
-                                cni_clients_root = gr.Textbox(label="Dossier clients", placeholder=r"D:\data\clients")
-                                cni_labels_root = gr.Textbox(label="Dossier labels JSONB externe", placeholder=r"D:\data\labels")
-                                cni_zip = gr.File(label="Ou importer une archive ZIP de test", file_types=[".zip"], type="filepath")
-                                with gr.Row():
-                                    cni_import_zip = gr.Button("Importer le ZIP")
+                                cni_input_mode = gr.Radio(
+                                    [("Dossier local", "folder"), ("Archive ZIP", "zip")],
+                                    value="folder",
+                                    label="Mode d’ajout",
+                                )
+                                with gr.Group(visible=True) as cni_folder_source:
+                                    cni_clients_root = gr.Textbox(label="Dossier clients", placeholder=r"D:\data\clients")
+                                    cni_labels_root = gr.Textbox(label="Dossier labels JSONB externe", placeholder=r"D:\data\labels")
                                     cni_scan = gr.Button("Scanner les dossiers")
+                                with gr.Group(visible=False) as cni_zip_source:
+                                    cni_zip = gr.File(label="Archive ZIP de test", file_types=[".zip"], type="filepath")
+                                    cni_import_zip = gr.Button("Importer le ZIP")
                                 cni_scan_status = gr.Markdown("Indiquez un dossier clients, puis scannez-le.")
                                 gr.Markdown("#### Documents détectés et aperçu")
                                 with gr.Row():
@@ -949,7 +960,7 @@ def build_ui() -> gr.Blocks:
                                             "Sélectionnez un exemple ou un PDF détecté pour l’aperçu."
                                         )
                                     with gr.Column(scale=1):
-                                        cni_source_preview = gr.Image(label="Aperçu", type="filepath", height=220)
+                                        cni_source_preview = gr.Image(label="Aperçu", type="filepath", height=220, visible=False)
                             with gr.Column(scale=2):
                                 cni_scan_report = gr.Dataframe(headers=["Client dossier", "Recto", "Verso", "Label", "Statut", "Alertes"], label="Rapport de scan CNI", interactive=False)
                                 cni_models = gr.CheckboxGroup([choice for choice in model_choices if choice.startswith("ollama:")], label="Modèles Ollama à comparer", info="Les modèles cochés sont traités un par un.")
@@ -1571,6 +1582,12 @@ def build_ui() -> gr.Blocks:
             import_cni_test_zip,
             inputs=[cni_zip],
             outputs=[cni_clients_root, cni_labels_root, cni_scan_status],
+            queue=False,
+        )
+        cni_input_mode.change(
+            _cni_source_mode_visibility,
+            inputs=[cni_input_mode],
+            outputs=[cni_folder_source, cni_zip_source],
             queue=False,
         )
         cni_scan.click(
