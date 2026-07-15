@@ -937,14 +937,19 @@ def build_ui() -> gr.Blocks:
                                     cni_import_zip = gr.Button("Importer le ZIP")
                                     cni_scan = gr.Button("Scanner les dossiers")
                                 cni_scan_status = gr.Markdown("Indiquez un dossier clients, puis scannez-le.")
-                                with gr.Accordion("Explorer les documents", open=False):
-                                    cni_source_selector = gr.Dropdown(
-                                        choices=_cni_source_choices([]),
-                                        label="Document à prévisualiser",
-                                        info="Les exemples locaux et les PDF détectés après un scan sont listés ici.",
-                                    )
-                                    cni_source_preview = gr.Image(label="Aperçu du document source", type="filepath", height=260)
-                                    cni_source_preview_info = gr.Markdown("Sélectionnez un exemple ou un PDF détecté pour l’aperçu.")
+                                gr.Markdown("#### Documents détectés et aperçu")
+                                with gr.Row():
+                                    with gr.Column(scale=1):
+                                        cni_source_selector = gr.Dropdown(
+                                            choices=_cni_source_choices([]),
+                                            label="Document à prévisualiser",
+                                            info="Exemples locaux et PDF ajoutés après un scan.",
+                                        )
+                                        cni_source_preview_info = gr.Markdown(
+                                            "Sélectionnez un exemple ou un PDF détecté pour l’aperçu."
+                                        )
+                                    with gr.Column(scale=1):
+                                        cni_source_preview = gr.Image(label="Aperçu", type="filepath", height=220)
                             with gr.Column(scale=2):
                                 cni_scan_report = gr.Dataframe(headers=["Client dossier", "Recto", "Verso", "Label", "Statut", "Alertes"], label="Rapport de scan CNI", interactive=False)
                                 cni_models = gr.CheckboxGroup([choice for choice in model_choices if choice.startswith("ollama:")], label="Modèles Ollama à comparer", info="Les modèles cochés sont traités un par un.")
