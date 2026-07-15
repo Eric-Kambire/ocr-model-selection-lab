@@ -694,7 +694,7 @@ def _cni_source_choices(records: list[dict[str, Any]]) -> list[tuple[str, str]]:
 def _preview_cni_source(path_value: str | None) -> tuple[Any, str]:
     """Show an image preview only after the user selects a source document."""
     if not path_value:
-        return gr.update(value=None, visible=False), "Sélectionnez un exemple ou un PDF détecté pour l’aperçu."
+        return gr.update(value=None, visible=False), "Sélectionnez un PDF détecté pour l’aperçu."
     source = Path(path_value)
     if not source.is_file():
         return gr.update(value=None, visible=False), "⚠️ Le fichier sélectionné n’est plus disponible sur le disque."
@@ -1839,7 +1839,12 @@ def build_ui() -> gr.Blocks:
                 return gr.update(), gr.update(), f"❌ Import ZIP impossible : {type(exc).__name__}: {exc}"
 
         def scan_cni_input(clients_root_text, labels_root_text):
-            """Audit client folders and materialize external JSONB labels when present."""
+            """Audit input folders, then copy valid external JSONB labels locally.
+
+            The returned state is the only source of CNI clients for a run. It
+            also refreshes the preview list, so users cannot pick an arbitrary
+            local path through the interface.
+            """
             if not clients_root_text or not str(clients_root_text).strip():
                 return [], pd.DataFrame(), "❌ Indiquez le dossier clients.", gr.update(choices=_cni_source_choices([]), value=None)
             try:
@@ -1862,6 +1867,7 @@ def build_ui() -> gr.Blocks:
                 return [], pd.DataFrame(), f"❌ Scan CNI impossible : {type(exc).__name__}: {exc}", gr.update(choices=_cni_source_choices([]), value=None)
 
         def cni_result_choices(results):
+            """Create stable dropdown labels that point to result-list indexes."""
             return [
                 (
                     f"{result.get('folder_client_id')} · {result.get('model')} · {result.get('status')}",
@@ -1902,7 +1908,12 @@ def build_ui() -> gr.Blocks:
             )
 
         def on_cni_run(model_specs, client_records, strategy, dpi, timeout, threads, unload):
-            """Stream a CNI run while one model and one face request remain active at a time."""
+            """Stream a CNI run while one model and one face request stay active.
+
+            This generator mirrors runner events into the live view. It keeps
+            completed rows in local state for filters/graphs and never performs
+            the future label-to-field accuracy mapping itself.
+            """
             empty = empty_figure()
             if not model_specs:
                 yield "❌ Sélectionnez au moins un modèle Ollama.", 0, None, "", [], pd.DataFrame(), gr.update(choices=[]), empty, empty
@@ -1929,6 +1940,8 @@ def build_ui() -> gr.Blocks:
                     total, completed = int(event.get("total", 0)), int(event.get("completed", 0))
                     progress = completed / total * 100 if total else 0
                     if event.get("stage") == "processing":
+                        # A processing event intentionally has no result yet:
+                        # it updates only the live image and contextual text.
                         side = event.get("side", "document")
                         live = (
                             "### Analyse CNI en direct\n\n"
@@ -2106,6 +2119,8 @@ def build_ui() -> gr.Blocks:
             outputs=[cni_clients_root, cni_labels_root, cni_scan_status],
             queue=False,
         )
+        # Changing source mode only alters visibility; entered paths stay in
+        # their components so a user can switch back without losing input.
         cni_input_mode.change(
             _cni_source_mode_visibility,
             inputs=[cni_input_mode],
@@ -2118,6 +2133,7 @@ def build_ui() -> gr.Blocks:
             outputs=[cni_clients_state, cni_scan_table, cni_scan_status, cni_source_selector],
             queue=False,
         )
+        # Source preview is read-only and comes exclusively from scan results.
         cni_source_selector.change(
             _preview_cni_source,
             inputs=[cni_source_selector],
