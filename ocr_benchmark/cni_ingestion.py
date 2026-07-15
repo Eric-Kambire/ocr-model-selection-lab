@@ -1,4 +1,8 @@
-"""CNI dataset discovery, label materialisation and safe ZIP import."""
+"""CNI input discovery, external-label materialisation and safe ZIP import.
+
+The folder name is the only canonical client identifier. A PDF prefix is kept
+as document metadata, but is deliberately never used to find a label.
+"""
 
 from __future__ import annotations
 
@@ -13,13 +17,23 @@ from typing import Any
 
 LOGGER = logging.getLogger(__name__)
 _SIDE_FILENAME = {
+    # ``document_id`` may differ from the parent folder/client ID. Keeping the
+    # two concepts separate prevents a scanner-generated filename from breaking
+    # the label association.
     "recto": re.compile(r"^(?P<document_id>.+)_cin_recto\.pdf$", re.IGNORECASE),
     "verso": re.compile(r"^(?P<document_id>.+)_cin_verso\.pdf$", re.IGNORECASE),
 }
 
 
 def scan_cni_clients(clients_root: Path, labels_root: Path | None = None) -> list[dict[str, Any]]:
-    """Scan folders; folder name is the canonical label-matching identifier."""
+    """Build one readiness record per client subfolder.
+
+    ``status`` concerns only input validity (one recto and one verso PDF).
+    ``label_status`` is separate so an OCR run can proceed even when the future
+    accuracy score is unavailable. The returned records are plain dictionaries
+    on purpose: they can be rendered by Gradio and persisted without a custom
+    serializer.
+    """
     if not clients_root.is_dir():
         raise FileNotFoundError(f"Clients folder not found: {clients_root}")
     records: list[dict[str, Any]] = []
@@ -32,6 +46,8 @@ def scan_cni_clients(clients_root: Path, labels_root: Path | None = None) -> lis
             "label_status": "label_root_not_set" if labels_root is None else "label_not_found",
             "status": "ready", "issues": [],
         }
+        # Only the two strict PDF patterns belong to the benchmark contract;
+        # source PNGs or arbitrary files may coexist in the client directory.
         for candidate in folder.iterdir():
             if not candidate.is_file():
                 continue
@@ -59,7 +75,13 @@ def scan_cni_clients(clients_root: Path, labels_root: Path | None = None) -> lis
 
 
 def materialize_cni_labels(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Convert external UTF-8 JSONB text files to JSON beside each client."""
+    """Copy valid external UTF-8 JSONB text into the matching client folder.
+
+    The current integration assumes ``.jsonb`` contains text JSON. It parses
+    before replacing the target so a corrupt label never destroys a previously
+    materialised JSON file. Missing or malformed labels remain explicit status
+    values rather than silent empty dictionaries.
+    """
     updated: list[dict[str, Any]] = []
     for original in records:
         record = dict(original)
@@ -88,7 +110,12 @@ def materialize_cni_labels(records: list[dict[str, Any]]) -> list[dict[str, Any]
 
 
 def import_cni_zip(zip_path: Path, imports_root: Path) -> dict[str, Any]:
-    """Safely extract a portable CNI test archive and reject traversal paths."""
+    """Extract a portable test archive below ``imports_root``.
+
+    Archives are user input. Absolute paths and ``..`` components are rejected
+    before writing anything, which prevents ZIP-slip writes outside the local
+    import directory. A failed import removes its partial destination.
+    """
     if not zip_path.is_file() or zip_path.suffix.lower() != ".zip":
         raise ValueError("A .zip archive is required for CNI import.")
     imports_root.mkdir(parents=True, exist_ok=True)
@@ -116,11 +143,12 @@ def import_cni_zip(zip_path: Path, imports_root: Path) -> dict[str, Any]:
 
 
 def write_cni_json(path: Path, value: dict[str, Any]) -> None:
-    """Persist one CNI artifact atomically as formatted UTF-8 JSON."""
+    """Persist one CNI artefact atomically as readable UTF-8 JSON."""
     _atomic_write_json(path, value)
 
 
 def _atomic_write_json(path: Path, value: Any) -> None:
+    """Write to a sibling temporary file, then replace the final artefact."""
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_suffix(path.suffix + ".tmp")
     temporary.write_text(json.dumps(value, ensure_ascii=False, indent=2), encoding="utf-8")
