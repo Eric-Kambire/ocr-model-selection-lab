@@ -999,6 +999,11 @@ def build_ui() -> gr.Blocks:
                                 cni_timeout = gr.Number(value=300, minimum=1, maximum=7200, precision=0, label="Temps maximum par appel (s)")
                         with gr.Row(elem_id="cni-runbar"):
                             gr.Markdown("**03 · Lancement**\n\nLe suivi détaillé apparaît dans la vue suivante.")
+                            cni_continue_without_label = gr.Checkbox(
+                                value=False,
+                                label="Continuer sans labels",
+                                info="Extraction et mesures techniques uniquement ; aucun score de comparaison.",
+                            )
                             cni_launch = gr.Button("Lancer", variant="primary")
                             cni_stop = gr.Button("Annuler", variant="stop")
                     with gr.Tab("2. Suivi en direct"):
@@ -1428,7 +1433,17 @@ def build_ui() -> gr.Blocks:
                 # le rapprochement reste donc fondé sur le dossier client.
                 records = materialize_cni_labels(scan_cni_clients(clients_root, labels_root))
                 ready = sum(record["status"] == "ready" for record in records)
-                return records, _cni_scan_table(records), f"✅ {len(records)} client(s) détecté(s), {ready} prêt(s).", gr.update(choices=_cni_source_choices(records), value=None)
+                labels = sum(record.get("label_status") == "label_materialized" for record in records)
+                unlabeled = sum(record["status"] == "ready" and record.get("label_status") != "label_materialized" for record in records)
+                return (
+                    records,
+                    _cni_scan_table(records),
+                    (
+                        f"✅ {len(records)} client(s) détecté(s), {ready} prêt(s), {labels} label(s) converti(s)."
+                        + (" Cochez **Continuer sans labels** pour lancer les PDF non notés." if unlabeled else "")
+                    ),
+                    gr.update(choices=_cni_source_choices(records), value=None),
+                )
             except Exception as exc:
                 return [], pd.DataFrame(), f"❌ Scan CNI impossible : {type(exc).__name__}: {exc}", gr.update(choices=_cni_source_choices([]), value=None)
 
@@ -1476,7 +1491,7 @@ def build_ui() -> gr.Blocks:
                 _read_json_if_available(result.get("global_json_path")),
             )
 
-        def on_cni_run(model_specs, client_records, strategy, dpi, timeout):
+        def on_cni_run(model_specs, client_records, strategy, dpi, timeout, continue_without_label):
             """Transforme les événements runner en mises à jour live Gradio."""
             empty = empty_figure()
             if not model_specs:
@@ -1484,6 +1499,19 @@ def build_ui() -> gr.Blocks:
                 return
             if not client_records:
                 yield "❌ Scannez d'abord un dossier clients valide.", 0, None, "", [], pd.DataFrame(), gr.update(choices=[]), empty, empty
+                return
+            # Les PDFs valides restent exploitables sans labels. La confirmation
+            # explicite évite seulement de lancer par erreur un benchmark non noté.
+            unlabeled = [
+                record for record in client_records
+                if record.get("status") == "ready" and record.get("label_status") != "label_materialized"
+            ]
+            if unlabeled and not continue_without_label:
+                yield (
+                    f"⚠️ {len(unlabeled)} client(s) n'ont pas de label exploitable. "
+                    "Cochez **Continuer sans labels** pour lancer l'extraction non notée.",
+                    0, None, "", [], pd.DataFrame(), gr.update(choices=[]), empty, empty,
+                )
                 return
             fields = load_cni_field_config(ROOT_DIR / "config" / "cni_fields.json")
             # Le runner gère durée de vie modèle et checkpoints ; ce générateur
@@ -1644,7 +1672,7 @@ def build_ui() -> gr.Blocks:
         cni_refresh_models.click(refresh_cni_models, inputs=[cni_models], outputs=[cni_models], queue=False)
         cni_event = cni_launch.click(
             on_cni_run,
-            inputs=[cni_models, cni_clients_state, cni_strategy, cni_dpi, cni_timeout],
+            inputs=[cni_models, cni_clients_state, cni_strategy, cni_dpi, cni_timeout, cni_continue_without_label],
             outputs=[
                 cni_run_status, cni_progress, cni_live_image, cni_live_result,
                 cni_results_state, cni_results_table, cni_result_selector,

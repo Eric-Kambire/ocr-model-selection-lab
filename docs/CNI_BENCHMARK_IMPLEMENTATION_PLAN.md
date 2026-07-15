@@ -166,6 +166,37 @@ intervalle, notamment `100–100`, `90–99.99`, ou une plage personnalisée. Le
 lignes sans label restent visibles sous `non_noté` et ne doivent pas être
 présentées comme des erreurs de modèle.
 
+## Comparaison lorsque les vrais labels JSONB seront disponibles
+
+Un PDF détecté reste **exécutable sans label**. L'interface demande seulement
+la confirmation « Continuer sans labels » afin que l'utilisateur sache que le
+résultat sera une extraction technique non notée. Les sorties utiles restent
+conservées : image, réponse brute, JSON recto, JSON verso, JSON global,
+latence, tokens et éventuel timeout.
+
+La comparaison ne sera activée qu'après inspection d'au moins un vrai fichier
+JSONB. La démarche prévue est la suivante :
+
+1. convertir `LABELS_ROOT/<id_dossier>.jsonb` en
+   `CLIENTS_ROOT/<id_dossier>/<id_dossier>.json` sans modifier la source ;
+2. valider explicitement un mapping versionné entre les chemins du label réel
+   et les champs extraits (`recto.cin`, `recto.nom`, `verso.adresse`, etc.) ;
+3. normaliser **pour la comparaison seulement** : CIN en majuscules sans
+   séparateurs, dates au format ISO, espaces/accents/casse des noms et de
+   l'adresse ; les valeurs brutes restent affichées ;
+4. produire pour chaque champ `match`, `mismatch`, `missing_prediction`,
+   `missing_label` ou `not_comparable` ;
+5. calculer les scores recto, verso et global uniquement sur les champs ayant
+   une valeur de référence comparable ;
+6. enregistrer ce détail dans le dossier du run afin que les filtres de
+   résultats puissent montrer les champs précis en erreur.
+
+Ainsi, un label absent ou un champ non encore mappé n'abaisse jamais
+l'accuracy et n'est jamais compté comme un échec du modèle. Tant que la
+structure réelle du JSONB n'a pas été fournie, le statut reste
+`not_scored_label_mapping_pending` : il est volontairement honnête plutôt que
+de produire un score artificiel.
+
 ## Import de données de test
 
 Deux entrées sont prévues :
