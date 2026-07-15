@@ -406,7 +406,7 @@ def _cni_source_choices(records: list[dict[str, Any]]) -> list[tuple[str, str]]:
 def _preview_cni_source(path_value: str | None) -> tuple[Any, str]:
     """Show the source preview only when a document is selected."""
     if not path_value:
-        return gr.update(value=None, visible=False), "Sélectionnez un exemple ou un PDF détecté pour l’aperçu."
+        return gr.update(value=None, visible=False), "Sélectionnez un PDF détecté pour l’aperçu."
     source = Path(path_value)
     if not source.is_file():
         return gr.update(value=None, visible=False), "⚠️ Le fichier sélectionné n’est plus disponible sur le disque."
@@ -1415,6 +1415,12 @@ def build_ui() -> gr.Blocks:
                 return gr.update(), gr.update(), f"❌ Import ZIP impossible : {type(exc).__name__}: {exc}"
 
         def scan_cni_input(clients_root_text, labels_root_text):
+            """Audit source folders and refresh the run state plus preview choices.
+
+            The UI receives only records emitted by the scanner, which keeps
+            label matching tied to client directories rather than arbitrary
+            browser-provided paths.
+            """
             if not clients_root_text or not str(clients_root_text).strip():
                 return [], pd.DataFrame(), "❌ Indiquez le dossier clients.", gr.update(choices=_cni_source_choices([]), value=None)
             try:
@@ -1433,12 +1439,14 @@ def build_ui() -> gr.Blocks:
             return gr.update(choices=choices, value=[name for name in (selected_models or []) if name in choices])
 
         def cni_choices(results):
+            """Build stable inspection-dropdown entries from result-list indexes."""
             return [
                 (f"{result.get('folder_client_id')} · {result.get('model')} · {result.get('status')}", index)
                 for index, result in enumerate(results or [])
             ]
 
         def filter_cni_results(results, minimum, maximum, include_unscored):
+            """Apply the configured accuracy range without hiding unscored rows by default."""
             lower, upper = sorted((float(minimum or 0), float(maximum or 100)))
             selected = []
             for result in results or []:
@@ -1451,6 +1459,7 @@ def build_ui() -> gr.Blocks:
             return _cni_result_table(selected)
 
         def show_cni_result(selection, results):
+            """Load the two crops and all persisted JSON artifacts for one result."""
             if selection is None or not results:
                 empty = {"status": "not_selected"}
                 return None, None, empty, empty, empty, empty
@@ -1469,6 +1478,12 @@ def build_ui() -> gr.Blocks:
             )
 
         def on_cni_run(model_specs, client_records, strategy, dpi, timeout):
+            """Stream runner events into the live view without computing label accuracy.
+
+            The runner owns model lifetime and checkpoints. This UI generator
+            only converts those events to Gradio updates and keeps completed
+            rows available for filters, charts and detailed inspection.
+            """
             empty = empty_figure()
             if not model_specs:
                 yield "❌ Sélectionnez au moins un modèle Ollama.", 0, None, "", [], pd.DataFrame(), gr.update(choices=[]), empty, empty
