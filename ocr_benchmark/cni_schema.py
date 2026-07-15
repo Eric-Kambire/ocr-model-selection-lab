@@ -11,6 +11,9 @@ import re
 from pathlib import Path
 from typing import Any
 
+# These tuples document the first supported contract. Runtime configuration is
+# read from ``config/cni_fields.json`` so a future field can be added without
+# duplicating prompt text throughout the application.
 RECTO_FIELDS = (
     "cin", "nom", "prenom", "date_naissance", "ville_naissance", "date_validite",
 )
@@ -42,6 +45,8 @@ def load_cni_field_config(config_path: Path | None = None) -> dict[str, list[dic
         ValueError: If an existing configuration is malformed.
     """
     if config_path is None or not config_path.is_file():
+        # Return a deep copy: callers may safely tailor an in-memory config for
+        # a run without mutating the module-level default used by later runs.
         return json.loads(json.dumps(DEFAULT_CNI_FIELD_CONFIG))
     try:
         value = json.loads(config_path.read_text(encoding="utf-8"))
@@ -60,7 +65,8 @@ def build_cni_prompt(side: str, fields: dict[str, list[dict[str, str]]] | None =
     """Build a strict JSON-only prompt for one CNI side.
 
     Values are read from Latin/French text. Arabic can identify a label but is
-    never translated, transliterated or guessed.
+    never translated, transliterated or guessed. The JSON schema is repeated in
+    the prompt so the model and parser share exactly the same field contract.
     """
     if side not in {"recto", "verso"}:
         raise ValueError("side must be 'recto' or 'verso'.")
@@ -77,7 +83,11 @@ def build_cni_prompt(side: str, fields: dict[str, list[dict[str, str]]] | None =
 
 
 def build_combined_cni_prompt(fields: dict[str, list[dict[str, str]]] | None = None) -> str:
-    """Build the strict JSON-only prompt for recto-above-verso composite input."""
+    """Build the strict JSON-only prompt for a recto-over-verso composite.
+
+    The nested schema preserves the same side-level artifacts as two calls;
+    only the model request count changes.
+    """
     config = fields or load_cni_field_config()
     schema = {
         "recto": {str(item["key"]): None for item in config["recto"]},
@@ -92,7 +102,12 @@ def build_combined_cni_prompt(fields: dict[str, list[dict[str, str]]] | None = N
 
 
 def parse_cni_json_response(raw_text: str, side: str, fields: dict[str, list[dict[str, str]]] | None = None) -> tuple[dict[str, str | None], str | None]:
-    """Parse one model response into exactly the configured side fields."""
+    """Parse one model response into exactly the configured side fields.
+
+    Unknown model keys are intentionally ignored and configured missing keys
+    become ``None``. The returned error code is persisted beside raw output so
+    an invalid JSON reply is distinguishable from a failed OCR request.
+    """
     if side not in {"recto", "verso"}:
         raise ValueError("side must be 'recto' or 'verso'.")
     config = fields or load_cni_field_config()
@@ -111,7 +126,11 @@ def parse_cni_json_response(raw_text: str, side: str, fields: dict[str, list[dic
 
 
 def parse_combined_cni_json_response(raw_text: str, fields: dict[str, list[dict[str, str]]] | None = None) -> tuple[dict[str, str | None], dict[str, str | None], str | None]:
-    """Parse a combined response with its ``recto`` and ``verso`` objects."""
+    """Parse a combined response with its ``recto`` and ``verso`` objects.
+
+    Missing nested objects are treated as empty sides, not as a Python error,
+    so the benchmark can keep a complete artifact set for diagnosis.
+    """
     config = fields or load_cni_field_config()
     empty_recto = {str(item["key"]): None for item in config["recto"]}
     empty_verso = {str(item["key"]): None for item in config["verso"]}
@@ -134,7 +153,12 @@ def parse_combined_cni_json_response(raw_text: str, fields: dict[str, list[dict[
 
 
 def build_cni_global_json(client: dict[str, Any], recto: dict[str, str | None], verso: dict[str, str | None]) -> dict[str, Any]:
-    """Merge side results without making a label-comparison decision."""
+    """Merge side results without making a label-comparison decision.
+
+    ``cin_recto`` and ``cin_verso`` are retained even when they disagree. The
+    fused value is only emitted when one side is absent or both normalise to the
+    same identifier; this prevents a silent choice between conflicting reads.
+    """
     cin_value, cin_coherent = _merge_cross_side_value(recto.get("cin"), verso.get("cin"))
     valid_value, valid_coherent = _merge_cross_side_value(recto.get("date_validite"), verso.get("date_validite"))
     return {
@@ -150,6 +174,7 @@ def build_cni_global_json(client: dict[str, Any], recto: dict[str, str | None], 
 
 
 def _extract_json_object(text: str) -> str | None:
+    """Accept a common Markdown fence but never attempt to repair JSON syntax."""
     value = str(text or "").strip()
     if value.startswith("```"):
         lines = value.splitlines()
@@ -159,6 +184,7 @@ def _extract_json_object(text: str) -> str | None:
 
 
 def _string_or_none(value: Any) -> str | None:
+    """Keep scalar model values, normalising whitespace; reject nested values."""
     if value is None:
         return None
     if isinstance(value, (str, int, float)):
@@ -168,6 +194,7 @@ def _string_or_none(value: Any) -> str | None:
 
 
 def _merge_cross_side_value(recto_value: str | None, verso_value: str | None) -> tuple[str | None, bool | None]:
+    """Return a safe fused value and its coherence flag for cross-side fields."""
     if recto_value and verso_value:
         if re.sub(r"[^A-Z0-9]", "", recto_value.upper()) == re.sub(r"[^A-Z0-9]", "", verso_value.upper()):
             return recto_value, True
