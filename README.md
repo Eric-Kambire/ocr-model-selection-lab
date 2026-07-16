@@ -190,6 +190,30 @@ Une réponse reçue après le timeout reste exclue des scores et conserve le sta
 `timing: "late_after_timeout"` afin de permettre l’audit et un nettoyage
 ultérieur.
 
+## Convertir des images brutes en PDF A4
+
+Le script [images_to_a4_corner_pdf.py](scripts/images_to_a4_corner_pdf.py)
+crée **un PDF A4 par image**, avec l'image conservée dans un coin. Il est utile
+pour préparer des scans de CNI avant le scan du dossier client.
+
+Mode interactif : le script liste les images du dossier, puis demande `all`
+pour tout convertir ou une sélection telle que `1,3-5`.
+
+```powershell
+python scripts/images_to_a4_corner_pdf.py "D:\data\clients\client-001"
+```
+
+Par défaut, les PDF sont créés dans le même dossier que les images afin de
+conserver un nom comme `client_CIN_Recto.pdf`. L'image est en haut à droite ;
+vous pouvez choisir un autre coin et automatiser la sélection :
+
+```powershell
+python scripts/images_to_a4_corner_pdf.py "D:\data\clients\client-001" --select all --corner bottom-left
+```
+
+Options utiles : `--recursive` pour les sous-dossiers, `--output-dir` pour
+écrire ailleurs et `--overwrite` pour remplacer un PDF existant.
+
 ## Ajouter des données
 
 L’onglet **Ajouter des données** accepte une image JPG, JPEG, PNG ou WEBP de
