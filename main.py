@@ -1096,7 +1096,6 @@ def build_ui() -> gr.Blocks:
                         cni_prompt_preview = gr.Code(
                             value=_cni_prompt_preview("separate_calls", DEFAULT_CNI_OPERATOR_INSTRUCTIONS),
                             label="Prompt complet envoyé au modèle",
-                            language="text",
                             lines=18,
                             interactive=False,
                         )
