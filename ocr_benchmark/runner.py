@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import math
 import concurrent.futures
+import inspect
 import time
 import uuid
 from collections.abc import Callable, Iterable
@@ -190,13 +191,14 @@ class BenchmarkRunner:
         timeout_seconds: float | None,
         *,
         prompt: str | None = None,
+        system_prompt: str | None = None,
         late_result: Callable[[Any | None, str | None], None] | None = None,
     ):
         if timeout_seconds is None or timeout_seconds <= 0:
-            return _perform_model_call(model, image_path, prompt)
+            return _perform_model_call(model, image_path, prompt, system_prompt)
 
         executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
-        future = executor.submit(_perform_model_call, model, image_path, prompt)
+        future = executor.submit(_perform_model_call, model, image_path, prompt, system_prompt)
         try:
             return future.result(timeout=timeout_seconds)
         except concurrent.futures.TimeoutError:
@@ -366,8 +368,12 @@ def _unique_join(values: pd.Series) -> str:
     return ", ".join(sorted({str(value) for value in values if value}))
 
 
-def _perform_model_call(model: Any, image_path: str, prompt: str | None) -> Any:
+def _perform_model_call(model: Any, image_path: str, prompt: str | None, system_prompt: str | None = None) -> Any:
     """Keep existing adapters compatible unless a structured prompt is supplied."""
     if prompt is None:
         return model.perform_ocr(image_path)
+    parameters = inspect.signature(model.perform_ocr).parameters.values()
+    accepts_system = any(parameter.name == "system_prompt" or parameter.kind is inspect.Parameter.VAR_KEYWORD for parameter in parameters)
+    if system_prompt and accepts_system:
+        return model.perform_ocr(image_path, prompt=prompt, system_prompt=system_prompt)
     return model.perform_ocr(image_path, prompt=prompt)

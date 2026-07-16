@@ -8,7 +8,7 @@ class BaseOCRModel(abc.ABC):
         self.model_name = model_name
 
     @abc.abstractmethod
-    def perform_ocr(self, image_path: str, *, prompt: str | None = None) -> dict:
+    def perform_ocr(self, image_path: str, *, prompt: str | None = None, system_prompt: str | None = None) -> dict:
         """
         Performs OCR on the given image.
 

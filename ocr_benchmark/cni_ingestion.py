@@ -16,19 +16,30 @@ from pathlib import Path, PurePosixPath
 from typing import Any
 
 LOGGER = logging.getLogger(__name__)
-_SIDE_FILENAME = {
-    # ``document_id`` peut différer de l'ID du dossier client. Les garder
-    # séparés évite qu'un nom généré par le scanner casse le rapprochement label.
-    "recto": re.compile(r"^(?P<document_id>.+)_cin_recto\.pdf$", re.IGNORECASE),
-    "verso": re.compile(r"^(?P<document_id>.+)_cin_verso\.pdf$", re.IGNORECASE),
-}
+DEFAULT_RECTO_SUFFIX = "_CIN_Recto"
+DEFAULT_VERSO_SUFFIX = "_CIN_Verso"
 
 
-def scan_cni_clients(clients_root: Path, labels_root: Path | None = None) -> list[dict[str, Any]]:
+def _side_patterns(recto_suffix: str, verso_suffix: str) -> dict[str, re.Pattern[str]]:
+    """Construit des patrons sûrs depuis les suffixes éditables de l'UI."""
+    suffixes = {"recto": str(recto_suffix or "").strip(), "verso": str(verso_suffix or "").strip()}
+    if not all(suffixes.values()):
+        raise ValueError("Les suffixes PDF recto et verso ne peuvent pas être vides.")
+    return {side: re.compile(rf"^(?P<document_id>.+){re.escape(suffix)}\.pdf$", re.IGNORECASE) for side, suffix in suffixes.items()}
+
+
+def scan_cni_clients(
+    clients_root: Path,
+    labels_root: Path | None = None,
+    *,
+    recto_suffix: str = DEFAULT_RECTO_SUFFIX,
+    verso_suffix: str = DEFAULT_VERSO_SUFFIX,
+) -> list[dict[str, Any]]:
     """Construit un diagnostic d'entrée pour chaque sous-dossier client."""
     if not clients_root.is_dir():
         raise FileNotFoundError(f"Clients folder not found: {clients_root}")
     records: list[dict[str, Any]] = []
+    side_filename = _side_patterns(recto_suffix, verso_suffix)
     for folder in sorted(path for path in clients_root.iterdir() if path.is_dir()):
         record: dict[str, Any] = {
             "folder_client_id": folder.name, "client_dir": str(folder), "recto_pdf": None, "verso_pdf": None,
@@ -43,7 +54,7 @@ def scan_cni_clients(clients_root: Path, labels_root: Path | None = None) -> lis
         for candidate in folder.iterdir():
             if not candidate.is_file():
                 continue
-            for side, matcher in _SIDE_FILENAME.items():
+            for side, matcher in side_filename.items():
                 match = matcher.match(candidate.name)
                 if not match:
                     continue

@@ -16,6 +16,8 @@ import pandas as pd
 import dataset_generator
 from models.ollama_model import DEFAULT_OCR_PROMPT
 from ocr_benchmark.cni import (
+    DEFAULT_RECTO_SUFFIX,
+    DEFAULT_VERSO_SUFFIX,
     build_cni_prompt,
     build_combined_cni_prompt,
     import_cni_zip,
@@ -108,11 +110,8 @@ Le fichier est copié dans `dataset/user_uploads/` avec un nom non prédictible,
 puis ajouté atomiquement à `dataset/dataset.json`.
 """
 
-DEFAULT_CNI_OPERATOR_INSTRUCTIONS = (
-    "The card may use an old or new Moroccan CNI layout. Prioritize the visible "
-    "French/Arabic field labels and their alignment. Copy the printed Latin value "
-    "exactly; use null rather than guessing an ambiguous character."
-)
+DEFAULT_CNI_SYSTEM_PROMPT = "You are a precise OCR extraction engine. Return only valid JSON and never invent a value."
+DEFAULT_CNI_USER_INSTRUCTIONS = "Extract only requested values visibly printed in Latin characters. Use null when unreadable."
 
 APP_CSS = """
 .gradio-container {
@@ -448,17 +447,29 @@ def _cni_source_mode_visibility(mode: str) -> tuple[Any, Any]:
     return gr.update(visible=mode == "folder"), gr.update(visible=mode == "zip")
 
 
-def _cni_prompt_preview(strategy: str, instructions: str | None) -> str:
+def _cni_prompt_preview(strategy: str, system_prompt: str | None, instructions: str | None) -> str:
     """Affiche exactement les prompts CNI qui seront envoyés au modèle."""
     fields = load_cni_field_config(ROOT_DIR / "config" / "cni_fields.json")
     if strategy == "combined_vertical":
-        return build_combined_cni_prompt(fields, instructions=instructions)
+        return f"--- SYSTEM ---\n{system_prompt or ''}\n\n--- USER ---\n" + build_combined_cni_prompt(fields, instructions=instructions)
     return (
-        "--- PROMPT RECTO ---\n"
+        f"--- SYSTEM ---\n{system_prompt or ''}\n\n--- USER RECTO ---\n"
         + build_cni_prompt("recto", fields, instructions=instructions)
         + "\n\n--- PROMPT VERSO ---\n"
         + build_cni_prompt("verso", fields, instructions=instructions)
     )
+
+
+def _cni_alert_html(level: str, message: str) -> str:
+    """Affiche un état CNI avec une couleur et un symbole lisibles."""
+    styles = {
+        "ready": ("●", "#e8f1fb", "#2563a8"),
+        "success": ("✓", "#e8f7ee", "#167c46"),
+        "warning": ("⚠", "#fff5df", "#9a5b00"),
+        "error": ("✕", "#fcebea", "#b42318"),
+    }
+    symbol, background, color = styles.get(level, styles["ready"])
+    return f"<div style='padding:10px;border-radius:8px;background:{background};color:{color};font-weight:600'>{symbol} {html.escape(str(message))}</div>"
 
 
 def _cni_result_table(results: list[dict[str, Any]]) -> pd.DataFrame:
@@ -490,6 +501,14 @@ def _read_json_if_available(path_value: Any) -> Any:
         return json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         return {"status": "read_failed", "error": f"{type(exc).__name__}: {exc}"}
+
+
+def _cni_raw_output(path_value: Any) -> str:
+    """Expose la réponse brute ou l'erreur persistée d'une face CNI."""
+    value = _read_json_if_available(path_value)
+    if not isinstance(value, dict):
+        return "Aucun retour brut disponible."
+    return str(value.get("raw_response") or value.get("text") or value.get("error") or "(sortie vide)")
 
 
 def load_dataset() -> list[dict[str, Any]]:
@@ -1037,9 +1056,9 @@ def build_ui() -> gr.Blocks:
                                 info="Extraction et mesures techniques uniquement ; aucun score de comparaison.",
                             )
                             cni_launch = gr.Button("Lancer", variant="primary")
-                            cni_stop = gr.Button("Annuler", variant="stop")
-                        cni_launch_feedback = gr.Markdown(
-                            "Prêt : sélectionnez des modèles, scannez les dossiers puis lancez le benchmark."
+                            cni_stop = gr.Button("Annuler", variant="stop", visible=False)
+                        cni_launch_feedback = gr.HTML(
+                            "<div style='padding:10px;border-radius:8px;background:#e8f1fb;color:#2563a8'>● Prêt : sélectionnez des modèles, scannez les dossiers puis lancez le benchmark.</div>"
                         )
                     with gr.Tab("2. Suivi en direct", render_children=True):
                         cni_run_status = gr.Textbox(label="État CNI", value="Prêt.", interactive=False)
@@ -1090,6 +1109,9 @@ def build_ui() -> gr.Blocks:
                                                 cni_verso_json = gr.JSON(label="JSON verso")
                                         with gr.Tab("Fusion globale", render_children=True):
                                             cni_global_json = gr.JSON(label="JSON global")
+                                        with gr.Tab("Retour brut et erreurs", render_children=True):
+                                            cni_recto_raw = gr.Code(label="Recto : retour brut conservé", language=None, lines=7, interactive=False)
+                                            cni_verso_raw = gr.Code(label="Verso : retour brut conservé", language=None, lines=7, interactive=False)
                     with gr.Tab("4. Paramètres", render_children=True):
                         gr.Markdown(
                             "### Paramètres CNI\n\n"
@@ -1106,15 +1128,24 @@ def build_ui() -> gr.Blocks:
                             )
                             cni_dpi = gr.Slider(150, 450, value=300, step=25, label="Résolution PDF (DPI)")
                             cni_timeout = gr.Number(value=300, minimum=1, maximum=7200, precision=0, label="Temps maximum par appel (s)")
-                        cni_prompt_instructions = gr.Textbox(
-                            value=DEFAULT_CNI_OPERATOR_INSTRUCTIONS,
-                            label="Consignes additionnelles de prompt engineering",
+                        with gr.Row():
+                            cni_recto_suffix = gr.Textbox(value=DEFAULT_RECTO_SUFFIX, label="Suffixe PDF recto", info="Texte avant .pdf, par exemple _CIN_Recto.")
+                            cni_verso_suffix = gr.Textbox(value=DEFAULT_VERSO_SUFFIX, label="Suffixe PDF verso", info="Texte avant .pdf, par exemple _CIN_Verso.")
+                        cni_system_prompt = gr.Textbox(
+                            value=DEFAULT_CNI_SYSTEM_PROMPT,
+                            label="Prompt système",
                             lines=5,
-                            info="Ajoutées après le contrat CNI. Les clés JSON restent imposées par le système.",
+                            info="Règle de plus haute priorité. Trop long ou contradictoire réduit la stabilité des réponses.",
+                        )
+                        cni_prompt_instructions = gr.Textbox(
+                            value=DEFAULT_CNI_USER_INSTRUCTIONS,
+                            label="Prompt utilisateur / consignes d'extraction",
+                            lines=4,
+                            info="Demande appliquée à chaque image. Les clés JSON doivent rester stables pour comparer les modèles.",
                         )
                         cni_prompt_preview = gr.Code(
-                            value=_cni_prompt_preview("separate_calls", DEFAULT_CNI_OPERATOR_INSTRUCTIONS),
-                            label="Prompt complet envoyé au modèle",
+                            value=_cni_prompt_preview("separate_calls", DEFAULT_CNI_SYSTEM_PROMPT, DEFAULT_CNI_USER_INSTRUCTIONS),
+                            label="Prompts réellement envoyés (système + utilisateur)",
                             lines=18,
                             interactive=False,
                         )
@@ -1510,7 +1541,7 @@ def build_ui() -> gr.Blocks:
                 LOGGER.exception("CNI ZIP import failed")
                 return gr.update(), gr.update(), f"Import ZIP impossible : {type(exc).__name__}: {exc}"
 
-        def scan_cni_input(clients_root_text, labels_root_text):
+        def scan_cni_input(clients_root_text, labels_root_text, recto_suffix, verso_suffix):
             """Scanne les dossiers et met à jour l'état CNI et les aperçus."""
             if not clients_root_text or not str(clients_root_text).strip():
                 return [], pd.DataFrame(), "Scan impossible : indiquez le dossier clients.", gr.update(choices=_cni_source_choices([]), value=None)
@@ -1521,7 +1552,11 @@ def build_ui() -> gr.Blocks:
                     return [], pd.DataFrame(), f"Scan impossible : dossier labels introuvable : `{labels_root}`", gr.update(choices=_cni_source_choices([]), value=None)
                 # L'interface ne propose que les clients et PDF issus du scan :
                 # le rapprochement reste donc fondé sur le dossier client.
-                records = materialize_cni_labels(scan_cni_clients(clients_root, labels_root))
+                records = materialize_cni_labels(scan_cni_clients(
+                    clients_root, labels_root,
+                    recto_suffix=str(recto_suffix or "").strip(),
+                    verso_suffix=str(verso_suffix or "").strip(),
+                ))
                 ready = sum(record["status"] == "ready" for record in records)
                 labels = sum(record.get("label_status") == "label_materialized" for record in records)
                 unlabeled = sum(record["status"] == "ready" and record.get("label_status") != "label_materialized" for record in records)
@@ -1593,6 +1628,7 @@ def build_ui() -> gr.Blocks:
                     "Lancez un benchmark pour alimenter cet onglet.",
                     "### Mesures\n\nAucun résultat sélectionné.",
                     empty_json, empty_json, empty_json, empty_json,
+                    "Aucun retour brut disponible.", "Aucun retour brut disponible.",
                 )
             position = max(0, min(int(index or 0) + offset, len(results) - 1))
             result = results[position]
@@ -1613,6 +1649,8 @@ def build_ui() -> gr.Blocks:
                 _read_json_if_available(result.get("recto_json_path")),
                 _read_json_if_available(result.get("verso_json_path")),
                 _read_json_if_available(result.get("global_json_path")),
+                _cni_raw_output(result.get("recto_json_path")),
+                _cni_raw_output(result.get("verso_json_path")),
             )
 
         def select_cni_detail(selection, results):
@@ -1627,7 +1665,7 @@ def build_ui() -> gr.Blocks:
             """Passe à la paire CNI suivante."""
             return show_cni_detail(index, results, 1)
 
-        def on_cni_run(model_specs, client_records, strategy, dpi, timeout, prompt_instructions, continue_without_label):
+        def on_cni_run(model_specs, client_records, strategy, dpi, timeout, system_prompt, prompt_instructions, continue_without_label):
             """Valide le lancement puis diffuse l'avancement CNI document par document."""
             empty = empty_figure()
             results: list[dict[str, Any]] = []
@@ -1637,14 +1675,16 @@ def build_ui() -> gr.Blocks:
                 failures = len(results) - successes
                 return f"**Traité :** {len(results)} / {total} · **Succès :** {successes} · **Erreurs :** {failures}"
 
-            def view(feedback: str, status: str, progress: float, image_path, live_text: str, total: int, *, select_last: bool = False):
+            def view(feedback: str, status: str, progress: float, image_path, live_text: str, total: int, *, running: bool = False, alert_level: str = "ready", select_last: bool = False):
                 table = _cni_result_table(results)
                 selector = gr.update(
                     choices=cni_choices(results),
                     value=(len(results) - 1 if select_last and results else None),
                 )
                 return (
-                    feedback, status, progress, image_path, live_text,
+                    _cni_alert_html(alert_level, feedback),
+                    gr.update(visible=not running), gr.update(visible=running),
+                    status, progress, image_path, live_text,
                     counters(total), table, results, table, selector,
                     cni_accuracy_chart(results), cni_latency_chart(results),
                 )
@@ -1687,14 +1727,14 @@ def build_ui() -> gr.Blocks:
                 "CNI launch accepted | pairs=%d | models=%d | strategy=%s | dpi=%s | timeout=%s | unlabeled=%d | invalid=%d",
                 len(ready_records), len(model_specs), strategy, dpi, timeout, len(unlabeled), invalid_count,
             )
-            yield view(start_message, "Initialisation des modèles en cours.", 0, None, start_message, total_pairs)
+            yield view(start_message, "Initialisation des modèles en cours.", 0, None, start_message, total_pairs, running=True)
 
             fields = load_cni_field_config(ROOT_DIR / "config" / "cni_fields.json")
             try:
                 for event in iter_cni_benchmark(
                     build_default_registry(), list(model_specs), ready_records, RUNS_DIR,
                     strategy=str(strategy), dpi=int(dpi), timeout_seconds=float(timeout or 0),
-                    fields=fields, prompt_instructions=prompt_instructions,
+                    fields=fields, prompt_instructions=prompt_instructions, system_prompt=system_prompt,
                 ):
                     total, completed = int(event.get("total", total_pairs)), int(event.get("completed", 0))
                     progress = completed / total * 100 if total else 0
@@ -1710,7 +1750,7 @@ def build_ui() -> gr.Blocks:
                         )
                         yield view(
                             "Lancement actif : consultez l’onglet 2. Suivi en direct.",
-                            f"Analyse en cours : {client_id} ({side})", progress, event.get("image_path"), live_text, total,
+                            f"Analyse en cours : {client_id} ({side})", progress, event.get("image_path"), live_text, total, running=True,
                         )
                         continue
 
@@ -1724,15 +1764,17 @@ def build_ui() -> gr.Blocks:
                         f"- **Client :** `{client_id}`\n- **Modèle :** `{model}`\n"
                         f"- **Statut :** `{status_value}`\n- **Label :** `{(result or {}).get('label_status', '—')}`"
                     )
+                    finished = completed >= total
                     yield view(
-                        "Lancement actif : consultez l’onglet 2. Suivi en direct.",
+                        "Benchmark terminé." if finished else "Lancement actif : consultez l’onglet 2. Suivi en direct.",
                         f"Résultat reçu : {client_id} ({status_value})", progress,
-                        (result or {}).get("recto_image_path"), live_text, total, select_last=True,
+                        (result or {}).get("recto_image_path"), live_text, total,
+                        running=not finished, alert_level="success" if finished else "ready", select_last=True,
                     )
             except Exception as exc:
                 LOGGER.exception("CNI benchmark interrupted")
                 message = f"Benchmark CNI interrompu : {type(exc).__name__}: {exc}"
-                yield view(message, message, 0, None, "Consultez le terminal : l'erreur complète y est enregistrée.", total_pairs)
+                yield view(message, message, 0, None, "Consultez le terminal : l'erreur complète y est enregistrée.", total_pairs, alert_level="error")
 
         prepare_run.click(
             on_prepare,
@@ -1845,7 +1887,7 @@ def build_ui() -> gr.Blocks:
         )
         cni_scan.click(
             scan_cni_input,
-            inputs=[cni_clients_root, cni_labels_root],
+            inputs=[cni_clients_root, cni_labels_root, cni_recto_suffix, cni_verso_suffix],
             outputs=[cni_clients_state, cni_scan_report, cni_scan_status, cni_source_selector],
             queue=False,
         )
@@ -1858,21 +1900,22 @@ def build_ui() -> gr.Blocks:
         cni_refresh_models.click(refresh_cni_models, inputs=[cni_models], outputs=[cni_models], queue=False)
         cni_refresh_prompt.click(
             _cni_prompt_preview,
-            inputs=[cni_strategy, cni_prompt_instructions],
+            inputs=[cni_strategy, cni_system_prompt, cni_prompt_instructions],
             outputs=[cni_prompt_preview],
             queue=False,
         )
         cni_strategy.change(
             _cni_prompt_preview,
-            inputs=[cni_strategy, cni_prompt_instructions],
+            inputs=[cni_strategy, cni_system_prompt, cni_prompt_instructions],
             outputs=[cni_prompt_preview],
             queue=False,
         )
         cni_event = cni_launch.click(
             on_cni_run,
-            inputs=[cni_models, cni_clients_state, cni_strategy, cni_dpi, cni_timeout, cni_prompt_instructions, cni_continue_without_label],
+            inputs=[cni_models, cni_clients_state, cni_strategy, cni_dpi, cni_timeout, cni_system_prompt, cni_prompt_instructions, cni_continue_without_label],
             outputs=[
                 cni_launch_feedback,
+                cni_launch, cni_stop,
                 cni_run_status, cni_progress, cni_live_image, cni_live_result,
                 cni_live_counters, cni_live_table,
                 cni_results_state, cni_results_table, cni_result_selector,
@@ -1881,7 +1924,16 @@ def build_ui() -> gr.Blocks:
             concurrency_limit=1,
             concurrency_id="cni-benchmark-run",
         )
-        cni_stop.click(fn=None, cancels=[cni_event])
+        cni_stop.click(
+            lambda: (
+                gr.update(visible=True), gr.update(visible=False),
+                _cni_alert_html("warning", "Annulation demandée : l'appel en cours est arrêté dès que le fournisseur rend la main."),
+                "Annulation demandée.",
+            ),
+            outputs=[cni_launch, cni_stop, cni_launch_feedback, cni_run_status],
+            queue=False,
+            cancels=[cni_event],
+        )
         cni_apply_filters.click(
             filter_cni_results,
             inputs=[cni_results_state, cni_accuracy_min, cni_accuracy_max, cni_include_unscored],
@@ -1901,6 +1953,8 @@ def build_ui() -> gr.Blocks:
             cni_recto_json,
             cni_verso_json,
             cni_global_json,
+            cni_recto_raw,
+            cni_verso_raw,
         ]
         cni_previous_result.click(
             show_previous_cni_detail,

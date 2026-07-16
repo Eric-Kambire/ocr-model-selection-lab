@@ -72,8 +72,7 @@ def build_cni_prompt(side: str, fields: dict[str, list[dict[str, str]]] | None =
     )
     return (
         f"Extract structured data from the {side.upper()} side of a Moroccan national identity card (CNI), old or new layout.\n"
-        "Use French and Arabic labels plus their position to identify fields. Copy only the Latin/French value printed on the card; "
-        "Arabic may identify a label but must not be translated or transliterated. Do not guess, infer, or add fields.\n"
+        "Copy only values visibly printed in Latin characters. Do not translate, transliterate, infer, or add fields.\n"
         f"{side_focus}\n"
         "When several dates or names are visible, select only the value attached to the requested field label. "
         "Use null when unreadable. Preserve spelling, punctuation and accents; convert a clearly readable date to YYYY-MM-DD.\n"
@@ -92,8 +91,7 @@ def build_combined_cni_prompt(fields: dict[str, list[dict[str, str]]] | None = N
     }
     return (
         "The image contains two sides of the same Moroccan national identity card, old or new layout: RECTO at the top and VERSO at the bottom.\n"
-        "Use French and Arabic labels plus their position to map each value to its side. Copy only Latin/French values printed on the card; "
-        "Arabic may identify labels but must not be translated. Do not guess, infer, duplicate across sides or add fields.\n"
+        "Copy only values visibly printed in Latin characters. Do not translate, transliterate, infer, duplicate across sides or add fields.\n"
         "For ambiguous or unreadable values use null. Preserve spelling, punctuation and accents; format a clearly readable date as YYYY-MM-DD.\n"
         "Return ONLY one valid JSON object with recto and verso: no Markdown, prose, comments or code fence.\n"
         "Required schema:\n" + json.dumps(schema, ensure_ascii=False)

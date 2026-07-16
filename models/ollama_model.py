@@ -26,7 +26,7 @@ class OllamaOCRModel(BaseOCRModel):
             self.client = None
             print("Warning: 'ollama' Python library not installed. Please install it using pip.")
 
-    def perform_ocr(self, image_path: str, *, prompt: str | None = None) -> dict:
+    def perform_ocr(self, image_path: str, *, prompt: str | None = None, system_prompt: str | None = None) -> dict:
         """Run OCR and allow a structured workflow to override one prompt."""
         if not self.client:
             return {
@@ -49,19 +49,18 @@ class OllamaOCRModel(BaseOCRModel):
             }
 
         effective_prompt = prompt.strip() if prompt and prompt.strip() else self.prompt
+        effective_system = system_prompt.strip() if system_prompt and system_prompt.strip() else None
         start_time = time.time()
         
         try:
             # Call Ollama chat API with images
+            messages = []
+            if effective_system:
+                messages.append({"role": "system", "content": effective_system})
+            messages.append({"role": "user", "content": effective_prompt, "images": [image_path]})
             response = self.client.chat(
                 model=self.model_name,
-                messages=[
-                    {
-                        "role": "user",
-                        "content": effective_prompt,
-                        "images": [image_path]
-                    }
-                ],
+                messages=messages,
                 options={
                     "temperature": 0.0  # Keep transcription deterministic
                 }
