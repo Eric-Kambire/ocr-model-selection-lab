@@ -980,13 +980,15 @@ def build_ui() -> gr.Blocks:
                     with gr.Column(scale=2, elem_id="dataset-catalog"):
                         catalog_component = gr.HTML(_catalog_html(dataset))
 
-            with gr.Tab("8. Benchmark CNI"):
+            # Les vues CNI restent montées pendant le générateur de benchmark :
+            # l'utilisateur peut donc changer d'onglet sans interrompre le suivi live.
+            with gr.Tab("8. Benchmark CNI", render_children=True):
                 gr.HTML(
                     "<header class='cni-header'><h2>Benchmark CNI</h2>"
                     "<span>Extraction structurée · exécution séquentielle</span></header>"
                 )
                 with gr.Tabs(elem_id="cni-tabs"):
-                    with gr.Tab("1. Préparer"):
+                    with gr.Tab("1. Préparer", render_children=True):
                         with gr.Row(elem_id="cni-prep-grid"):
                             with gr.Column(scale=1, elem_id="cni-source"):
                                 gr.HTML("<div class='cni-section-title'>01 <span>Source des documents</span></div>")
@@ -1039,7 +1041,7 @@ def build_ui() -> gr.Blocks:
                         cni_launch_feedback = gr.Markdown(
                             "Prêt : sélectionnez des modèles, scannez les dossiers puis lancez le benchmark."
                         )
-                    with gr.Tab("2. Suivi en direct"):
+                    with gr.Tab("2. Suivi en direct", render_children=True):
                         cni_run_status = gr.Textbox(label="État CNI", value="Prêt.", interactive=False)
                         cni_progress = gr.Slider(0, 100, value=0, step=0.1, label="Progression CNI (%)", interactive=False)
                         cni_live_counters = gr.Markdown("**Traité :** 0 / 0 · **Succès :** 0 · **Erreurs :** 0")
@@ -1051,7 +1053,7 @@ def build_ui() -> gr.Blocks:
                             label="Résultats reçus pendant le run",
                             interactive=False,
                         )
-                    with gr.Tab("3. Résultats"):
+                    with gr.Tab("3. Résultats", render_children=True):
                         # Même hiérarchie que « 4. Résultats détaillés » :
                         # filtres, liste, navigation, puis inspection complète.
                         gr.Markdown("### Résultats détaillés CNI\n\nFiltrez les évaluations puis inspectez une paire recto/verso.")
@@ -1088,7 +1090,7 @@ def build_ui() -> gr.Blocks:
                                                 cni_verso_json = gr.JSON(label="JSON verso")
                                         with gr.Tab("Fusion globale", render_children=True):
                                             cni_global_json = gr.JSON(label="JSON global")
-                    with gr.Tab("4. Paramètres"):
+                    with gr.Tab("4. Paramètres", render_children=True):
                         gr.Markdown(
                             "### Paramètres CNI\n\n"
                             "Les réglages sont appliqués au prochain lancement. Le prompt complet est affiché avant l'appel modèle."
