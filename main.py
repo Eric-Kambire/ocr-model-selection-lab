@@ -114,13 +114,12 @@ puis ajouté atomiquement à `dataset/dataset.json`.
 # Ces consignes restent courtes et complètent le contrat JSON centralisé. Elles
 # sont modifiables dans l'onglet Paramètres CNI avant chaque lancement.
 DEFAULT_CNI_SYSTEM_PROMPT = (
-    "You are a precise OCR extraction engine. Follow the requested JSON schema "
-    "exactly. Return only valid JSON and never invent a value. Do not decode or "
-    "use QR codes, barcodes, or MRZ in this phase."
+    "Extract Moroccan CNI fields exactly. Return only one valid JSON object matching "
+    "the requested schema. Never guess; use null if unreadable. Ignore QR, barcode and MRZ."
 )
 DEFAULT_CNI_USER_INSTRUCTIONS = (
-    "Extract only the requested values visibly printed in Latin characters. "
-    "Use null when a value is unreadable."
+    "Read Latin values only. 'Né le' = birth date; nearby 'à' = birth city; "
+    "'Valable jusqu’au' = expiry. Do not confuse holder, parents, CAN or civil-status number."
 )
 
 APP_CSS = """
@@ -1054,14 +1053,31 @@ def _read_json_if_available(path_value: Any) -> Any:
 
 
 def _read_text_if_available(path_value: Any) -> str:
-    """Lit une sortie brute persistée, y compris une réponse d'erreur modèle."""
+    """Lit la sortie brute, puis une réponse tardive ou l'erreur persistée."""
     if not path_value:
         return "Aucune sortie brute disponible."
     path = Path(str(path_value))
+    side = "recto" if "recto" in path.name else "verso" if "verso" in path.name else "combined"
+    late_path = path.parent / f"late_{side}_output.json"
+    # Un appel peut dépasser le délai UI puis répondre plus tard. Cette réponse
+    # est volontairement affichée avant le fichier brut vide du timeout.
+    if late_path.is_file():
+        try:
+            late = json.loads(late_path.read_text(encoding="utf-8"))
+            return "[Réponse arrivée après timeout]\n" + json.dumps(late, ensure_ascii=False, indent=2)
+        except (OSError, json.JSONDecodeError) as exc:
+            return f"Lecture de la réponse tardive impossible : {type(exc).__name__}: {exc}"
     if not path.is_file():
         return "Aucune sortie brute disponible pour cette face."
     try:
-        return path.read_text(encoding="utf-8") or "(sortie vide)"
+        content = path.read_text(encoding="utf-8")
+        if content.strip():
+            return content
+        extraction_path = path.parent / f"{side}.extraction.json"
+        if extraction_path.is_file():
+            extraction = json.loads(extraction_path.read_text(encoding="utf-8"))
+            return "[Aucune réponse modèle]\n" + str(extraction.get("error") or extraction.get("parse_error") or "sortie vide")
+        return "(sortie vide)"
     except OSError as exc:
         return f"Lecture impossible : {type(exc).__name__}: {exc}"
 
