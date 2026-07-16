@@ -45,6 +45,7 @@ def iter_cni_benchmark(
     unload_after_task: bool = True,
     fields: dict[str, list[dict[str, str]]] | None = None,
     prompt_instructions: str | None = None,
+    system_prompt: str | None = None,
 ) -> Iterator[dict[str, Any]]:
     """Émet des événements live et persiste un jeu d'artefacts par modèle/client.
 
@@ -142,6 +143,7 @@ def iter_cni_benchmark(
                     timeout_seconds=timeout_seconds,
                     fields=fields,
                     prompt_instructions=prompt_instructions,
+                    system_prompt=system_prompt,
                 )
                 completed += 1
                 results.append(result)
@@ -198,6 +200,7 @@ def _extract_one_cni_client(
     timeout_seconds: float | None,
     fields: dict[str, list[dict[str, str]]] | None,
     prompt_instructions: str | None,
+    system_prompt: str | None,
 ) -> dict[str, Any]:
     """Exécute une stratégie et écrit les JSON recto, verso et global."""
     artefacts_dir = Path(prepared["recto_crop"]["image_path"]).parent
@@ -211,6 +214,7 @@ def _extract_one_cni_client(
             timeout_seconds,
             artefacts_dir,
             "combined",
+            system_prompt,
         )
         recto, verso, parse_error = parse_combined_cni_json_response(inference.text, fields)
         recto_inference = verso_inference = inference
@@ -225,6 +229,7 @@ def _extract_one_cni_client(
             timeout_seconds,
             artefacts_dir,
             "recto",
+            system_prompt,
         )
         verso_inference = _perform_cni_call(
             model,
@@ -233,6 +238,7 @@ def _extract_one_cni_client(
             timeout_seconds,
             artefacts_dir,
             "verso",
+            system_prompt,
         )
         recto, recto_parse_error = parse_cni_json_response(recto_inference.text, "recto", fields)
         verso, verso_parse_error = parse_cni_json_response(verso_inference.text, "verso", fields)
@@ -282,6 +288,9 @@ def _extract_one_cni_client(
         "recto_json_path": str(artefacts_dir / "recto.extraction.json"),
         "verso_json_path": str(artefacts_dir / "verso.extraction.json"),
         "global_json_path": str(artefacts_dir / "global.extraction.json"),
+        "recto_raw_output_path": str(artefacts_dir / "raw_recto_output.txt"),
+        "verso_raw_output_path": str(artefacts_dir / "raw_verso_output.txt"),
+        "combined_raw_output_path": str(artefacts_dir / "raw_combined_output.txt"),
         "recto_image_path": prepared["recto_crop"]["image_path"],
         "verso_image_path": prepared["verso_crop"]["image_path"],
         "combined_image_path": prepared["combined_image"],
@@ -289,7 +298,15 @@ def _extract_one_cni_client(
     }
 
 
-def _perform_cni_call(model: Any, image_path: Path, prompt: str, timeout_seconds: float | None, artefacts_dir: Path, side: str) -> InferenceResult:
+def _perform_cni_call(
+    model: Any,
+    image_path: Path,
+    prompt: str,
+    timeout_seconds: float | None,
+    artefacts_dir: Path,
+    side: str,
+    system_prompt: str | None,
+) -> InferenceResult:
     """Appelle une image et conserve sortie brute ou sortie tardive."""
     def save_late(raw: Any | None, error: str | None) -> None:
         # Une réponse arrivée après timeout est précieuse pour le débogage, mais
@@ -303,11 +320,18 @@ def _perform_cni_call(model: Any, image_path: Path, prompt: str, timeout_seconds
 
     # Le runner générique centralise le timeout fournisseur et le mécanisme de
     # réponse tardive afin que CNI et benchmark général se comportent pareil.
+    # Le prompt exact reste dans le run, même si l'appel échoue. C'est le
+    # point de départ indispensable pour comprendre une réponse invalide.
+    (artefacts_dir / f"prompt_{side}.txt").write_text(
+        "--- SYSTEM ---\n" + (system_prompt or "") + "\n\n--- USER ---\n" + prompt,
+        encoding="utf-8",
+    )
     raw = BenchmarkRunner._perform_with_timeout(
         model,
         str(image_path),
         timeout_seconds,
         prompt=prompt,
+        system_prompt=system_prompt,
         late_result=save_late,
     )
     inference = raw if isinstance(raw, InferenceResult) else InferenceResult.from_legacy_dict(raw)
@@ -326,6 +350,11 @@ def _side_payload(side: str, fields: dict[str, str | None], inference: Inference
         "fields": fields,
         "parse_error": parse_error,
         "error": inference.error,
+        # La réponse brute reste visible même lorsque le parsing JSON échoue ou
+        # que le fournisseur retourne un statut failed/timeout.
+        "text": inference.text,
+        "raw_response": inference.raw_response,
+        "reasoning": inference.reasoning,
         "latency": inference.latency_seconds,
         "input_tokens": inference.input_tokens,
         "output_tokens": inference.output_tokens,

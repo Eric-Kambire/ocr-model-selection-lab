@@ -51,40 +51,43 @@ def load_cni_field_config(config_path: Path | None = None) -> dict[str, list[dic
     return value
 
 
-def _prompt_instructions(instructions: str | None) -> str:
-    """Ajoute des consignes opérateur courtes, sans modifier le schéma JSON."""
+def _prompt_user_instructions(instructions: str | None) -> str:
+    """Ajoute les consignes utilisateur sans autoriser un changement de schéma."""
     cleaned = (instructions or "").strip()
     if not cleaned:
         return ""
-    return "\nAdditional operator instructions (they must not change the JSON schema):\n" + cleaned[:4000]
+    return "\nAdditional user instructions (do not change the JSON schema):\n" + cleaned[:4000]
 
 
 def build_cni_prompt(side: str, fields: dict[str, list[dict[str, str]]] | None = None, instructions: str | None = None) -> str:
-    """Construit le prompt JSON strict pour une seule face de CNI."""
+    """Construit le message utilisateur JSON strict pour une seule face de CNI.
+
+    Le message système est injecté séparément par l'adaptateur Ollama. Ici, on
+    garde une demande courte, orientée extraction latine, pour limiter les
+    digressions du modèle pendant la première phase du projet.
+    """
     if side not in {"recto", "verso"}:
         raise ValueError("side must be 'recto' or 'verso'.")
     config = fields or load_cni_field_config()
     schema = {str(item["key"]): None for item in config[side]}
     side_focus = (
-        "On RECTO, use the visible identity labels for CIN, surname, given name, birth date, birth city and validity date."
+        "Read the identity number, surname, given name, birth date, birth city and validity date."
         if side == "recto"
-        else "On VERSO, use the visible labels for CIN, validity date and full address; do not confuse parent names or civil-status data with the requested fields."
+        else "Read the identity number, validity date and full address. Do not use parent names or civil-status data."
     )
     return (
-        f"Extract structured data from the {side.upper()} side of a Moroccan national identity card (CNI), old or new layout.\n"
-        "Use French and Arabic labels plus their position to identify fields. Copy only the Latin/French value printed on the card; "
-        "Arabic may identify a label but must not be translated or transliterated. Do not guess, infer, or add fields.\n"
+        f"Extract these fields from the {side.upper()} side of a Moroccan CNI (old or new layout).\n"
+        "Read only values visibly printed in Latin characters. Do not translate, transliterate, infer, or add fields.\n"
         f"{side_focus}\n"
-        "When several dates or names are visible, select only the value attached to the requested field label. "
-        "Use null when unreadable. Preserve spelling, punctuation and accents; convert a clearly readable date to YYYY-MM-DD.\n"
+        "Use null when unreadable. Preserve spelling, punctuation and accents. Format a clearly readable date as YYYY-MM-DD.\n"
         "Return ONLY one valid JSON object: no Markdown, prose, comments or code fence.\n"
         "Required JSON schema:\n" + json.dumps(schema, ensure_ascii=False)
-        + _prompt_instructions(instructions)
+        + _prompt_user_instructions(instructions)
     )
 
 
 def build_combined_cni_prompt(fields: dict[str, list[dict[str, str]]] | None = None, instructions: str | None = None) -> str:
-    """Construit le prompt JSON strict pour le composite recto-dessus-verso."""
+    """Construit le message utilisateur pour le composite recto-dessus-verso."""
     config = fields or load_cni_field_config()
     schema = {
         "recto": {str(item["key"]): None for item in config["recto"]},
@@ -92,12 +95,11 @@ def build_combined_cni_prompt(fields: dict[str, list[dict[str, str]]] | None = N
     }
     return (
         "The image contains two sides of the same Moroccan national identity card, old or new layout: RECTO at the top and VERSO at the bottom.\n"
-        "Use French and Arabic labels plus their position to map each value to its side. Copy only Latin/French values printed on the card; "
-        "Arabic may identify labels but must not be translated. Do not guess, infer, duplicate across sides or add fields.\n"
+        "Read only values visibly printed in Latin characters. Do not translate, transliterate, infer, duplicate across sides or add fields.\n"
         "For ambiguous or unreadable values use null. Preserve spelling, punctuation and accents; format a clearly readable date as YYYY-MM-DD.\n"
         "Return ONLY one valid JSON object with recto and verso: no Markdown, prose, comments or code fence.\n"
         "Required schema:\n" + json.dumps(schema, ensure_ascii=False)
-        + _prompt_instructions(instructions)
+        + _prompt_user_instructions(instructions)
     )
 
 

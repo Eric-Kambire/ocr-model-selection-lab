@@ -54,8 +54,14 @@ class OllamaOCRModel(BaseOCRModel):
             self.client = None
             LOGGER.exception("Ollama Python library is not installed | model=%s", self.model_name)
 
-    def perform_ocr(self, image_path: str, *, prompt: str | None = None) -> dict:
-        """Run one image through Ollama, optionally overriding this call's prompt."""
+    def perform_ocr(
+        self,
+        image_path: str,
+        *,
+        prompt: str | None = None,
+        system_prompt: str | None = None,
+    ) -> dict:
+        """Run one image through Ollama with optional system and user messages."""
         if not self.client:
             LOGGER.error("Ollama call skipped: Python client unavailable | model=%s", self.model_name)
             return {
@@ -79,25 +85,30 @@ class OllamaOCRModel(BaseOCRModel):
             }
 
         effective_prompt = prompt.strip() if prompt and prompt.strip() else self.prompt
+        effective_system_prompt = system_prompt.strip() if system_prompt and system_prompt.strip() else None
         start_time = time.time()
         LOGGER.info(
-            "Ollama request started | model=%s | image=%s | temperature=0.0 | prompt_chars=%d",
-            self.model_name, image_path, len(effective_prompt),
+            "Ollama request started | model=%s | image=%s | temperature=0.0 | system_chars=%d | user_chars=%d",
+            self.model_name, image_path, len(effective_system_prompt or ""), len(effective_prompt),
         )
         
         try:
             # Ollama accepts a local image path in ``images``. Keeping the
             # prompt and image in one chat message makes this adapter compatible
             # with both text-only OCR prompts and vision-capable models.
+            messages = []
+            if effective_system_prompt:
+                messages.append({"role": "system", "content": effective_system_prompt})
+            messages.append(
+                {
+                    "role": "user",
+                    "content": effective_prompt,
+                    "images": [image_path],
+                }
+            )
             response = self.client.chat(
                 model=self.model_name,
-                messages=[
-                    {
-                        "role": "user",
-                        "content": effective_prompt,
-                        "images": [image_path]
-                    }
-                ],
+                messages=messages,
                 options={
                     "temperature": 0.0,
                     **({"num_thread": self.cpu_threads} if self.cpu_threads else {}),
