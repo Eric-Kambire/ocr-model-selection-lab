@@ -31,6 +31,18 @@ DEFAULT_CNI_FIELD_CONFIG = {
     ],
 }
 
+# Règles métier stabilisées à partir des exemples de CNI. Elles guident la
+# sélection des champs existants sans introduire pour l'instant de nouvelles
+# clés (parents, CAN, état civil, QR ou MRZ) dans le contrat JSON.
+CNI_READING_RULES = (
+    "The card can use an old or new Moroccan CNI layout; the version is irrelevant. "
+    "Use the visible side being processed. A date next to 'Né le' is the birth date; "
+    "a place near 'à' and that birth date is the birth city; a date next to 'Valable jusqu’au' is the expiry date. "
+    "Do not confuse the holder with parent names near 'Fils de' or 'Et de'. "
+    "Do not confuse the visible CNI number with CAN, civil-status number, QR content, barcode content, or MRZ identifiers. "
+    "Do not read, decode, extract, or use QR codes, barcodes, or MRZ in this phase."
+)
+
 
 def load_cni_field_config(config_path: Path | None = None) -> dict[str, list[dict[str, str]]]:
     """Charge et valide le contrat de champs CNI modifiable."""
@@ -78,7 +90,8 @@ def build_cni_prompt(side: str, fields: dict[str, list[dict[str, str]]] | None =
     return (
         f"Extract these fields from the {side.upper()} side of a Moroccan CNI (old or new layout).\n"
         "Read only values visibly printed in Latin characters. Do not translate, transliterate, infer, or add fields.\n"
-        f"{side_focus}\n"
+        + CNI_READING_RULES + "\n"
+        + f"{side_focus}\n"
         "Use null when unreadable. Preserve spelling, punctuation and accents. Format a clearly readable date as YYYY-MM-DD.\n"
         "Return ONLY one valid JSON object: no Markdown, prose, comments or code fence.\n"
         "Required JSON schema:\n" + json.dumps(schema, ensure_ascii=False)
@@ -96,7 +109,8 @@ def build_combined_cni_prompt(fields: dict[str, list[dict[str, str]]] | None = N
     return (
         "The image contains two sides of the same Moroccan national identity card, old or new layout: RECTO at the top and VERSO at the bottom.\n"
         "Read only values visibly printed in Latin characters. Do not translate, transliterate, infer, duplicate across sides or add fields.\n"
-        "For ambiguous or unreadable values use null. Preserve spelling, punctuation and accents; format a clearly readable date as YYYY-MM-DD.\n"
+        + CNI_READING_RULES + "\n"
+        + "For ambiguous or unreadable values use null. Preserve spelling, punctuation and accents; format a clearly readable date as YYYY-MM-DD.\n"
         "Return ONLY one valid JSON object with recto and verso: no Markdown, prose, comments or code fence.\n"
         "Required schema:\n" + json.dumps(schema, ensure_ascii=False)
         + _prompt_user_instructions(instructions)

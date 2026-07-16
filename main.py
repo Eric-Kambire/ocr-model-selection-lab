@@ -115,7 +115,8 @@ puis ajouté atomiquement à `dataset/dataset.json`.
 # sont modifiables dans l'onglet Paramètres CNI avant chaque lancement.
 DEFAULT_CNI_SYSTEM_PROMPT = (
     "You are a precise OCR extraction engine. Follow the requested JSON schema "
-    "exactly. Return only valid JSON and never invent a value."
+    "exactly. Return only valid JSON and never invent a value. Do not decode or "
+    "use QR codes, barcodes, or MRZ in this phase."
 )
 DEFAULT_CNI_USER_INSTRUCTIONS = (
     "Extract only the requested values visibly printed in Latin characters. "
