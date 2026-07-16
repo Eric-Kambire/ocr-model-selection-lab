@@ -327,6 +327,9 @@ APP_CSS = """
 }
 #page-cni {
     gap: 12px !important;
+    /* Même fond que la branche principale : aucune zone blanche ne doit
+       apparaître lorsque l'espace CNI est affiché ou qu'une vue change. */
+    background: var(--body-background-fill) !important;
 }
 .cni-header {
     display: flex;
@@ -1627,12 +1630,21 @@ def build_ui() -> gr.Blocks:
                         )
                         cni_launch = gr.Button("Lancer", variant="primary")
                         cni_stop = gr.Button("Annuler", variant="stop")
+                    cni_launch_feedback = gr.Markdown(
+                        "Prêt : sélectionnez des modèles, scannez les dossiers puis lancez le benchmark."
+                    )
                 with gr.Column(elem_id="cni-step-live"):
                     cni_run_status = gr.Textbox(label="État de l'exécution", value="Prêt.", interactive=False, elem_id="cni-run-status")
                     cni_progress = gr.Slider(0, 100, value=0, step=0.1, label="Progression CNI (%)", interactive=False)
+                    cni_live_counters = gr.Markdown("**Traité :** 0 / 0 · **Succès :** 0 · **Erreurs :** 0")
                     with gr.Row(elem_id="cni-workspace"):
                         cni_live_image = gr.Image(label="Face en cours", type="filepath", height=430, elem_id="cni-live-image")
                         cni_live_result = gr.Markdown("Les JSON et mesures apparaîtront après le premier appel.")
+                    cni_live_table = gr.Dataframe(
+                        headers=["Client", "Modèle", "Statut", "Accuracy", "Label", "CIN recto", "CIN verso", "CIN cohérent", "Latence (s)"],
+                        label="Résultats reçus pendant le run",
+                        interactive=False,
+                    )
                 with gr.Column(elem_id="cni-step-results"):
                     # La structure reprend l'explorateur de « 4. Résultats
                     # détaillés » : filtre, liste, navigation puis inspecteur.
@@ -2133,9 +2145,10 @@ def build_ui() -> gr.Blocks:
                 clients_path = root / "clients" if (root / "clients").is_dir() else root
                 labels_path = root / "labels"
                 message = (
-                    f"✅ ZIP importé : {imported['files']} fichier(s). "
+                    f"ZIP importé : {imported['files']} fichier(s). "
                     "Vérifiez les chemins puis cliquez sur **Scanner les dossiers**."
                 )
+                LOGGER.info("CNI ZIP imported | files=%d | root=%s", imported["files"], root)
                 return (
                     gr.update(value=str(clients_path)),
                     gr.update(value=str(labels_path) if labels_path.is_dir() else ""),
@@ -2143,17 +2156,18 @@ def build_ui() -> gr.Blocks:
                 )
             except Exception as exc:
                 LOGGER.exception("CNI ZIP import failed")
-                return gr.update(), gr.update(), f"❌ Import ZIP impossible : {type(exc).__name__}: {exc}"
+                return gr.update(), gr.update(), f"Import ZIP impossible : {type(exc).__name__}: {exc}"
 
         def scan_cni_input(clients_root_text, labels_root_text):
             """Scanne les dossiers et copie les JSONB valides près des clients."""
             if not clients_root_text or not str(clients_root_text).strip():
-                return [], pd.DataFrame(), "❌ Indiquez le dossier clients.", gr.update(choices=_cni_source_choices([]), value=None)
+                return [], pd.DataFrame(), "Indiquez le dossier clients.", gr.update(choices=_cni_source_choices([]), value=None)
             try:
                 clients_root = Path(str(clients_root_text).strip()).expanduser()
                 labels_root = Path(str(labels_root_text).strip()).expanduser() if labels_root_text and str(labels_root_text).strip() else None
                 if labels_root is not None and not labels_root.is_dir():
-                    return [], pd.DataFrame(), f"❌ Dossier labels introuvable : `{labels_root}`", gr.update(choices=_cni_source_choices([]), value=None)
+                    LOGGER.warning("CNI scan rejected | labels_root_not_found=%s", labels_root)
+                    return [], pd.DataFrame(), f"Dossier labels introuvable : `{labels_root}`", gr.update(choices=_cni_source_choices([]), value=None)
                 # L'état retourné est l'unique source clients d'un run. La liste
                 # d'aperçu est donc elle aussi limitée aux PDF détectés au scan.
                 records = materialize_cni_labels(scan_cni_clients(clients_root, labels_root))
@@ -2165,14 +2179,14 @@ def build_ui() -> gr.Blocks:
                     records,
                     _cni_scan_table(records),
                     (
-                        f"✅ {len(records)} client(s) détecté(s), {ready} prêt(s), {labels} label(s) converti(s)."
+                        f"Scan terminé : {len(records)} client(s) détecté(s), {ready} prêt(s), {labels} label(s) converti(s)."
                         + (" Cochez **Continuer sans labels** pour lancer les PDF non notés." if unlabeled else "")
                     ),
                     gr.update(choices=_cni_source_choices(records), value=None),
                 )
             except Exception as exc:
                 LOGGER.exception("CNI input scan failed")
-                return [], pd.DataFrame(), f"❌ Scan CNI impossible : {type(exc).__name__}: {exc}", gr.update(choices=_cni_source_choices([]), value=None)
+                return [], pd.DataFrame(), f"Scan CNI impossible : {type(exc).__name__}: {exc}", gr.update(choices=_cni_source_choices([]), value=None)
 
         def cni_result_choices(results):
             """Crée des libellés de liste liés aux index stables des résultats."""
@@ -2264,102 +2278,100 @@ def build_ui() -> gr.Blocks:
             return show_cni_detail(index, results, 1)
 
         def on_cni_run(model_specs, client_records, strategy, dpi, timeout, threads, unload, prompt_instructions, continue_without_label):
-            """Diffuse les événements CNI en live, un modèle et une face à la fois."""
-            empty = empty_figure()
+            """Valide le lancement puis diffuse l'avancement CNI document par document."""
+            results: list[dict[str, Any]] = []
+
+            def counters(total: int) -> str:
+                successes = sum(result.get("status") == "success" for result in results)
+                failures = len(results) - successes
+                return f"**Traité :** {len(results)} / {total} · **Succès :** {successes} · **Erreurs :** {failures}"
+
+            def view(feedback: str, status: str, progress: float, image_path, live_text: str, total: int, *, select_last: bool = False):
+                table = _cni_result_table(results)
+                selector = gr.update(
+                    choices=cni_result_choices(results),
+                    value=(len(results) - 1 if select_last and results else None),
+                )
+                return (
+                    feedback, status, progress, image_path, live_text,
+                    counters(total), table, results, table, selector,
+                    cni_accuracy_chart(results), cni_latency_chart(results),
+                )
+
             if not model_specs:
-                yield "❌ Sélectionnez au moins un modèle Ollama.", 0, None, "", [], pd.DataFrame(), gr.update(choices=[]), empty, empty
+                message = "Pré-contrôle impossible : sélectionnez au moins un modèle Ollama."
+                LOGGER.warning("CNI launch rejected | reason=no_model")
+                yield view(message, message, 0, None, message, 0)
                 return
             if not client_records:
-                yield "❌ Scannez d'abord un dossier clients valide.", 0, None, "", [], pd.DataFrame(), gr.update(choices=[]), empty, empty
+                message = "Pré-contrôle impossible : scannez d'abord un dossier clients valide."
+                LOGGER.warning("CNI launch rejected | reason=no_scan")
+                yield view(message, message, 0, None, message, 0)
                 return
-            # Les PDFs valides restent exploitables sans labels. La confirmation
-            # explicite évite seulement de lancer par erreur un benchmark non noté.
-            unlabeled = [
-                record for record in client_records
-                if record.get("status") == "ready" and record.get("label_status") != "label_materialized"
-            ]
+
+            ready_records = [record for record in client_records if record.get("status") == "ready"]
+            invalid_count = len(client_records) - len(ready_records)
+            if not ready_records:
+                message = f"Pré-contrôle impossible : aucune paire PDF prête ({invalid_count} dossier(s) à corriger dans le rapport de scan)."
+                LOGGER.warning("CNI launch rejected | reason=no_ready_pair | clients=%d", len(client_records))
+                yield view(message, message, 0, None, message, 0)
+                return
+
+            unlabeled = [record for record in ready_records if record.get("label_status") != "label_materialized"]
             if unlabeled and not continue_without_label:
-                yield (
-                    f"⚠️ {len(unlabeled)} client(s) n'ont pas de label exploitable. "
-                    "Cochez **Continuer sans labels** pour lancer l'extraction non notée.",
-                    0, None, "", [], pd.DataFrame(), gr.update(choices=[]), empty, empty,
-                )
+                message = f"Pré-contrôle requis : {len(unlabeled)} paire(s) n'ont pas de label exploitable. Cochez Continuer sans labels pour lancer l'extraction non notée."
+                LOGGER.warning("CNI launch paused | reason=missing_label | unlabeled=%d", len(unlabeled))
+                yield view(message, message, 0, None, message, len(ready_records))
                 return
-            # Le même fichier de champs pilote le prompt, le parsing et les
-            # futurs comparateurs ; aucun champ n'est dupliqué ici en dur.
+
+            total_pairs = len(ready_records) * len(model_specs)
+            start_message = f"Lancement confirmé : {len(ready_records)} paire(s), {len(model_specs)} modèle(s), {total_pairs} évaluation(s) séquentielle(s)."
+            LOGGER.info(
+                "CNI launch accepted | pairs=%d | models=%d | strategy=%s | dpi=%s | timeout=%s | cpu_threads=%s | unload=%s | unlabeled=%d | invalid=%d",
+                len(ready_records), len(model_specs), strategy, dpi, timeout, threads, unload, len(unlabeled), invalid_count,
+            )
+            yield view(start_message, "Initialisation des modèles en cours.", 0, None, start_message, total_pairs)
+
             cni_fields = load_cni_field_config(ROOT_DIR / "config" / "cni_fields.json")
-            results: list[dict[str, Any]] = []
             try:
                 events = iter_cni_benchmark(
-                    build_default_registry(),
-                    list(model_specs),
-                    list(client_records),
-                    RUNS_DIR,
-                    strategy=str(strategy),
-                    dpi=int(dpi),
-                    timeout_seconds=float(timeout or 0),
-                    cpu_threads=int(threads or 1),
-                    unload_after_task=bool(unload),
-                    fields=cni_fields,
-                    prompt_instructions=prompt_instructions,
+                    build_default_registry(), list(model_specs), ready_records, RUNS_DIR,
+                    strategy=str(strategy), dpi=int(dpi), timeout_seconds=float(timeout or 0),
+                    cpu_threads=int(threads or 1), unload_after_task=bool(unload),
+                    fields=cni_fields, prompt_instructions=prompt_instructions,
                 )
                 for event in events:
-                    total, completed = int(event.get("total", 0)), int(event.get("completed", 0))
+                    total, completed = int(event.get("total", total_pairs)), int(event.get("completed", 0))
                     progress = completed / total * 100 if total else 0
+                    client_id = event.get("folder_client_id", "—")
+                    model = event.get("model", "—")
                     if event.get("stage") == "processing":
-                        # Cet événement n'a volontairement aucun résultat : il
-                        # met seulement à jour l'image et le contexte live.
                         side = event.get("side", "document")
+                        LOGGER.info("CNI processing | client=%s | model=%s | side=%s | completed=%d/%d", client_id, model, side, completed, total)
                         live = (
                             "### Analyse CNI en direct\n\n"
-                            f"- **Client dossier :** `{event.get('folder_client_id')}`\n"
-                            f"- **Modèle :** `{event.get('model')}`\n"
-                            f"- **Étape :** `{side}`\n"
-                            "- Le JSON de cette face sera sauvegardé dès réception."
+                            f"- **Client dossier :** `{client_id}`\n- **Modèle :** `{model}`\n"
+                            f"- **Étape :** `{side}`\n- La sortie brute et le JSON seront conservés dès la réponse."
                         )
-                        yield (
-                            f"Analyse de {event.get('folder_client_id')} ({side})…",
-                            progress,
-                            event.get("image_path"),
-                            live,
-                            results,
-                            _cni_result_table(results),
-                            gr.update(choices=cni_result_choices(results)),
-                            cni_accuracy_chart(results),
-                            cni_latency_chart(results),
-                        )
+                        yield view("Lancement actif : consultez l’onglet 2. Suivi en direct.", f"Analyse en cours : {client_id} ({side})", progress, event.get("image_path"), live, total)
                         continue
+
                     result = event.get("result")
                     if result:
                         results.append(result)
-                    status_message = event.get("message") or f"Résultat CNI reçu : {event.get('folder_client_id', '—')}"
-                    yield (
-                        status_message,
-                        progress,
-                        (result or {}).get("recto_image_path"),
+                    status_value = (result or {}).get("status", "unknown")
+                    LOGGER.info("CNI result | client=%s | model=%s | status=%s | completed=%d/%d", client_id, model, status_value, completed, total)
+                    live = (
                         "### Dernier résultat\n\n"
-                        f"- **Statut :** `{(result or {}).get('status', '—')}`\n"
-                        f"- **Label :** `{(result or {}).get('label_status', '—')}`\n"
-                        f"- **CIN recto/verso cohérent :** {_cni_boolean((result or {}).get('cin_coherent'))}",
-                        results,
-                        _cni_result_table(results),
-                        gr.update(choices=cni_result_choices(results), value=(len(results) - 1 if results else None)),
-                        cni_accuracy_chart(results),
-                        cni_latency_chart(results),
+                        f"- **Client :** `{client_id}`\n- **Modèle :** `{model}`\n"
+                        f"- **Statut :** `{status_value}`\n- **Label :** `{(result or {}).get('label_status', '—')}`\n"
+                        f"- **CIN recto/verso cohérent :** {_cni_boolean((result or {}).get('cin_coherent'))}"
                     )
+                    yield view("Lancement actif : consultez l’onglet 2. Suivi en direct.", f"Résultat reçu : {client_id} ({status_value})", progress, (result or {}).get("recto_image_path"), live, total, select_last=True)
             except Exception as exc:
-                LOGGER.exception("CNI benchmark failed")
-                yield (
-                    f"❌ Benchmark CNI interrompu : {type(exc).__name__}: {exc}",
-                    0,
-                    None,
-                    "Le détail de l'erreur est présent dans le terminal.",
-                    results,
-                    _cni_result_table(results),
-                    gr.update(choices=cni_result_choices(results)),
-                    cni_accuracy_chart(results),
-                    cni_latency_chart(results),
-                )
+                LOGGER.exception("CNI benchmark interrupted")
+                message = f"Benchmark CNI interrompu : {type(exc).__name__}: {exc}"
+                yield view(message, message, 0, None, "Consultez le terminal : l'erreur complète y est enregistrée.", total_pairs)
 
         prepare_run.click(
             on_prepare,
@@ -2539,10 +2551,13 @@ def build_ui() -> gr.Blocks:
                 cni_continue_without_label,
             ],
             outputs=[
+                cni_launch_feedback,
                 cni_run_status,
                 cni_progress,
                 cni_live_image,
                 cni_live_result,
+                cni_live_counters,
+                cni_live_table,
                 cni_results_state,
                 cni_results_table,
                 cni_result_selector,
