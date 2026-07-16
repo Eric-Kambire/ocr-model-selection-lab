@@ -132,3 +132,58 @@ def test_separate_runner_creates_recto_verso_and_global_outputs(tmp_path: Path):
     assert Path(result["recto_json_path"]).is_file()
     assert Path(result["verso_json_path"]).is_file()
     assert Path(result["global_json_path"]).is_file()
+
+
+class _RecordingModel:
+    """Faux modèle qui mémorise les images réellement reçues par le runner."""
+
+    model_name = "RecordingVision"
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, str]] = []
+
+    def perform_ocr(self, image_path: str, *, prompt: str | None = None) -> dict:
+        self.calls.append((image_path, prompt or ""))
+        if "RECTO at the top" in (prompt or ""):
+            content = (
+                '{"recto":{"cin":"AA1","nom":"NOM","prenom":"PRENOM",'
+                '"date_naissance":"2000-01-01","ville_naissance":"CASA","date_validite":"2030-01-01"},'
+                '"verso":{"cin":"AA1","date_validite":"2030-01-01","adresse":"CASA"}}'
+            )
+        elif "RECTO" in (prompt or ""):
+            content = '{"cin":"AA1","nom":"NOM","prenom":"PRENOM","date_naissance":"2000-01-01","ville_naissance":"CASA","date_validite":"2030-01-01"}'
+        else:
+            content = '{"cin":"AA1","date_validite":"2030-01-01","adresse":"CASA"}'
+        return {"text": content, "raw_response": content, "latency": 0.01, "status": "success", "device": "test"}
+
+
+class _RecordingRegistry:
+    def __init__(self) -> None:
+        self.model = _RecordingModel()
+
+    def create(self, *args, **kwargs):
+        return self.model
+
+
+def test_cni_strategies_send_expected_images_and_keep_pair_progress(tmp_path: Path):
+    """Deux appels reçoivent recto/verso ; le collage n'est envoyé qu'une fois."""
+    client = tmp_path / "clients" / "folder-client"
+    client.mkdir(parents=True)
+    _write_pdf(client / "source_CIN_Recto.pdf")
+    _write_pdf(client / "source_CIN_Verso.pdf")
+    records = scan_cni_clients(tmp_path / "clients")
+
+    separate = _RecordingRegistry()
+    separate_events = list(iter_cni_benchmark(separate, ["fake:vision"], records, tmp_path / "runs-separate", strategy="separate_calls"))
+    assert len(separate.model.calls) == 2
+    assert separate.model.calls[0][0].endswith("crop_recto.png")
+    assert separate.model.calls[1][0].endswith("crop_verso.png")
+    assert separate_events[-1]["completed"] == 1
+    assert separate_events[-1]["total"] == 1  # Une paire client/modèle, malgré deux appels.
+
+    combined = _RecordingRegistry()
+    combined_events = list(iter_cni_benchmark(combined, ["fake:vision"], records, tmp_path / "runs-combined", strategy="combined_vertical"))
+    assert len(combined.model.calls) == 1
+    assert combined.model.calls[0][0].endswith("recto_verso_composite.png")
+    assert combined_events[-1]["completed"] == 1
+    assert combined_events[-1]["total"] == 1
