@@ -215,6 +215,30 @@ python scripts/images_to_a4_corner_pdf.py "D:\data\clients\client-001" --select 
 Options utiles : `--recursive` pour les sous-dossiers, `--output-dir` pour
 écrire ailleurs et `--overwrite` pour remplacer un PDF existant.
 
+## Regrouper les PDF Recto/Verso en dossiers clients
+
+Le script [group_cni_pdf_pairs.py](scripts/group_cni_pdf_pairs.py) prend un
+dossier plat de PDF et repère les paires ayant le même préfixe :
+`123_CIN_Recto.pdf` avec `123_CIN_Verso.pdf`, par exemple. Il crée ensuite un
+dossier aléatoire par paire (`client-a1b2c3d4e5f6`) dans
+`clients_generated/`, en conservant les noms de PDF.
+
+```powershell
+python scripts/group_cni_pdf_pairs.py "D:\data\pdf_plats"
+```
+
+Par sécurité, le script **copie** les PDF ; les originaux restent intacts.
+Utilisez `--move` seulement lorsque vous voulez réellement les déplacer. Avant
+toute écriture, vous pouvez vérifier les paires et les PDF orphelins :
+
+```powershell
+python scripts/group_cni_pdf_pairs.py "D:\data\pdf_plats" --dry-run
+```
+
+Le fichier `clients_generated/client_mapping.json` relie chaque identifiant
+aléatoire au préfixe de la paire source. Les PDF sans recto/verso associé et
+les doublons sont explicitement affichés dans le terminal.
+
 ## Ajouter des données
 
 L’onglet **Ajouter des données** accepte une image JPG, JPEG, PNG ou WEBP de
