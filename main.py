@@ -15,6 +15,8 @@ import pandas as pd
 import dataset_generator
 from models.ollama_model import DEFAULT_OCR_PROMPT
 from ocr_benchmark.cni import (
+    build_cni_prompt,
+    build_combined_cni_prompt,
     import_cni_zip,
     load_cni_field_config,
     materialize_cni_labels,
@@ -97,6 +99,12 @@ Signature: Marie Dupont
 Le fichier est copié dans `dataset/user_uploads/` avec un nom non prédictible,
 puis ajouté atomiquement à `dataset/dataset.json`.
 """
+
+DEFAULT_CNI_OPERATOR_INSTRUCTIONS = (
+    "The card may use an old or new Moroccan CNI layout. Prioritize the visible "
+    "French/Arabic field labels and their alignment. Copy the printed Latin value "
+    "exactly; use null rather than guessing an ambiguous character."
+)
 
 APP_CSS = """
 .gradio-container {
@@ -430,6 +438,19 @@ def _preview_cni_source(path_value: str | None) -> tuple[Any, str]:
 def _cni_source_mode_visibility(mode: str) -> tuple[Any, Any]:
     """Keep the local-folder and ZIP entry paths visually separate."""
     return gr.update(visible=mode == "folder"), gr.update(visible=mode == "zip")
+
+
+def _cni_prompt_preview(strategy: str, instructions: str | None) -> str:
+    """Affiche exactement les prompts CNI qui seront envoyés au modèle."""
+    fields = load_cni_field_config(ROOT_DIR / "config" / "cni_fields.json")
+    if strategy == "combined_vertical":
+        return build_combined_cni_prompt(fields, instructions=instructions)
+    return (
+        "--- PROMPT RECTO ---\n"
+        + build_cni_prompt("recto", fields, instructions=instructions)
+        + "\n\n--- PROMPT VERSO ---\n"
+        + build_cni_prompt("verso", fields, instructions=instructions)
+    )
 
 
 def _cni_result_table(results: list[dict[str, Any]]) -> pd.DataFrame:
@@ -998,11 +1019,6 @@ def build_ui() -> gr.Blocks:
                                         headers=["Client dossier", "Recto", "Verso", "Label", "Statut", "Alertes"],
                                         label="Rapport de scan CNI", interactive=False,
                                     )
-                        with gr.Accordion("Options d’exécution", open=False):
-                            cni_strategy = gr.Radio([("Deux appels : recto puis verso — recommandé", "separate_calls"), ("Une image : recto en haut, verso en bas", "combined_vertical")], value="separate_calls", label="Stratégie d'envoi au modèle")
-                            with gr.Row():
-                                cni_dpi = gr.Slider(150, 450, value=300, step=25, label="Résolution PDF (DPI)")
-                                cni_timeout = gr.Number(value=300, minimum=1, maximum=7200, precision=0, label="Temps maximum par appel (s)")
                         with gr.Row(elem_id="cni-runbar"):
                             gr.Markdown("**03 · Lancement**\n\nLe suivi détaillé apparaît dans la vue suivante.")
                             cni_continue_without_label = gr.Checkbox(
@@ -1053,8 +1069,38 @@ def build_ui() -> gr.Blocks:
                                                 cni_recto_json = gr.JSON(label="JSON recto")
                                             with gr.Tab("Extraction verso", render_children=True):
                                                 cni_verso_json = gr.JSON(label="JSON verso")
-                                            with gr.Tab("Fusion globale", render_children=True):
-                                                cni_global_json = gr.JSON(label="JSON global")
+                                        with gr.Tab("Fusion globale", render_children=True):
+                                            cni_global_json = gr.JSON(label="JSON global")
+                    with gr.Tab("4. Paramètres"):
+                        gr.Markdown(
+                            "### Paramètres CNI\n\n"
+                            "Les réglages sont appliqués au prochain lancement. Le prompt complet est affiché avant l'appel modèle."
+                        )
+                        with gr.Row():
+                            cni_strategy = gr.Radio(
+                                [
+                                    ("Deux appels : recto puis verso — recommandé", "separate_calls"),
+                                    ("Une image : recto en haut, verso en bas", "combined_vertical"),
+                                ],
+                                value="separate_calls",
+                                label="Stratégie d'envoi au modèle",
+                            )
+                            cni_dpi = gr.Slider(150, 450, value=300, step=25, label="Résolution PDF (DPI)")
+                            cni_timeout = gr.Number(value=300, minimum=1, maximum=7200, precision=0, label="Temps maximum par appel (s)")
+                        cni_prompt_instructions = gr.Textbox(
+                            value=DEFAULT_CNI_OPERATOR_INSTRUCTIONS,
+                            label="Consignes additionnelles de prompt engineering",
+                            lines=5,
+                            info="Ajoutées après le contrat CNI. Les clés JSON restent imposées par le système.",
+                        )
+                        cni_prompt_preview = gr.Code(
+                            value=_cni_prompt_preview("separate_calls", DEFAULT_CNI_OPERATOR_INSTRUCTIONS),
+                            label="Prompt complet envoyé au modèle",
+                            language="text",
+                            lines=18,
+                            interactive=False,
+                        )
+                        cni_refresh_prompt = gr.Button("Actualiser l’aperçu du prompt")
 
         def on_prepare(
             model_specs,
@@ -1559,7 +1605,7 @@ def build_ui() -> gr.Blocks:
             """Passe à la paire CNI suivante."""
             return show_cni_detail(index, results, 1)
 
-        def on_cni_run(model_specs, client_records, strategy, dpi, timeout, continue_without_label):
+        def on_cni_run(model_specs, client_records, strategy, dpi, timeout, prompt_instructions, continue_without_label):
             """Transforme les événements runner en mises à jour live Gradio."""
             empty = empty_figure()
             if not model_specs:
@@ -1590,6 +1636,7 @@ def build_ui() -> gr.Blocks:
                     build_default_registry(), list(model_specs), list(client_records), RUNS_DIR,
                     strategy=str(strategy), dpi=int(dpi), timeout_seconds=float(timeout or 0),
                     fields=fields,
+                    prompt_instructions=prompt_instructions,
                 ):
                     total, completed = int(event.get("total", 0)), int(event.get("completed", 0))
                     progress = completed / total * 100 if total else 0
@@ -1738,9 +1785,21 @@ def build_ui() -> gr.Blocks:
             queue=False,
         )
         cni_refresh_models.click(refresh_cni_models, inputs=[cni_models], outputs=[cni_models], queue=False)
+        cni_refresh_prompt.click(
+            _cni_prompt_preview,
+            inputs=[cni_strategy, cni_prompt_instructions],
+            outputs=[cni_prompt_preview],
+            queue=False,
+        )
+        cni_strategy.change(
+            _cni_prompt_preview,
+            inputs=[cni_strategy, cni_prompt_instructions],
+            outputs=[cni_prompt_preview],
+            queue=False,
+        )
         cni_event = cni_launch.click(
             on_cni_run,
-            inputs=[cni_models, cni_clients_state, cni_strategy, cni_dpi, cni_timeout, cni_continue_without_label],
+            inputs=[cni_models, cni_clients_state, cni_strategy, cni_dpi, cni_timeout, cni_prompt_instructions, cni_continue_without_label],
             outputs=[
                 cni_run_status, cni_progress, cni_live_image, cni_live_result,
                 cni_results_state, cni_results_table, cni_result_selector,

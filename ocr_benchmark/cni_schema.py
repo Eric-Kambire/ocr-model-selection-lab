@@ -51,23 +51,39 @@ def load_cni_field_config(config_path: Path | None = None) -> dict[str, list[dic
     return value
 
 
-def build_cni_prompt(side: str, fields: dict[str, list[dict[str, str]]] | None = None) -> str:
+def _prompt_instructions(instructions: str | None) -> str:
+    """Ajoute des consignes opérateur courtes, sans modifier le schéma JSON."""
+    cleaned = (instructions or "").strip()
+    if not cleaned:
+        return ""
+    return "\nAdditional operator instructions (they must not change the JSON schema):\n" + cleaned[:4000]
+
+
+def build_cni_prompt(side: str, fields: dict[str, list[dict[str, str]]] | None = None, instructions: str | None = None) -> str:
     """Construit le prompt JSON strict pour une seule face de CNI."""
     if side not in {"recto", "verso"}:
         raise ValueError("side must be 'recto' or 'verso'.")
     config = fields or load_cni_field_config()
     schema = {str(item["key"]): None for item in config[side]}
+    side_focus = (
+        "On RECTO, use the visible identity labels for CIN, surname, given name, birth date, birth city and validity date."
+        if side == "recto"
+        else "On VERSO, use the visible labels for CIN, validity date and full address; do not confuse parent names or civil-status data with the requested fields."
+    )
     return (
-        f"You extract structured data from the {side.upper()} side of a Moroccan national identity card (CNI).\n"
-        "Read only the Latin/French value printed on the card. Arabic text may help identify a label, "
-        "but do not translate, transliterate, guess, or add fields.\n"
-        "Return ONLY one valid JSON object. Do not use Markdown, code fences, comments, or prose.\n"
-        "For an unreadable or absent value, use null. Preserve spelling. Format a clearly readable date as YYYY-MM-DD.\n"
+        f"Extract structured data from the {side.upper()} side of a Moroccan national identity card (CNI), old or new layout.\n"
+        "Use French and Arabic labels plus their position to identify fields. Copy only the Latin/French value printed on the card; "
+        "Arabic may identify a label but must not be translated or transliterated. Do not guess, infer, or add fields.\n"
+        f"{side_focus}\n"
+        "When several dates or names are visible, select only the value attached to the requested field label. "
+        "Use null when unreadable. Preserve spelling, punctuation and accents; convert a clearly readable date to YYYY-MM-DD.\n"
+        "Return ONLY one valid JSON object: no Markdown, prose, comments or code fence.\n"
         "Required JSON schema:\n" + json.dumps(schema, ensure_ascii=False)
+        + _prompt_instructions(instructions)
     )
 
 
-def build_combined_cni_prompt(fields: dict[str, list[dict[str, str]]] | None = None) -> str:
+def build_combined_cni_prompt(fields: dict[str, list[dict[str, str]]] | None = None, instructions: str | None = None) -> str:
     """Construit le prompt JSON strict pour le composite recto-dessus-verso."""
     config = fields or load_cni_field_config()
     schema = {
@@ -75,10 +91,13 @@ def build_combined_cni_prompt(fields: dict[str, list[dict[str, str]]] | None = N
         "verso": {str(item["key"]): None for item in config["verso"]},
     }
     return (
-        "The image contains two sides of the same Moroccan national identity card: RECTO at the top and VERSO at the bottom.\n"
-        "Extract only the Latin/French values visible on each side. Do not translate Arabic text, infer missing values, "
-        "or add fields. Return ONLY one valid JSON object, with null for unreadable values.\n"
-        "Format a clearly readable date as YYYY-MM-DD. Required schema:\n" + json.dumps(schema, ensure_ascii=False)
+        "The image contains two sides of the same Moroccan national identity card, old or new layout: RECTO at the top and VERSO at the bottom.\n"
+        "Use French and Arabic labels plus their position to map each value to its side. Copy only Latin/French values printed on the card; "
+        "Arabic may identify labels but must not be translated. Do not guess, infer, duplicate across sides or add fields.\n"
+        "For ambiguous or unreadable values use null. Preserve spelling, punctuation and accents; format a clearly readable date as YYYY-MM-DD.\n"
+        "Return ONLY one valid JSON object with recto and verso: no Markdown, prose, comments or code fence.\n"
+        "Required schema:\n" + json.dumps(schema, ensure_ascii=False)
+        + _prompt_instructions(instructions)
     )
 
 
