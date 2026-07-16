@@ -110,7 +110,7 @@ Le fichier est copié dans `dataset/user_uploads/` avec un nom non prédictible,
 puis ajouté atomiquement à `dataset/dataset.json`.
 """
 
-DEFAULT_CNI_SYSTEM_PROMPT = "You are a precise OCR extraction engine. Return only valid JSON and never invent a value."
+DEFAULT_CNI_SYSTEM_PROMPT = "You are a precise OCR extraction engine. Return only valid JSON, never invent a value, and do not decode or use QR codes, barcodes, or MRZ in this phase."
 DEFAULT_CNI_USER_INSTRUCTIONS = "Extract only requested values visibly printed in Latin characters. Use null when unreadable."
 
 APP_CSS = """
@@ -488,6 +488,15 @@ def _cni_result_table(results: list[dict[str, Any]]) -> pd.DataFrame:
         }
         for item in results
     ])
+
+
+def _cni_boolean(value: Any) -> str:
+    """Rend visible l'état de cohérence sans planter sur une valeur absente."""
+    if value is True:
+        return "Oui"
+    if value is False:
+        return "Non"
+    return "—"
 
 
 def _read_json_if_available(path_value: Any) -> Any:
