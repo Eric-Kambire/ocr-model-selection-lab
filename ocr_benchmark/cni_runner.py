@@ -44,6 +44,7 @@ def iter_cni_benchmark(
     cpu_threads: int | None = None,
     unload_after_task: bool = True,
     fields: dict[str, list[dict[str, str]]] | None = None,
+    prompt_instructions: str | None = None,
 ) -> Iterator[dict[str, Any]]:
     """Émet des événements live et persiste un jeu d'artefacts par modèle/client.
 
@@ -140,6 +141,7 @@ def iter_cni_benchmark(
                     strategy=strategy,
                     timeout_seconds=timeout_seconds,
                     fields=fields,
+                    prompt_instructions=prompt_instructions,
                 )
                 completed += 1
                 results.append(result)
@@ -195,6 +197,7 @@ def _extract_one_cni_client(
     strategy: str,
     timeout_seconds: float | None,
     fields: dict[str, list[dict[str, str]]] | None,
+    prompt_instructions: str | None,
 ) -> dict[str, Any]:
     """Exécute une stratégie et écrit les JSON recto, verso et global."""
     artefacts_dir = Path(prepared["recto_crop"]["image_path"]).parent
@@ -204,7 +207,7 @@ def _extract_one_cni_client(
         inference = _perform_cni_call(
             model,
             Path(prepared["combined_image"]),
-            build_combined_cni_prompt(fields),
+            build_combined_cni_prompt(fields, instructions=prompt_instructions),
             timeout_seconds,
             artefacts_dir,
             "combined",
@@ -218,7 +221,7 @@ def _extract_one_cni_client(
         recto_inference = _perform_cni_call(
             model,
             Path(prepared["recto_crop"]["image_path"]),
-            build_cni_prompt("recto", fields),
+            build_cni_prompt("recto", fields, instructions=prompt_instructions),
             timeout_seconds,
             artefacts_dir,
             "recto",
@@ -226,7 +229,7 @@ def _extract_one_cni_client(
         verso_inference = _perform_cni_call(
             model,
             Path(prepared["verso_crop"]["image_path"]),
-            build_cni_prompt("verso", fields),
+            build_cni_prompt("verso", fields, instructions=prompt_instructions),
             timeout_seconds,
             artefacts_dir,
             "verso",

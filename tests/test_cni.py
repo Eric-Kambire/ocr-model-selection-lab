@@ -8,6 +8,7 @@ from PIL import Image, ImageDraw
 
 from ocr_benchmark.cni import (
     build_cni_global_json,
+    build_cni_prompt,
     crop_cni_from_a4,
     import_cni_zip,
     materialize_cni_labels,
@@ -78,6 +79,13 @@ def test_side_json_parser_and_global_preserve_both_cin_values():
     assert global_json["cin_verso"] == "BM42518"
     assert global_json["cin_fusionne"] == "BM42518"
     assert global_json["cin_coherent"] is True
+
+
+def test_cni_prompt_covers_old_new_layout_and_operator_instructions():
+    prompt = build_cni_prompt("recto", instructions="Prioritize a sharp reading of the CIN identifier.")
+    assert "old or new layout" in prompt
+    assert "Prioritize a sharp reading" in prompt
+    assert '"cin": null' in prompt
 
 
 def test_zip_import_rejects_path_traversal(tmp_path: Path):

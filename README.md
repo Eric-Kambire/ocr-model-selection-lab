@@ -239,6 +239,27 @@ Le fichier `clients_generated/client_mapping.json` relie chaque identifiant
 aléatoire au préfixe de la paire source. Les PDF sans recto/verso associé et
 les doublons sont explicitement affichés dans le terminal.
 
+## Coller un recto et un verso en une image
+
+Le script [combine_cni_image_pairs.py](scripts/combine_cni_image_pairs.py)
+trouve les paires image ayant le même préfixe et produit une image verticale :
+recto en haut, verso en bas. Par défaut, il crée du **PNG sans perte** : les
+images ne sont ni recadrées ni redimensionnées.
+
+```powershell
+python scripts/combine_cni_image_pairs.py "D:\data\images"
+```
+
+Les collages sont créés dans `combined_images/`. Pour réduire la taille des
+fichiers avec JPEG, choisissez une qualité explicite :
+
+```powershell
+python scripts/combine_cni_image_pairs.py "D:\data\images" --format jpeg --jpeg-quality 85
+```
+
+`--png-compress-level 0..9` règle uniquement la compression PNG sans perte ;
+il ne réduit pas la qualité visuelle.
+
 ## Ajouter des données
 
 L’onglet **Ajouter des données** accepte une image JPG, JPEG, PNG ou WEBP de

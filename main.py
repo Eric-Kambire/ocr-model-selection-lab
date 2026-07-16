@@ -16,6 +16,8 @@ import pandas as pd
 import dataset_generator
 from models.ollama_model import DEFAULT_OCR_PROMPT
 from ocr_benchmark.cni import (
+    build_cni_prompt,
+    build_combined_cni_prompt,
     import_cni_zip,
     load_cni_field_config,
     materialize_cni_labels,
@@ -106,6 +108,14 @@ Signature: Marie Dupont
 Le fichier est copié dans `dataset/user_uploads/` avec un nom non prédictible,
 puis ajouté atomiquement à `dataset/dataset.json`.
 """
+
+# Ces consignes restent courtes et complètent le contrat JSON centralisé. Elles
+# sont modifiables dans l'onglet Paramètres CNI avant chaque lancement.
+DEFAULT_CNI_OPERATOR_INSTRUCTIONS = (
+    "The card may use an old or new Moroccan CNI layout. Prioritize the visible "
+    "French/Arabic field labels and their alignment. Copy the printed Latin value "
+    "exactly; use null rather than guessing an ambiguous character."
+)
 
 APP_CSS = """
 .gradio-container {
@@ -381,7 +391,7 @@ APP_CSS = """
 }
 #cni-navigation .wrap {
     display: grid !important;
-    grid-template-columns: repeat(3, minmax(0, 180px)) !important;
+    grid-template-columns: repeat(4, minmax(0, 180px)) !important;
     gap: 7px !important;
 }
 #cni-navigation label {
@@ -695,7 +705,7 @@ APP_JS = r"""
     return true;
   };
   const install = () => {
-    const cniPageIds = ["cni-step-setup", "cni-step-live", "cni-step-results"];
+    const cniPageIds = ["cni-step-setup", "cni-step-live", "cni-step-results", "cni-step-settings"];
     const mainReady = installRouter("#page-navigation", pageIds);
     installRouter("#cni-navigation", cniPageIds);
     const workspaceReady = installWorkspaceSelector();
@@ -929,6 +939,19 @@ def _preview_cni_source(path_value: str | None) -> tuple[Any, str]:
 def _cni_source_mode_visibility(mode: str) -> tuple[Any, Any]:
     """Switch between local-folder fields and the ZIP upload, without mixing them."""
     return gr.update(visible=mode == "folder"), gr.update(visible=mode == "zip")
+
+
+def _cni_prompt_preview(strategy: str, instructions: str | None) -> str:
+    """Affiche exactement les prompts CNI qui seront envoyés au modèle."""
+    fields = load_cni_field_config(ROOT_DIR / "config" / "cni_fields.json")
+    if strategy == "combined_vertical":
+        return build_combined_cni_prompt(fields, instructions=instructions)
+    return (
+        "--- PROMPT RECTO ---\n"
+        + build_cni_prompt("recto", fields, instructions=instructions)
+        + "\n\n--- PROMPT VERSO ---\n"
+        + build_cni_prompt("verso", fields, instructions=instructions)
+    )
 
 
 def _cni_result_table(results: list[dict[str, Any]]) -> pd.DataFrame:
@@ -1548,7 +1571,7 @@ def build_ui() -> gr.Blocks:
                     "<span>Extraction structurée · exécution séquentielle</span></header>"
                 )
                 cni_navigation = gr.Radio(
-                    ["1. Préparer", "2. Suivi en direct", "3. Résultats"],
+                    ["1. Préparer", "2. Suivi en direct", "3. Résultats", "4. Paramètres"],
                     value="1. Préparer",
                     label="Espace CNI",
                     elem_id="cni-navigation",
@@ -1595,14 +1618,6 @@ def build_ui() -> gr.Blocks:
                                     label="Rapport de scan CNI",
                                     interactive=False,
                                 )
-                    with gr.Accordion("Options d’exécution", open=False, elem_id="cni-settings"):
-                        with gr.Row():
-                            cni_strategy = gr.Radio([("Deux appels : recto puis verso — recommandé", "separate_calls"), ("Une image : recto en haut, verso en bas", "combined_vertical")], value="separate_calls", label="Stratégie d'envoi au modèle")
-                            cni_dpi = gr.Slider(150, 450, value=300, step=25, label="Résolution PDF (DPI)")
-                        with gr.Row():
-                            cni_timeout = gr.Number(value=300, minimum=1, maximum=7200, precision=0, label="Temps maximum par appel (s)")
-                            cni_cpu_threads = gr.Number(value=max(1, min(8, os.cpu_count() or 1)), minimum=1, maximum=max(1, os.cpu_count() or 1), precision=0, label="Threads CPU Ollama")
-                            cni_unload = gr.Checkbox(value=True, label="Décharger le modèle après chaque appel")
                     with gr.Row(elem_id="cni-runbar"):
                         gr.Markdown("**03 · Lancement**\n\nLe suivi détaillé apparaît dans la vue suivante.")
                         cni_continue_without_label = gr.Checkbox(
@@ -1664,6 +1679,39 @@ def build_ui() -> gr.Blocks:
                                             cni_verso_json = gr.JSON(label="JSON verso")
                                         with gr.Tab("Fusion globale", render_children=True):
                                             cni_global_json = gr.JSON(label="JSON global")
+                with gr.Column(elem_id="cni-step-settings"):
+                    gr.Markdown(
+                        "### Paramètres CNI\n\n"
+                        "Les réglages sont appliqués au prochain lancement. Le prompt complet ci-dessous est celui envoyé au modèle."
+                    )
+                    with gr.Row():
+                        cni_strategy = gr.Radio(
+                            [
+                                ("Deux appels : recto puis verso — recommandé", "separate_calls"),
+                                ("Une image : recto en haut, verso en bas", "combined_vertical"),
+                            ],
+                            value="separate_calls",
+                            label="Stratégie d'envoi au modèle",
+                        )
+                        cni_dpi = gr.Slider(150, 450, value=300, step=25, label="Résolution PDF (DPI)")
+                    with gr.Row():
+                        cni_timeout = gr.Number(value=300, minimum=1, maximum=7200, precision=0, label="Temps maximum par appel (s)")
+                        cni_cpu_threads = gr.Number(value=max(1, min(8, os.cpu_count() or 1)), minimum=1, maximum=max(1, os.cpu_count() or 1), precision=0, label="Threads CPU Ollama")
+                        cni_unload = gr.Checkbox(value=True, label="Décharger le modèle après chaque appel")
+                    cni_prompt_instructions = gr.Textbox(
+                        value=DEFAULT_CNI_OPERATOR_INSTRUCTIONS,
+                        label="Consignes additionnelles de prompt engineering",
+                        lines=5,
+                        info="Ajoutées après le contrat CNI. Ne modifiez pas les clés JSON demandées ; elles restent imposées par le système.",
+                    )
+                    cni_prompt_preview = gr.Code(
+                        value=_cni_prompt_preview("separate_calls", DEFAULT_CNI_OPERATOR_INSTRUCTIONS),
+                        label="Prompt complet envoyé au modèle",
+                        language="text",
+                        lines=18,
+                        interactive=False,
+                    )
+                    cni_refresh_prompt = gr.Button("Actualiser l’aperçu du prompt")
 
         def on_prepare(
             model_specs,
@@ -2216,7 +2264,7 @@ def build_ui() -> gr.Blocks:
             """Passe à la paire CNI suivante."""
             return show_cni_detail(index, results, 1)
 
-        def on_cni_run(model_specs, client_records, strategy, dpi, timeout, threads, unload, continue_without_label):
+        def on_cni_run(model_specs, client_records, strategy, dpi, timeout, threads, unload, prompt_instructions, continue_without_label):
             """Diffuse les événements CNI en live, un modèle et une face à la fois."""
             empty = empty_figure()
             if not model_specs:
@@ -2254,6 +2302,7 @@ def build_ui() -> gr.Blocks:
                     cpu_threads=int(threads or 1),
                     unload_after_task=bool(unload),
                     fields=cni_fields,
+                    prompt_instructions=prompt_instructions,
                 )
                 for event in events:
                     total, completed = int(event.get("total", 0)), int(event.get("completed", 0))
@@ -2465,6 +2514,18 @@ def build_ui() -> gr.Blocks:
             outputs=[cni_models],
             queue=False,
         )
+        cni_refresh_prompt.click(
+            _cni_prompt_preview,
+            inputs=[cni_strategy, cni_prompt_instructions],
+            outputs=[cni_prompt_preview],
+            queue=False,
+        )
+        cni_strategy.change(
+            _cni_prompt_preview,
+            inputs=[cni_strategy, cni_prompt_instructions],
+            outputs=[cni_prompt_preview],
+            queue=False,
+        )
         cni_event = cni_launch.click(
             on_cni_run,
             inputs=[
@@ -2475,6 +2536,7 @@ def build_ui() -> gr.Blocks:
                 cni_timeout,
                 cni_cpu_threads,
                 cni_unload,
+                cni_prompt_instructions,
                 cni_continue_without_label,
             ],
             outputs=[
