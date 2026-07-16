@@ -110,8 +110,8 @@ Le fichier est copié dans `dataset/user_uploads/` avec un nom non prédictible,
 puis ajouté atomiquement à `dataset/dataset.json`.
 """
 
-DEFAULT_CNI_SYSTEM_PROMPT = "You are a precise OCR extraction engine. Return only valid JSON, never invent a value, and do not decode or use QR codes, barcodes, or MRZ in this phase."
-DEFAULT_CNI_USER_INSTRUCTIONS = "Extract only requested values visibly printed in Latin characters. Use null when unreadable."
+DEFAULT_CNI_SYSTEM_PROMPT = "Extract Moroccan CNI fields exactly. Return only one valid JSON object matching the requested schema. Never guess; use null if unreadable. Ignore QR, barcode and MRZ."
+DEFAULT_CNI_USER_INSTRUCTIONS = "Read Latin values only. 'Né le' = birth date; nearby 'à' = birth city; 'Valable jusqu’au' = expiry. Do not confuse holder, parents, CAN or civil-status number."
 
 APP_CSS = """
 .gradio-container {
@@ -513,7 +513,17 @@ def _read_json_if_available(path_value: Any) -> Any:
 
 
 def _cni_raw_output(path_value: Any) -> str:
-    """Expose la réponse brute ou l'erreur persistée d'une face CNI."""
+    """Expose aussi une réponse reçue après le timeout de l'interface."""
+    path = Path(str(path_value)) if path_value else None
+    if path is not None:
+        side = "recto" if "recto" in path.name else "verso" if "verso" in path.name else "combined"
+        late_path = path.parent / f"late_{side}_output.json"
+        if late_path.is_file():
+            try:
+                late = json.loads(late_path.read_text(encoding="utf-8"))
+                return "[Réponse arrivée après timeout]\n" + json.dumps(late, ensure_ascii=False, indent=2)
+            except (OSError, json.JSONDecodeError) as exc:
+                return f"Lecture de la réponse tardive impossible : {type(exc).__name__}: {exc}"
     value = _read_json_if_available(path_value)
     if not isinstance(value, dict):
         return "Aucun retour brut disponible."
