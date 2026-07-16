@@ -23,10 +23,11 @@ def test_parse_selection_rejects_out_of_range_index():
         parse_selection("4", 3)
 
 
-def test_a4_corner_rect_places_image_at_requested_corner():
-    rect = a4_corner_rect(1000, 500, corner="top-right", margin_mm=12, max_width_mm=120, max_height_mm=90)
-    assert rect.x1 == pytest.approx(A4_WIDTH_POINTS - 12 * 72 / 25.4)
+def test_a4_corner_rect_places_image_at_requested_corner_without_cropping():
+    rect = a4_corner_rect(1000, 500, corner="top-left", margin_mm=12, max_width_mm=120, max_height_mm=90)
+    assert rect.x0 == pytest.approx(12 * 72 / 25.4)
     assert rect.y0 == pytest.approx(12 * 72 / 25.4)
+    assert rect.width / rect.height == pytest.approx(2)
 
 
 def test_create_a4_pdf_creates_a4_page(tmp_path: Path):

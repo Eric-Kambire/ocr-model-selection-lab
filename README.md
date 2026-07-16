@@ -204,8 +204,9 @@ python scripts/images_to_a4_corner_pdf.py "D:\data\clients\client-001"
 ```
 
 Par défaut, les PDF sont créés dans le même dossier que les images afin de
-conserver un nom comme `client_CIN_Recto.pdf`. L'image est en haut à droite ;
-vous pouvez choisir un autre coin et automatiser la sélection :
+conserver un nom comme `client_CIN_Recto.pdf`. L'image est placée en **haut à
+gauche**, dans une zone standard de **120 × 90 mm**, sans recadrage ni
+déformation. Vous pouvez choisir un autre coin et automatiser la sélection :
 
 ```powershell
 python scripts/images_to_a4_corner_pdf.py "D:\data\clients\client-001" --select all --corner bottom-left

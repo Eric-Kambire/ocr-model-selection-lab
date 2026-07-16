@@ -25,6 +25,11 @@ MM_TO_POINTS = 72 / 25.4
 A4_WIDTH_POINTS = 210 * MM_TO_POINTS
 A4_HEIGHT_POINTS = 297 * MM_TO_POINTS
 
+# Toutes les images sont ajustées dans cette zone physique standard sur A4.
+# Le ratio est conservé : aucune image n'est recadrée ni étirée.
+STANDARD_IMAGE_WIDTH_MM = 120
+STANDARD_IMAGE_HEIGHT_MM = 90
+
 
 def list_images(input_dir: Path, recursive: bool = False) -> list[Path]:
     """Retourne les images prises en charge, dans un ordre stable.
@@ -139,17 +144,17 @@ def create_a4_pdf(
     image_path: Path,
     output_path: Path,
     *,
-    corner: str = "top-right",
+    corner: str = "top-left",
     margin_mm: float = 12,
-    max_width_mm: float = 120,
-    max_height_mm: float = 90,
+    max_width_mm: float = STANDARD_IMAGE_WIDTH_MM,
+    max_height_mm: float = STANDARD_IMAGE_HEIGHT_MM,
 ) -> None:
     """Crée un PDF d'une page A4 contenant une image dans le coin demandé.
 
     Args:
         image_path: Fichier image source, non modifié.
         output_path: PDF à créer. Son dossier parent est créé au besoin.
-        corner: ``top-left``, ``top-right``, ``bottom-left`` ou ``bottom-right``.
+        corner: ``top-left`` par défaut, ou un autre coin A4.
         margin_mm: Distance entre l'image et les bords A4.
         max_width_mm: Largeur maximale réservée à l'image.
         max_height_mm: Hauteur maximale réservée à l'image.
@@ -197,10 +202,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--output-dir", help="Dossier de sortie. Par défaut : le dossier source.")
     parser.add_argument("--select", help="all ou une sélection non interactive, ex. 1,3-5.")
     parser.add_argument("--recursive", action="store_true", help="Inclut les images des sous-dossiers.")
-    parser.add_argument("--corner", choices=["top-left", "top-right", "bottom-left", "bottom-right"], default="top-right")
+    parser.add_argument("--corner", choices=["top-left", "top-right", "bottom-left", "bottom-right"], default="top-left")
     parser.add_argument("--margin-mm", type=float, default=12, help="Marge A4 en mm (défaut : 12).")
-    parser.add_argument("--max-width-mm", type=float, default=120, help="Largeur maximale de l'image en mm (défaut : 120).")
-    parser.add_argument("--max-height-mm", type=float, default=90, help="Hauteur maximale de l'image en mm (défaut : 90).")
+    parser.add_argument("--max-width-mm", type=float, default=STANDARD_IMAGE_WIDTH_MM, help="Largeur de la zone standard en mm (défaut : 120).")
+    parser.add_argument("--max-height-mm", type=float, default=STANDARD_IMAGE_HEIGHT_MM, help="Hauteur de la zone standard en mm (défaut : 90).")
     parser.add_argument("--overwrite", action="store_true", help="Remplace un PDF déjà existant.")
     return parser
 
