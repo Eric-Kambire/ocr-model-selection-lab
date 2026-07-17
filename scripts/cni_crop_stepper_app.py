@@ -59,9 +59,13 @@ APP_CSS = """
     border: 1px solid #bcc1c8;
     box-shadow: 0 8px 18px rgba(41, 47, 56, 0.14);
 }
-#crop-preview .image-container > div,
-#crop-preview .image-container canvas,
-#crop-preview img { width: 100% !important; height: 100% !important; object-fit: contain !important; background: #ffffff !important; }
+#crop-preview .image-container > button,
+#crop-preview .image-frame,
+#crop-preview .image-frame img {
+    width: 100% !important;
+    height: 100% !important;
+}
+#crop-preview .image-frame img { object-fit: contain !important; background: #ffffff !important; }
 """
 
 STEPS = (
