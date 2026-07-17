@@ -43,16 +43,6 @@ APP_CSS = """
 """
 
 STEPS = (
-<<<<<<< HEAD
-    ("1. Source", "Le PDF est rendu en PNG, ou l'image est normalisée en RGB."),
-    ("2. Niveaux de gris", "Chaque pixel devient une intensité entre 0 (noir) et 255 (blanc)."),
-    ("3. Masque binaire", "Les pixels plus sombres que le seuil sont conservés ; le fond A4 blanc est ignoré."),
-    ("4. Rotation", "Une rotation optionnelle cherche l'angle qui rend le rectangle détecté le plus proche d'une carte horizontale."),
-    ("5. Contour détecté", "Le rectangle bleu est le rectangle englobant des pixels non blancs, avec une marge de sécurité."),
-    ("6. Crop final", "Seule la zone validée comme carte est conservée. En cas de doute, la page complète est gardée."),
-)
-
-=======
     ("1. Source", "Le PDF est rendu en PNG, ou l'image est normalisée en RGB. En mode simulation, la carte est placée sur une feuille A4 blanche avant cette étape."),
     ("2. Niveaux de gris", "Chaque pixel couleur devient une intensité entre 0 (noir) et 255 (blanc). Les couleurs ne sont pas encore supprimées : seule la luminance est conservée."),
     ("3. Masque binaire", "Les pixels plus sombres que le seuil deviennent blancs ; le fond A4 blanc devient noir. Ce masque permet de localiser le contenu imprimé."),
@@ -86,7 +76,6 @@ def dpi_impact_markdown(dpi: int, card_width_mm: float = DEFAULT_CARD_WIDTH_MM) 
         "Le poids PNG/PDF final dépend aussi des couleurs et de la compression."
     )
 
->>>>>>> 2ad635b (feat: add A4 simulation and crop lab measurements)
 
 def _write_image(image: Image.Image, path: Path, *, mode: str | None = None) -> str:
     """Enregistre une image PNG et retourne son chemin pour Gradio."""
@@ -95,8 +84,6 @@ def _write_image(image: Image.Image, path: Path, *, mode: str | None = None) -> 
     return str(path)
 
 
-<<<<<<< HEAD
-=======
 def _write_pdf(image: Image.Image, path: Path, dpi: int) -> str:
     """Écrit un PDF image sans modifier le fichier d'origine."""
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -131,7 +118,6 @@ def _stage_metric(label: str, path: str | Path, elapsed_seconds: float, paramete
     }
 
 
->>>>>>> 2ad635b (feat: add A4 simulation and crop lab measurements)
 def _threshold_mask(gray: Image.Image, threshold: int) -> Image.Image:
     """Crée le même masque que la pipeline : contenu sombre=blanc, fond=noir."""
     return gray.point(lambda pixel: 255 if pixel < threshold else 0)
@@ -204,27 +190,12 @@ def _overlay_box(source: Image.Image, box: tuple[int, int, int, int] | None, met
     return overlay
 
 
-<<<<<<< HEAD
-def _load_source(input_path: str, output_dir: Path, dpi: int) -> Path:
-    """Convertit une entrée PDF ou image vers le PNG source de la démonstration."""
-=======
 def _prepare_direct_source(input_path: str, output_dir: Path, dpi: int) -> tuple[Path, str, dict[str, Any]]:
     """Prépare une entrée déjà scannée, sans imposer de simulation A4."""
->>>>>>> 2ad635b (feat: add A4 simulation and crop lab measurements)
     source = Path(input_path)
     target = output_dir / "01_source.png"
     if source.suffix.lower() == ".pdf":
         render_single_page_pdf(source, target, dpi=dpi)
-<<<<<<< HEAD
-        return target
-    with Image.open(source) as image:
-        _write_image(ImageOps.exif_transpose(image).convert("RGB"), target)
-    return target
-
-
-def build_pipeline(input_path: str | None, dpi: int, threshold: int, auto_rotate: bool) -> tuple[dict[str, Any], int, str, str, str]:
-    """Produit toutes les étapes et initialise l'affichage sur la source."""
-=======
         return target, str(source), {"mode": "direct_pdf", "source_pdf": str(source)}
 
     with Image.open(source) as image:
@@ -303,22 +274,12 @@ def build_pipeline(
     card_width_mm: float,
 ) -> tuple[dict[str, Any], int, str, str, str, str, str, str, str]:
     """Produit toutes les étapes, leurs mesures et le journal réutilisable."""
->>>>>>> 2ad635b (feat: add A4 simulation and crop lab measurements)
     if not input_path:
         raise gr.Error("Chargez un PDF ou une image avant de préparer les étapes.")
     if not 72 <= int(dpi) <= 600:
         raise gr.Error("Le DPI doit être compris entre 72 et 600.")
 
     output_dir = Path(tempfile.gettempdir()) / "cni-crop-lab" / f"session-{time.strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:8]}"
-<<<<<<< HEAD
-    source_path = _load_source(input_path, output_dir, int(dpi))
-    with Image.open(source_path) as file:
-        source = ImageOps.exif_transpose(file).convert("RGB")
-
-    gray = ImageOps.grayscale(source)
-    mask = _threshold_mask(gray, int(threshold))
-    rotated, angle = _estimate_rotation(source, int(threshold), bool(auto_rotate))
-=======
     started = time.perf_counter()
     source_path, prepared_pdf, source_preparation = _prepare_source(
         input_path,
@@ -348,36 +309,10 @@ def build_pipeline(
     rotate_elapsed = time.perf_counter() - started
 
     started = time.perf_counter()
->>>>>>> 2ad635b (feat: add A4 simulation and crop lab measurements)
     rotated_gray = ImageOps.grayscale(rotated)
     rotated_mask = _threshold_mask(rotated_gray, int(threshold))
     box, geometry = _validated_box(rotated_mask, rotated.size)
     contour = _overlay_box(rotated, box, geometry)
-<<<<<<< HEAD
-    crop = rotated.crop(box) if box else rotated
-
-    paths = [
-        str(source_path),
-        _write_image(gray, output_dir / "02_grayscale.png"),
-        _write_image(mask, output_dir / "03_binary_mask.png"),
-        _write_image(rotated, output_dir / "04_rotated.png"),
-        _write_image(contour, output_dir / "05_detected_contour.png"),
-        _write_image(crop, output_dir / "06_cni_crop.png"),
-    ]
-    metadata = {
-        "input": str(Path(input_path).resolve()),
-        "dpi": int(dpi),
-        "threshold": int(threshold),
-        "auto_rotation": bool(auto_rotate),
-        "rotation_degrees": angle,
-        "geometry": geometry,
-        "paths": paths,
-    }
-    report_path = output_dir / "analysis.json"
-    report_path.write_text(json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8")
-    metadata["report_path"] = str(report_path)
-    return metadata, 0, paths[0], STEPS[0][0], _stage_markdown(0, metadata)
-=======
     contour_path = _write_image(contour, output_dir / "05_detected_contour.png")
     contour_elapsed = time.perf_counter() - started
 
@@ -431,7 +366,6 @@ def build_pipeline(
         json.dumps(metadata, ensure_ascii=False, indent=2),
         str(report_path),
     )
->>>>>>> 2ad635b (feat: add A4 simulation and crop lab measurements)
 
 
 def _stage_markdown(index: int, state: dict[str, Any]) -> str:
@@ -444,11 +378,6 @@ def _stage_markdown(index: int, state: dict[str, Any]) -> str:
     if index in {4, 5}:
         geometry = state["geometry"]
         explanation += "\n\n```json\n" + json.dumps(geometry, ensure_ascii=False, indent=2) + "\n```"
-<<<<<<< HEAD
-    return f"## {title}\n\n{explanation}"
-
-
-=======
     metric = state.get("metrics", [{}] * len(STEPS))[index]
     if metric:
         parameters = json.dumps(metric.get("parameters", {}), ensure_ascii=False, indent=2)
@@ -467,17 +396,12 @@ def _stage_html(index: int) -> str:
     return f"<div id='crop-stage-name'>{STEPS[index][0]}</div>"
 
 
->>>>>>> 2ad635b (feat: add A4 simulation and crop lab measurements)
 def show_stage(index: int, state: dict[str, Any]) -> tuple[int, str, str, str, str]:
     """Affiche une étape existante sans recalculer les transformations."""
     if not state or not state.get("paths"):
         raise gr.Error("Préparez d'abord une entrée.")
     safe_index = max(0, min(int(index), len(STEPS) - 1))
-<<<<<<< HEAD
-    return safe_index, state["paths"][safe_index], STEPS[safe_index][0], _stage_markdown(safe_index, state), state["paths"][safe_index]
-=======
     return safe_index, state["paths"][safe_index], _stage_html(safe_index), _stage_markdown(safe_index, state), state["paths"][safe_index]
->>>>>>> 2ad635b (feat: add A4 simulation and crop lab measurements)
 
 
 def next_stage(index: int, state: dict[str, Any]):
@@ -493,17 +417,6 @@ def previous_stage(index: int, state: dict[str, Any]):
 def build_ui() -> gr.Blocks:
     """Construit l'interface pas-à-pas autonome."""
     with gr.Blocks(title="CNI Crop Lab") as app:
-<<<<<<< HEAD
-        gr.HTML("<section id='crop-lab-header'><h1>CNI Crop Lab</h1><p>Visualiser, expliquer et télécharger chaque étape de préparation.</p></section>")
-        state = gr.State({})
-        stage_index = gr.State(0)
-        with gr.Row(elem_id="crop-toolbar"):
-            source = gr.File(label="PDF ou image source", type="filepath", file_types=[".pdf", ".png", ".jpg", ".jpeg", ".webp"])
-            dpi = gr.Slider(72, 600, value=300, step=1, label="DPI PDF")
-            threshold = gr.Slider(180, 252, value=242, step=1, label="Seuil blanc")
-            auto_rotate = gr.Checkbox(value=False, label="Corriger une légère rotation")
-            prepare = gr.Button("Préparer les étapes", variant="primary")
-=======
         gr.HTML(
             "<section id='crop-lab-header'><h1>CNI Crop Lab</h1>"
             "<p>Préparer un scan A4, visualiser chaque transformation et télécharger les artefacts avec leur journal de paramètres.</p></section>"
@@ -535,7 +448,6 @@ def build_ui() -> gr.Blocks:
                 simulation_angle = gr.Slider(-15, 15, value=0, step=0.5, label="Inclinaison simulée (degrés)")
                 card_width_mm = gr.Slider(70, 150, value=DEFAULT_CARD_WIDTH_MM, step=1, label="Largeur de la carte sur l'A4 (mm)")
             dpi_impact = gr.Markdown(dpi_impact_markdown(300, DEFAULT_CARD_WIDTH_MM))
->>>>>>> 2ad635b (feat: add A4 simulation and crop lab measurements)
         with gr.Row(elem_id="crop-workspace"):
             with gr.Column(scale=3):
                 stage_image = gr.Image(label="Artefact de l'étape", type="filepath", height=560)
@@ -544,19 +456,6 @@ def build_ui() -> gr.Blocks:
                     next_button = gr.Button("Suivant →", variant="secondary")
             with gr.Column(scale=2):
                 stage_name = gr.HTML("<div id='crop-stage-name'>En attente d'une entrée</div>")
-<<<<<<< HEAD
-                stage_note = gr.Markdown("Chargez un fichier puis cliquez sur **Préparer les étapes**.", elem_id="crop-stage-note")
-                download = gr.File(label="Télécharger l'artefact affiché", type="filepath", interactive=False)
-                gr.Markdown("### Principe\n\n- Le masque détecte le contenu sombre sur le fond A4 blanc.\n- Le contour est un rectangle englobant, pas encore une détection de quatre coins.\n- La rotation est une estimation par recherche d'angle ; elle ne corrige pas la perspective.")
-
-        prepare.click(
-            build_pipeline,
-            inputs=[source, dpi, threshold, auto_rotate],
-            outputs=[state, stage_index, stage_image, stage_name, stage_note],
-        ).then(lambda state_value: state_value["paths"][0], inputs=[state], outputs=[download])
-        next_button.click(next_stage, inputs=[stage_index, state], outputs=[stage_index, stage_image, stage_name, stage_note, download])
-        previous.click(previous_stage, inputs=[stage_index, state], outputs=[stage_index, stage_image, stage_name, stage_note, download])
-=======
                 stage_note = gr.Markdown(
                     "1. Chargez un fichier. 2. Choisissez le chemin de préparation. 3. Réglez le DPI et le seuil. 4. Cliquez sur **Préparer / régénérer**.",
                     elem_id="crop-stage-note",
@@ -583,7 +482,6 @@ def build_ui() -> gr.Blocks:
         previous.click(previous_stage, inputs=[stage_index, state], outputs=[stage_index, stage_image, stage_name, stage_note, download])
         dpi.change(dpi_impact_markdown, inputs=[dpi, card_width_mm], outputs=[dpi_impact], queue=False)
         card_width_mm.change(dpi_impact_markdown, inputs=[dpi, card_width_mm], outputs=[dpi_impact], queue=False)
->>>>>>> 2ad635b (feat: add A4 simulation and crop lab measurements)
     return app
 
 
