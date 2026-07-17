@@ -65,7 +65,8 @@ APP_CSS = """
     width: 100% !important;
     height: 100% !important;
 }
-#crop-preview .image-frame img { object-fit: contain !important; background: #ffffff !important; }
+#crop-preview .image-frame { background: #d9dce1 !important; }
+#crop-preview .image-frame img { object-fit: contain !important; background: #d9dce1 !important; }
 """
 
 STEPS = (
@@ -404,6 +405,11 @@ def _stage_markdown(index: int, state: dict[str, Any]) -> str:
     if index in {4, 5}:
         geometry = state["geometry"]
         explanation += "\n\n```json\n" + json.dumps(geometry, ensure_ascii=False, indent=2) + "\n```"
+    if index == 5:
+        explanation += (
+            "\n\n> Le gris autour de l'image est uniquement le cadre de prévisualisation : "
+            "il ne fait pas partie du PNG téléchargé. La carte visible est le crop final à sa vraie proportion."
+        )
     metric = state.get("metrics", [{}] * len(STEPS))[index]
     if metric:
         parameters = json.dumps(metric.get("parameters", {}), ensure_ascii=False, indent=2)
