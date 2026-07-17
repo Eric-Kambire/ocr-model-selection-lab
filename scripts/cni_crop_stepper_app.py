@@ -31,15 +31,26 @@ from ocr_benchmark.cni_images import render_single_page_pdf
 
 
 APP_CSS = """
-.gradio-container { max-width: 1440px !important; background: #f7f8fb !important; }
-#crop-lab-header { border-bottom: 1px solid #dce2ea; padding: 8px 0 18px; }
+.gradio-container { max-width: 1440px !important; background: #ebe5da !important; }
+#crop-lab-header { border-bottom: 1px solid #d4c9b7; padding: 8px 0 18px; }
 #crop-lab-header h1 { margin: 0; color: #12233f; font-size: 30px; }
 #crop-lab-header p { margin: 6px 0 0; color: #58677d; }
 #crop-stage-name { font-size: 18px; font-weight: 700; color: #173a72; }
 #crop-stage-note { min-height: 80px; color: #3d4b60; }
-#crop-toolbar { align-items: end; border-bottom: 1px solid #dce2ea; padding-bottom: 12px; }
+#crop-toolbar { align-items: end; border-bottom: 1px solid #d4c9b7; padding-bottom: 12px; }
 #crop-workspace { min-height: 590px; }
-#crop-workspace .image-container { background: white; }
+#crop-preview { background: #ded4c3; border: 1px solid #c9bba6; border-radius: 10px; padding: 16px; }
+#crop-preview .image-container {
+    width: min(100%, 396px) !important;
+    height: 560px !important;
+    min-height: 0 !important;
+    margin: 0 auto !important;
+    aspect-ratio: 210 / 297;
+    background: #fffefa !important;
+    border: 1px solid #c5b9a7;
+    box-shadow: 0 10px 24px rgba(74, 57, 35, 0.16);
+}
+#crop-preview img { object-fit: contain !important; background: #fffefa !important; }
 """
 
 STEPS = (
@@ -450,7 +461,12 @@ def build_ui() -> gr.Blocks:
             dpi_impact = gr.Markdown(dpi_impact_markdown(300, DEFAULT_CARD_WIDTH_MM))
         with gr.Row(elem_id="crop-workspace"):
             with gr.Column(scale=3):
-                stage_image = gr.Image(label="Artefact de l'étape", type="filepath", height=560)
+                stage_image = gr.Image(
+                    label="Artefact de l'étape — cadre A4",
+                    type="filepath",
+                    height=560,
+                    elem_id="crop-preview",
+                )
                 with gr.Row():
                     previous = gr.Button("← Précédent")
                     next_button = gr.Button("Suivant →", variant="secondary")
