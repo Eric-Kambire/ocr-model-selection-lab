@@ -175,29 +175,34 @@ def _validated_box(mask: Image.Image, source_size: tuple[int, int]) -> tuple[tup
 
 
 def _estimate_rotation(source: Image.Image, threshold: int, enabled: bool) -> tuple[Image.Image, float]:
-    """Corrige une légère rotation sans dépendre d'OpenCV.
+    """Estime la rotation d'une carte, y compris une carte tournée de 45°.
 
-    Pour chaque angle entier entre -12° et +12°, un masque est calculé sur une
-    miniature. L'angle dont le rectangle a le ratio le plus proche de 1.586
-    (format de carte ISO ID-1) est retenu. C'est une estimation, pas une
-    correction de perspective à quatre coins.
+    Une première passe rapide couvre -90° à +90° par pas de 3°, puis une passe
+    fine évalue chaque degré autour du meilleur candidat. Le score retient le
+    rectangle dont le ratio est le plus proche du format ISO ID-1 (1,586).
     """
     if not enabled:
         return source.copy(), 0.0
 
     preview = source.copy()
-    preview.thumbnail((900, 900))
+    preview.thumbnail((650, 650))
     target_ratio = 1.586
     best_angle, best_score = 0.0, float("inf")
-    for angle in range(-12, 13):
+    def evaluate(angle: int) -> None:
+        nonlocal best_angle, best_score
         candidate = preview.rotate(angle, expand=True, resample=Image.Resampling.BICUBIC, fillcolor="white")
         box, info = _validated_box(_threshold_mask(ImageOps.grayscale(candidate), threshold), candidate.size)
         if box is None:
-            continue
+            return
         # Le score favorise une forme de carte plausible et une zone compacte.
         score = abs(float(info["ratio"]) - target_ratio) + abs(float(info["coverage"]) - 0.18) * 0.25
         if score < best_score:
             best_score, best_angle = score, float(angle)
+
+    for angle in range(-90, 91, 3):
+        evaluate(angle)
+    for angle in range(int(best_angle) - 3, int(best_angle) + 4):
+        evaluate(angle)
 
     rotated = source.rotate(best_angle, expand=True, resample=Image.Resampling.BICUBIC, fillcolor="white")
     return rotated, best_angle
