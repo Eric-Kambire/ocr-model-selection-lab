@@ -346,6 +346,35 @@ def _overlay_box(source: Image.Image, box: tuple[int, int, int, int] | None, met
     return overlay
 
 
+def _overlay_iteration_box(source: Image.Image, metadata: dict[str, Any]) -> Image.Image:
+    """Dessine le contour brut à chaque essai, y compris un essai rejeté.
+
+    La pipeline finale ne doit pas cropper sur un rectangle non validé. Pour
+    l'animation pédagogique, ce rectangle reste très utile : il permet de voir
+    pourquoi un angle donne une forme ou une couverture incohérente.
+    """
+    overlay = source.copy().convert("RGB")
+    draw = ImageDraw.Draw(overlay)
+    raw_box = metadata.get("crop_box")
+    if not raw_box:
+        draw.text((18, 18), "Aucun pixel de contenu détecté à cet angle", fill="#b42318")
+        return overlay
+
+    box = tuple(int(value) for value in raw_box)
+    accepted = metadata.get("status") == "crop_detected"
+    color = "#22863a" if accepted else "#b42318"
+    state_label = "ACCEPTE" if accepted else "REJETE"
+    label = (
+        f"{state_label} | ratio={metadata['ratio']} | "
+        f"couverture={metadata['coverage'] * 100:.1f}%"
+    )
+    draw.rectangle(box, outline=color, width=max(3, max(source.size) // 500))
+    label_width = max(420, len(label) * 7)
+    draw.rectangle((box[0], max(0, box[1] - 30), min(source.width, box[0] + label_width), box[1]), fill=color)
+    draw.text((box[0] + 6, max(2, box[1] - 25)), label, fill="white")
+    return overlay
+
+
 def _rotation_iteration_note(
     phase: str,
     position: int,
@@ -363,7 +392,7 @@ def _rotation_iteration_note(
         "reconstruit le masque, puis dessine le contour trouvé.\n\n"
         f"- Ratio mesuré : `{ratio:.4f}`\n"
         f"- Score : `|{ratio:.4f} − 1,586| = {score:.4f}` ; le plus petit score est le meilleur.\n"
-        f"- Validation du contour : **{decision}**.\n\n"
+        f"- Validation du contour : **{decision}**. Le rectangle est **vert** s'il est accepté, **rouge** s'il est rejeté.\n\n"
         "Cette image est une prévisualisation réduite pour que la lecture reste fluide. "
         "Le résultat final téléchargé est calculé à la résolution complète."
     )
@@ -410,7 +439,9 @@ def play_pillow_iterations(state: dict[str, Any], delay_ms: int):
         candidate = preview.rotate(angle, expand=True, resample=Image.Resampling.BICUBIC, fillcolor="white")
         candidate_mask = _threshold_mask(ImageOps.grayscale(candidate), int(state["threshold"]))
         box, geometry = _validated_box(candidate_mask, candidate.size, preview.size)
-        frame = _overlay_box(candidate, box, geometry)
+        # Contrairement au crop final, l'animation affiche aussi les rectangles
+        # rejetés afin d'expliquer chaque essai d'angle.
+        frame = _overlay_iteration_box(candidate, geometry)
         frame_path = _write_image(frame, output_dir / f"{position:03d}_{phase.lower().replace(' ', '_')}_{angle:+.0f}.png")
         status = f"Lecture en cours : {phase.lower()} — angle {angle:+.0f}° ({position}/{len(candidates)})"
         yield (
