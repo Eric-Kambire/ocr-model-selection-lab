@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import math
 import sys
 import tempfile
 import time
@@ -105,30 +104,45 @@ def dpi_impact_markdown(dpi: int, card_width_mm: float = DEFAULT_CARD_WIDTH_MM) 
     )
 
 
-def rotation_math_demo_html(angle_degrees: float) -> str:
-    """Produit une démonstration SVG mise à jour en direct par le curseur."""
-    theta = math.radians(float(angle_degrees))
-    cosine, sine = math.cos(theta), math.sin(theta)
-    card_w, card_h = 220.0, 138.0
-    canvas_w = abs(card_w * cosine) + abs(card_h * sine)
-    canvas_h = abs(card_w * sine) + abs(card_h * cosine)
-    return f"""
-    <div style="font-family:Inter,Arial,sans-serif;color:#173a72;background:#f7f8fa;padding:12px;border:1px solid #d7d9de">
-      <svg viewBox="0 0 520 330" width="100%" style="max-height:330px;background:#d9dce1">
-        <rect x="{260-canvas_w/2:.1f}" y="{165-canvas_h/2:.1f}" width="{canvas_w:.1f}" height="{canvas_h:.1f}" fill="#fff" stroke="#aab1bd" stroke-dasharray="5 4"/>
-        <g transform="rotate({angle_degrees:.2f} 260 165)">
-          <rect x="150" y="96" width="220" height="138" rx="8" fill="#dcebcf" stroke="#1769d1" stroke-width="3"/>
-          <line x1="150" y1="165" x2="370" y2="165" stroke="#1769d1" stroke-dasharray="5 4"/>
-          <text x="260" y="170" text-anchor="middle" fill="#173a72" font-size="16">CNI</text>
-        </g>
-        <circle cx="260" cy="165" r="4" fill="#b42318"/><text x="270" y="158" font-size="13">centre</text>
-      </svg>
-      <b>Angle θ = {angle_degrees:.2f}° = {theta:.4f} rad</b><br>
-      cos(θ) = {cosine:.4f} · sin(θ) = {sine:.4f}<br>
-      <code>x' = cos(θ)(x−cx) − sin(θ)(y−cy) + cx</code><br>
-      <code>y' = sin(θ)(x−cx) + cos(θ)(y−cy) + cy</code><br>
-      Canevas sans découpe : W' = |W cosθ| + |H sinθ| = <b>{canvas_w:.1f}px</b> · H' = |W sinθ| + |H cosθ| = <b>{canvas_h:.1f}px</b>.
-    </div>"""
+def rotation_method_markdown(rotation_method: str, auto_rotate: bool) -> str:
+    """Explique uniquement la méthode choisie, avant le lancement de la pipeline."""
+    if not auto_rotate:
+        return (
+            "### Rotation désactivée\n\n"
+            "Aucun angle ne sera recherché : l'étape 4 conservera l'image telle quelle. "
+            "Le contour et le crop restent néanmoins calculés."
+        )
+    if rotation_method == "opencv":
+        return (
+            "### OpenCV — rectangle orienté\n\n"
+            "`minAreaRect` cherche le plus petit rectangle incliné qui contient le contenu sombre. "
+            "Son angle est évalué avec ses équivalents à 90° près, puis `warpAffine` applique "
+            "la matrice de rotation avec un fond blanc. Cette option nécessite `opencv-python-headless`."
+        )
+    return (
+        "### Pillow — recherche par ratio\n\n"
+        "Le laboratoire teste d'abord les angles de −90° à +90° par pas de 3°, puis chaque degré "
+        "autour du meilleur candidat. Le score est `|ratio détecté − 1,586|` : le score le plus petit gagne."
+    )
+
+
+def geometry_markdown(geometry: dict[str, Any]) -> str:
+    """Explique la validation du contour avec les valeurs réellement calculées."""
+    ratio = float(geometry.get("ratio", 0.0))
+    coverage = float(geometry.get("coverage", 0.0)) * 100.0
+    accepted = geometry.get("status") == "crop_detected"
+    decision = "accepté : crop CNI produit" if accepted else "refusé : page entière conservée"
+    return (
+        "### Ratio et couverture\n\n"
+        f"- **Ratio largeur / hauteur du contour** : `{ratio:.4f}` ; plage acceptée : `1,20` à `2,05`. "
+        "Une CNI physique est proche de `1,586`.\n"
+        f"- **Couverture** : `{coverage:.1f} %` ; formule : `largeur_contour × hauteur_contour / "
+        "largeur_source × hauteur_source`. Elle est calculée contre la **page avant rotation**, "
+        "pour que le canevas agrandi ne la fausse pas.\n"
+        "- **Plage acceptée de couverture** : `2 %` à `100 %`. Une image déjà recadrée sur la CNI peut "
+        "logiquement atteindre presque `100 %`.\n"
+        f"- **Décision** : **{decision}**."
+    )
 
 
 def _write_image(image: Image.Image, path: Path, *, mode: str | None = None) -> str:
@@ -197,7 +211,11 @@ def _validated_box(
     # couverture doit donc être rapportée à la page d'origine, pas au canevas.
     reference = reference_size or source_size
     coverage = width * height / (reference[0] * reference[1])
-    valid = 1.20 <= ratio <= 2.05 and 0.02 <= coverage <= 0.65
+    # Une image fournie directement peut déjà être un crop de la CNI : dans
+    # ce cas, le rectangle couvre presque 100 % de la source et reste valide.
+    # Le ratio suffit à rejeter une page A4 entière (≈ 0,707), même lorsqu'elle
+    # est très remplie. La borne haute de 65 % était donc incorrecte.
+    valid = 1.20 <= ratio <= 2.05 and 0.02 <= coverage <= 1.0
     info = {
         "status": "crop_detected" if valid else "crop_fallback_full_page",
         "crop_box": [left, top, right, bottom],
@@ -397,7 +415,7 @@ def build_pipeline(
     rotation_method: str,
     simulation_angle: float,
     card_width_mm: float,
-) -> tuple[dict[str, Any], int, str, str, str, str, str, str, str]:
+) -> tuple[Any, ...]:
     """Produit toutes les étapes, leurs mesures et le journal réutilisable."""
     if not input_path:
         raise gr.Error("Chargez un PDF ou une image avant de préparer les étapes.")
@@ -505,10 +523,12 @@ def _stage_markdown(index: int, state: dict[str, Any]) -> str:
     if index == 2:
         explanation += f" Seuil utilisé : `{state['threshold']}` sur une échelle 0–255."
     if index == 3:
-        explanation += f" Angle estimé : `{state['rotation_degrees']:+.0f}°`."
+        explanation = rotation_method_markdown(state["rotation_method"], state["auto_rotation"])
+        explanation += f"\n\nAngle effectivement appliqué : `{state['rotation_degrees']:+.0f}°`."
     if index in {4, 5}:
         geometry = state["geometry"]
-        explanation += "\n\n```json\n" + json.dumps(geometry, ensure_ascii=False, indent=2) + "\n```"
+        explanation += "\n\n" + geometry_markdown(geometry)
+        explanation += "\n\nDonnées techniques :\n```json\n" + json.dumps(geometry, ensure_ascii=False, indent=2) + "\n```"
     if index == 5:
         explanation += (
             "\n\n> Le gris autour de l'image est uniquement le cadre de prévisualisation : "
@@ -560,26 +580,33 @@ def build_ui() -> gr.Blocks:
         state = gr.State({})
         stage_index = gr.State(0)
         with gr.Row(elem_id="crop-toolbar"):
-            source = gr.File(label="PDF A4 ou image de carte", type="filepath", file_types=[".pdf", ".png", ".jpg", ".jpeg", ".webp"])
-            input_mode = gr.Radio(
-                choices=[
-                    ("Scan existant : analyser directement", "direct"),
-                    ("Image carte → PDF A4 simulé", "simulate_a4"),
-                ],
-                value="direct",
-                label="Chemin de préparation",
-                info="Le second mode place l'image sur un A4 blanc incliné, comme un dépôt de travers au scanner.",
-            )
-            dpi = gr.Slider(72, 600, value=300, step=1, label="DPI PDF")
-            threshold = gr.Slider(180, 252, value=242, step=1, label="Seuil blanc")
-            auto_rotate = gr.Checkbox(value=False, label="Corriger automatiquement la rotation")
-            rotation_method = gr.Radio(
-                [("Pillow : recherche par ratio", "pillow"), ("OpenCV : rectangle orienté", "opencv")],
-                value="pillow",
-                label="Méthode de rotation",
-                info="OpenCV utilise minAreaRect puis warpAffine ; installez opencv-python-headless si vous le choisissez.",
-            )
-            prepare = gr.Button("Préparer / régénérer", variant="primary")
+            with gr.Column(scale=3):
+                source = gr.File(
+                    label="1. PDF A4 ou image de carte",
+                    type="filepath",
+                    file_types=[".pdf", ".png", ".jpg", ".jpeg", ".webp"],
+                )
+                input_mode = gr.Radio(
+                    choices=[
+                        ("Scan existant : analyser directement", "direct"),
+                        ("Image carte → PDF A4 simulé", "simulate_a4"),
+                    ],
+                    value="direct",
+                    label="2. Chemin de préparation",
+                    info="Le second mode place l'image sur un A4 blanc incliné, comme un dépôt de travers au scanner.",
+                )
+                dpi = gr.Slider(72, 600, value=300, step=1, label="3. DPI PDF")
+                prepare = gr.Button("Préparer / régénérer", variant="primary")
+            with gr.Column(scale=2):
+                gr.Markdown("### Détection et rotation")
+                threshold = gr.Slider(180, 252, value=242, step=1, label="Seuil blanc")
+                auto_rotate = gr.Checkbox(value=False, label="Corriger automatiquement la rotation")
+                rotation_method = gr.Radio(
+                    [("Pillow : recherche par ratio", "pillow"), ("OpenCV : rectangle orienté", "opencv")],
+                    value="pillow",
+                    label="Méthode de rotation",
+                )
+                rotation_method_help = gr.Markdown(rotation_method_markdown("pillow", False))
         with gr.Accordion("Simulation A4 et mesures DPI", open=True):
             gr.Markdown(
                 "**Optionnel.** Choisissez « Image carte → PDF A4 simulé » pour produire un A4. "
@@ -590,26 +617,15 @@ def build_ui() -> gr.Blocks:
                 simulation_angle = gr.Slider(-15, 15, value=0, step=0.5, label="Inclinaison simulée (degrés)")
                 card_width_mm = gr.Slider(70, 150, value=DEFAULT_CARD_WIDTH_MM, step=1, label="Largeur de la carte sur l'A4 (mm)")
             dpi_impact = gr.Markdown(dpi_impact_markdown(300, DEFAULT_CARD_WIDTH_MM))
-        with gr.Accordion("Algorithmes de rotation : ce que vous voyez", open=False):
+        with gr.Accordion("Comprendre la méthode sélectionnée", open=False):
             gr.Markdown(
-                "### Étapes communes\n\n"
-                "1. L'image devient un masque : pixels plus foncés que le seuil = contenu ; fond presque blanc = ignoré. "
-                "2. La zone de contenu est encadrée. Une CNI attendue a un ratio largeur/hauteur proche de **1,586**. "
-                "3. Après rotation, le crop est validé avec une couverture calculée sur la **taille de page originale**. "
-                "Ainsi, l'agrandissement temporaire du canevas ne biaise pas le choix de l'angle.\n\n"
-                "### Méthode Pillow — recherche par ratio\n\n"
-                "- Test rapide des angles de −90° à +90° par pas de 3°, puis affinage degré par degré autour du meilleur.\n"
-                "- Score : `|ratio détecté − 1,586|`. Le plus petit score gagne.\n"
-                "- `expand=True` agrandit l'image tournée pour ne pas couper les coins ; ce changement de taille est normal et n'affecte plus le score.\n\n"
-                "### Méthode OpenCV — rectangle orienté\n\n"
-                "- `minAreaRect` trouve le plus petit rectangle tourné contenant les pixels de la carte.\n"
-                "- Son angle est corrigé parmi les équivalents à 90° près.\n"
-                "- `getRotationMatrix2D` construit la matrice de rotation et `warpAffine` déplace/interpole les pixels avec un fond blanc.\n\n"
-                "Les deux méthodes redressent une rotation dans le plan. Une carte en trapèze (photo prise de biais) nécessite une future correction de perspective à quatre coins."
+                "Les deux options commencent par un masque : pixels plus foncés que le seuil = contenu ; fond presque blanc = ignoré. "
+                "Le ratio de la CNI est ensuite comparé à `1,586`. La **couverture** ne choisit pas l'angle : "
+                "elle valide seulement le contour final, rapporté à la taille de la source avant rotation. "
+                "Un canevas agrandi par la rotation ne peut donc pas fausser cette mesure.\n\n"
+                "Pillow et OpenCV redressent une rotation dans le plan. Une carte photographiée en trapèze "
+                "demande une correction de perspective à quatre coins, qui est hors de ce laboratoire."
             )
-        with gr.Accordion("Animation mathématique : tourner une CNI", open=True):
-            rotation_demo_angle = gr.Slider(-90, 90, value=-48, step=1, label="Angle θ (degrés)")
-            rotation_demo = gr.HTML(rotation_math_demo_html(-48))
         with gr.Row(elem_id="crop-workspace"):
             with gr.Column(scale=3):
                 stage_image = gr.Image(
@@ -654,7 +670,8 @@ def build_ui() -> gr.Blocks:
         previous.click(previous_stage, inputs=[stage_index, state], outputs=[stage_index, stage_image, stage_name, stage_note, download])
         dpi.change(dpi_impact_markdown, inputs=[dpi, card_width_mm], outputs=[dpi_impact], queue=False)
         card_width_mm.change(dpi_impact_markdown, inputs=[dpi, card_width_mm], outputs=[dpi_impact], queue=False)
-        rotation_demo_angle.change(rotation_math_demo_html, inputs=[rotation_demo_angle], outputs=[rotation_demo], queue=False)
+        rotation_method.change(rotation_method_markdown, inputs=[rotation_method, auto_rotate], outputs=[rotation_method_help], queue=False)
+        auto_rotate.change(rotation_method_markdown, inputs=[rotation_method, auto_rotate], outputs=[rotation_method_help], queue=False)
     return app
 
 
