@@ -99,7 +99,6 @@ A4_WIDTH_MM = 210.0
 A4_HEIGHT_MM = 297.0
 DEFAULT_CARD_WIDTH_MM = 120.0
 TEMP_ROOT = Path(tempfile.gettempdir()) / "cni-crop-lab"
-MAX_SAVED_SESSIONS = 2
 
 
 def _mm_to_px(millimeters: float, dpi: int) -> int:
@@ -169,29 +168,24 @@ def _write_image(image: Image.Image, path: Path, *, mode: str | None = None) -> 
     return str(path)
 
 
-def _write_preview_jpeg(image: Image.Image, path: Path) -> str:
-    """Écrit un seul aperçu léger, réutilisé pendant une lecture d'itérations."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    image.convert("RGB").save(path, format="JPEG", quality=82, optimize=True)
-    return str(path)
+def _cleanup_crop_sessions() -> None:
+    """Supprime uniquement les sorties temporaires générées par Crop Lab.
 
-
-def _cleanup_old_crop_sessions() -> None:
-    """Conserve seulement les dernières sessions temporaires créées par ce script.
-
-    Les artefacts restent téléchargeables pendant la session active. Sans cette
-    limite, six PNG haute résolution par préparation et les animations peuvent
-    remplir le disque temporaire local après plusieurs essais.
+    Une session active garde ses six artefacts PNG et son JSON jusqu'au prochain
+    document ou rechargement de la page. Les images d'animation ne sont jamais
+    écrites sur disque : Gradio reçoit directement l'image PIL en mémoire.
     """
     if not TEMP_ROOT.exists():
         return
-    sessions = sorted(
-        (path for path in TEMP_ROOT.iterdir() if path.is_dir() and path.name.startswith("session-")),
-        key=lambda path: path.stat().st_mtime,
-        reverse=True,
-    )
-    for stale_session in sessions[MAX_SAVED_SESSIONS:]:
-        shutil.rmtree(stale_session, ignore_errors=True)
+    for session in TEMP_ROOT.iterdir():
+        if session.is_dir() and session.name.startswith("session-"):
+            shutil.rmtree(session, ignore_errors=True)
+
+
+def cleanup_crop_sessions_on_page_load() -> str:
+    """Déclenche le nettoyage local lors d'un nouveau chargement du navigateur."""
+    _cleanup_crop_sessions()
+    return ""
 
 
 def _write_pdf(image: Image.Image, path: Path, dpi: int) -> str:
@@ -459,8 +453,6 @@ def play_pillow_iterations(state: dict[str, Any], delay_ms: int):
     with Image.open(state["paths"][0]) as source_file:
         preview = ImageOps.exif_transpose(source_file).convert("RGB")
     preview.thumbnail((900, 900))
-    output_dir = Path(state["paths"][3]).parent / "rotation_iterations"
-    output_dir.mkdir(parents=True, exist_ok=True)
     pause_seconds = max(0.05, min(float(delay_ms) / 1000.0, 3.0))
 
     for position, (phase, angle) in enumerate(candidates, start=1):
@@ -470,16 +462,15 @@ def play_pillow_iterations(state: dict[str, Any], delay_ms: int):
         # Contrairement au crop final, l'animation affiche aussi les rectangles
         # rejetés afin d'expliquer chaque essai d'angle.
         frame = _overlay_iteration_box(candidate, geometry)
-        # Une seule image JPEG est réécrite : garder 68 PNG par lecture a
-        # rempli le disque temporaire après plusieurs essais successifs.
-        frame_path = _write_preview_jpeg(frame, output_dir / "current_iteration.jpg")
         status = f"Lecture en cours : {phase.lower()} — angle {angle:+.0f}° ({position}/{len(candidates)})"
         yield (
             3,
             frame,
             _stage_html(3),
             _rotation_iteration_note(phase, position, len(candidates), angle, geometry),
-            frame_path,
+            # Le téléchargement reste l'artefact de rotation final, lossless,
+            # déjà stocké dans la session active. L'aperçu animé est en mémoire.
+            state["paths"][3],
             status,
             gr.update(visible=True, interactive=True),
         )
@@ -587,7 +578,8 @@ def build_pipeline(
     if not 72 <= int(dpi) <= 600:
         raise gr.Error("Le DPI doit être compris entre 72 et 600.")
 
-    _cleanup_old_crop_sessions()
+    # Un nouveau document remplace la session temporaire précédente.
+    _cleanup_crop_sessions()
     output_dir = TEMP_ROOT / f"session-{time.strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:8]}"
     started = time.perf_counter()
     source_path, prepared_pdf, source_preparation = _prepare_source(
@@ -754,6 +746,9 @@ def build_ui() -> gr.Blocks:
         )
         state = gr.State({})
         stage_index = gr.State(0)
+        # Composant invisible : il permet au navigateur de déclencher le
+        # nettoyage dès qu'une page Crop Lab est ouverte ou rechargée.
+        page_cleanup_marker = gr.Markdown("", visible=False)
         with gr.Row(elem_id="crop-toolbar"):
             with gr.Column(scale=4, elem_id="crop-document"):
                 gr.HTML("<div class='crop-section-title'>1. Document source</div><div class='crop-section-copy'>Un scan A4, un PDF ou une image de carte.</div>")
@@ -869,6 +864,7 @@ def build_ui() -> gr.Blocks:
         card_width_mm.change(dpi_impact_markdown, inputs=[dpi, card_width_mm], outputs=[dpi_impact], queue=False)
         rotation_method.change(rotation_method_markdown, inputs=[rotation_method, auto_rotate], outputs=[rotation_method_help], queue=False)
         auto_rotate.change(rotation_method_markdown, inputs=[rotation_method, auto_rotate], outputs=[rotation_method_help], queue=False)
+        app.load(cleanup_crop_sessions_on_page_load, outputs=[page_cleanup_marker], queue=False)
     return app
 
 
