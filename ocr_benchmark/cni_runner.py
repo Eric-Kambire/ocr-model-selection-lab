@@ -16,8 +16,9 @@ from typing import Any, Iterator
 
 # Le runner orchestre les modules spécialisés ; il ne contient ni logique de
 # scan de dossiers, ni règle de crop, ni définition du contrat JSON.
-from .cni_images import build_vertical_cni_composite, crop_cni_from_a4, render_single_page_pdf
+from .cni_images import build_vertical_cni_composite, crop_cni_from_a4
 from .cni_ingestion import write_cni_json
+from .cni_preprocessing import prepare_cni_source, preprocess_cni_image
 from .cni_schema import (
     build_cni_global_json,
     build_cni_prompt,
@@ -46,6 +47,7 @@ def iter_cni_benchmark(
     fields: dict[str, list[dict[str, str]]] | None = None,
     prompt_instructions: str | None = None,
     system_prompt: str | None = None,
+    preprocessing: dict[str, bool] | None = None,
 ) -> Iterator[dict[str, Any]]:
     """Émet des événements live et persiste un jeu d'artefacts par modèle/client.
 
@@ -120,7 +122,7 @@ def iter_cni_benchmark(
             for client in valid_clients:
                 client_dir = run_dir / _safe_name(model_name) / _safe_name(str(client["folder_client_id"]))
                 try:
-                    prepared = prepare_cni_client_images(client, client_dir, dpi)
+                    prepared = prepare_cni_client_images(client, client_dir, dpi, preprocessing=preprocessing)
                 except Exception as exc:
                     completed += 1
                     result = _failed_client_result(run_id, model_name, client, strategy, f"prepare_failed: {type(exc).__name__}: {exc}")
@@ -159,16 +161,19 @@ def iter_cni_benchmark(
             LOGGER.info("CNI model released | model=%s", model_name)
 
 
-def prepare_cni_client_images(client: dict[str, Any], artefacts_dir: Path, dpi: int) -> dict[str, Any]:
+def prepare_cni_client_images(client: dict[str, Any], artefacts_dir: Path, dpi: int, *, preprocessing: dict[str, bool] | None = None) -> dict[str, Any]:
     """Rend, recadre et compose la paire d'entrée avant l'inférence."""
     # Tout est écrit dans le run, jamais à côté des PDF utilisateur : les
     # sources restent intactes et chaque benchmark peut être rejoué/analyse.
     recto_page = artefacts_dir / "recto_page.png"
     verso_page = artefacts_dir / "verso_page.png"
-    recto_render = render_single_page_pdf(Path(str(client["recto_pdf"])), recto_page, dpi)
-    verso_render = render_single_page_pdf(Path(str(client["verso_pdf"])), verso_page, dpi)
-    recto_crop = crop_cni_from_a4(recto_page, artefacts_dir / "crop_recto.png")
-    verso_crop = crop_cni_from_a4(verso_page, artefacts_dir / "crop_verso.png")
+    options = preprocessing or {}
+    recto_render = prepare_cni_source(Path(str(client.get("recto_source") or client["recto_pdf"])), recto_page, dpi)
+    verso_render = prepare_cni_source(Path(str(client.get("verso_source") or client["verso_pdf"])), verso_page, dpi)
+    recto_processed = preprocess_cni_image(recto_page, artefacts_dir / "recto_preprocessed.png", options)
+    verso_processed = preprocess_cni_image(verso_page, artefacts_dir / "verso_preprocessed.png", options)
+    recto_crop = crop_cni_from_a4(Path(recto_processed["image_path"]), artefacts_dir / "crop_recto.png")
+    verso_crop = crop_cni_from_a4(Path(verso_processed["image_path"]), artefacts_dir / "crop_verso.png")
     # Même en mode séparé, conserver le composite facilite une inspection
     # humaine ultérieure et un éventuel nouvel essai en mode combiné.
     combined_path = build_vertical_cni_composite(
@@ -177,6 +182,9 @@ def prepare_cni_client_images(client: dict[str, Any], artefacts_dir: Path, dpi: 
     prepared = {
         "recto_page": recto_render,
         "verso_page": verso_render,
+        "preprocessing_options": options,
+        "recto_preprocessed": recto_processed,
+        "verso_preprocessed": verso_processed,
         "recto_crop": recto_crop,
         "verso_crop": verso_crop,
         "combined_image": combined_path,

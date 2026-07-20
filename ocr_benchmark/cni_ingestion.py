@@ -18,14 +18,16 @@ from typing import Any
 LOGGER = logging.getLogger(__name__)
 DEFAULT_RECTO_SUFFIX = "_CIN_Recto"
 DEFAULT_VERSO_SUFFIX = "_CIN_Verso"
+SUPPORTED_CNI_SOURCE_SUFFIXES = (".pdf", ".png", ".jpg", ".jpeg")
 
 
 def _side_patterns(recto_suffix: str, verso_suffix: str) -> dict[str, re.Pattern[str]]:
-    """Construit des patrons sûrs depuis les suffixes éditables de l'UI."""
+    """Construit des patrons sûrs pour les sources PDF, JPEG et PNG."""
     suffixes = {"recto": str(recto_suffix or "").strip(), "verso": str(verso_suffix or "").strip()}
     if not all(suffixes.values()):
-        raise ValueError("Les suffixes PDF recto et verso ne peuvent pas être vides.")
-    return {side: re.compile(rf"^(?P<document_id>.+){re.escape(suffix)}\.pdf$", re.IGNORECASE) for side, suffix in suffixes.items()}
+        raise ValueError("Les suffixes recto et verso ne peuvent pas être vides.")
+    extensions = "|".join(re.escape(value) for value in SUPPORTED_CNI_SOURCE_SUFFIXES)
+    return {side: re.compile(rf"^(?P<document_id>.+){re.escape(suffix)}(?P<extension>{extensions})$", re.IGNORECASE) for side, suffix in suffixes.items()}
 
 
 def scan_cni_clients(
@@ -42,7 +44,9 @@ def scan_cni_clients(
     side_filename = _side_patterns(recto_suffix, verso_suffix)
     for folder in sorted(path for path in clients_root.iterdir() if path.is_dir()):
         record: dict[str, Any] = {
-            "folder_client_id": folder.name, "client_dir": str(folder), "recto_pdf": None, "verso_pdf": None,
+            "folder_client_id": folder.name, "client_dir": str(folder),
+            "recto_source": None, "verso_source": None, "recto_format": None, "verso_format": None,
+            "recto_pdf": None, "verso_pdf": None,
             "recto_document_id": None, "verso_document_id": None,
             "label_source": str(labels_root / f"{folder.name}.jsonb") if labels_root else None,
             "label_path": str(folder / f"{folder.name}.json"),
@@ -58,20 +62,24 @@ def scan_cni_clients(
                 match = matcher.match(candidate.name)
                 if not match:
                     continue
-                if record[f"{side}_pdf"] is not None:
-                    record["issues"].append(f"duplicate_{side}_pdf")
+                if record[f"{side}_source"] is not None:
+                    record["issues"].append(f"duplicate_{side}_source")
                 else:
+                    record[f"{side}_source"] = str(candidate)
+                    record[f"{side}_format"] = candidate.suffix.lower().lstrip(".")
                     record[f"{side}_pdf"] = str(candidate)
                     record[f"{side}_document_id"] = match.group("document_id")
         # L'absence d'une face invalide l'entrée, sans effacer les informations
         # déjà relevées : le tableau de diagnostic reste donc exploitable.
         for side in ("recto", "verso"):
-            if record[f"{side}_pdf"] is None:
-                record["issues"].append(f"missing_{side}_pdf")
+            if record[f"{side}_source"] is None:
+                record["issues"].append(f"missing_{side}_source")
         if record["recto_document_id"] and record["verso_document_id"] and record["recto_document_id"] != record["verso_document_id"]:
             record["issues"].append("document_id_differs_between_sides")
         if labels_root and Path(record["label_source"]).is_file():
             record["label_status"] = "label_available"
+        elif Path(record["label_path"]).is_file():
+            record["label_status"] = "label_materialized"
         if record["issues"]:
             record["status"] = "invalid_input"
         records.append(record)

@@ -413,13 +413,14 @@ def _cni_scan_table(records: list[dict[str, Any]]) -> pd.DataFrame:
 
 
 def _cni_source_choices(records: list[dict[str, Any]]) -> list[tuple[str, str]]:
-    """List recto/verso PDFs found during a client-folder scan."""
+    """Liste les sources recto/verso PDF, JPEG ou PNG détectées au scan."""
     choices: list[tuple[str, str]] = []
     for record in records:
         for side in ("recto", "verso"):
-            path_value = record.get(f"{side}_pdf")
+            path_value = record.get(f"{side}_source") or record.get(f"{side}_pdf")
             if path_value:
-                choices.append((f"{record.get('folder_client_id', 'Client')} — {side.title()} (PDF)", str(path_value)))
+                kind = str(record.get(f"{side}_format") or Path(str(path_value)).suffix.lstrip(".") or "fichier").upper()
+                choices.append((f"{record.get('folder_client_id', 'Client')} — {side.title()} ({kind})", str(path_value)))
     return choices
 
 
@@ -1049,7 +1050,7 @@ def build_ui() -> gr.Blocks:
                                             cni_source_selector = gr.Dropdown(
                                                 choices=_cni_source_choices([]),
                                                 label="Document",
-                                                info="Les PDF recto/verso détectés après un scan apparaissent ici.",
+                                                info="Les PDF, JPEG et PNG recto/verso détectés après un scan apparaissent ici.",
                                             )
                                             cni_source_preview_info = gr.Markdown("Sélectionnez un document.")
                                         with gr.Column(scale=1):
@@ -1148,8 +1149,16 @@ def build_ui() -> gr.Blocks:
                             cni_dpi = gr.Slider(150, 450, value=300, step=25, label="Résolution PDF (DPI)")
                             cni_timeout = gr.Number(value=300, minimum=1, maximum=7200, precision=0, label="Temps maximum par appel (s)")
                         with gr.Row():
-                            cni_recto_suffix = gr.Textbox(value=DEFAULT_RECTO_SUFFIX, label="Suffixe PDF recto", info="Texte avant .pdf, par exemple _CIN_Recto.")
-                            cni_verso_suffix = gr.Textbox(value=DEFAULT_VERSO_SUFFIX, label="Suffixe PDF verso", info="Texte avant .pdf, par exemple _CIN_Verso.")
+                            cni_cpu_threads = gr.Number(value=max(1, min(8, os.cpu_count() or 1)), minimum=1, maximum=max(1, os.cpu_count() or 1), precision=0, label="Threads CPU Ollama")
+                            cni_unload = gr.Checkbox(value=True, label="Décharger le modèle après chaque appel")
+                        cni_preprocessing = gr.CheckboxGroup(
+                            [("Redresser une légère inclinaison", "deskew"), ("Améliorer le contraste", "contrast"), ("Réduire le bruit", "denoise")],
+                            value=[], label="Prétraitement image (optionnel)",
+                            info="Appliqué après conversion PDF/JPEG/PNG et avant crop. Les opérations sont enregistrées dans preparation.json.",
+                        )
+                        with gr.Row():
+                            cni_recto_suffix = gr.Textbox(value=DEFAULT_RECTO_SUFFIX, label="Suffixe recto", info="Texte avant l’extension, par exemple _CIN_Recto. PDF/JPEG/PNG acceptés.")
+                            cni_verso_suffix = gr.Textbox(value=DEFAULT_VERSO_SUFFIX, label="Suffixe verso", info="Texte avant l’extension, par exemple _CIN_Verso. PDF/JPEG/PNG acceptés.")
                         cni_system_prompt = gr.Textbox(
                             value=DEFAULT_CNI_SYSTEM_PROMPT,
                             label="Prompt système",
@@ -1684,7 +1693,7 @@ def build_ui() -> gr.Blocks:
             """Passe à la paire CNI suivante."""
             return show_cni_detail(index, results, 1)
 
-        def on_cni_run(model_specs, client_records, strategy, dpi, timeout, system_prompt, prompt_instructions, continue_without_label):
+        def on_cni_run(model_specs, client_records, strategy, dpi, timeout, threads, unload, preprocessing, system_prompt, prompt_instructions, continue_without_label):
             """Valide le lancement puis diffuse l'avancement CNI document par document."""
             empty = empty_figure()
             results: list[dict[str, Any]] = []
@@ -1722,7 +1731,7 @@ def build_ui() -> gr.Blocks:
             ready_records = [record for record in client_records if record.get("status") == "ready"]
             invalid_count = len(client_records) - len(ready_records)
             if not ready_records:
-                message = f"Pré-contrôle impossible : aucune paire PDF prête ({invalid_count} dossier(s) à corriger dans le rapport de scan)."
+                message = f"Pré-contrôle impossible : aucune paire recto/verso prête ({invalid_count} dossier(s) à corriger dans le rapport de scan)."
                 LOGGER.warning("CNI launch rejected | reason=no_ready_pair | clients=%d", len(client_records))
                 yield view(message, message, 0, None, message, 0)
                 return
@@ -1753,7 +1762,9 @@ def build_ui() -> gr.Blocks:
                 for event in iter_cni_benchmark(
                     build_default_registry(), list(model_specs), ready_records, RUNS_DIR,
                     strategy=str(strategy), dpi=int(dpi), timeout_seconds=float(timeout or 0),
+                    cpu_threads=int(threads or 1), unload_after_task=bool(unload),
                     fields=fields, prompt_instructions=prompt_instructions, system_prompt=system_prompt,
+                    preprocessing={str(value): True for value in (preprocessing or [])},
                 ):
                     total, completed = int(event.get("total", total_pairs)), int(event.get("completed", 0))
                     progress = completed / total * 100 if total else 0
@@ -1931,7 +1942,7 @@ def build_ui() -> gr.Blocks:
         )
         cni_event = cni_launch.click(
             on_cni_run,
-            inputs=[cni_models, cni_clients_state, cni_strategy, cni_dpi, cni_timeout, cni_system_prompt, cni_prompt_instructions, cni_continue_without_label],
+            inputs=[cni_models, cni_clients_state, cni_strategy, cni_dpi, cni_timeout, cni_cpu_threads, cni_unload, cni_preprocessing, cni_system_prompt, cni_prompt_instructions, cni_continue_without_label],
             outputs=[
                 cni_launch_feedback,
                 cni_launch, cni_stop,
