@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import sys
 import tempfile
 import time
@@ -102,6 +103,32 @@ def dpi_impact_markdown(dpi: int, card_width_mm: float = DEFAULT_CARD_WIDTH_MM) 
         "Réduire le DPI accélère le rendu et diminue le volume ; les petits caractères deviennent moins lisibles. "
         "Le poids PNG/PDF final dépend aussi des couleurs et de la compression."
     )
+
+
+def rotation_math_demo_html(angle_degrees: float) -> str:
+    """Produit une démonstration SVG mise à jour en direct par le curseur."""
+    theta = math.radians(float(angle_degrees))
+    cosine, sine = math.cos(theta), math.sin(theta)
+    card_w, card_h = 220.0, 138.0
+    canvas_w = abs(card_w * cosine) + abs(card_h * sine)
+    canvas_h = abs(card_w * sine) + abs(card_h * cosine)
+    return f"""
+    <div style="font-family:Inter,Arial,sans-serif;color:#173a72;background:#f7f8fa;padding:12px;border:1px solid #d7d9de">
+      <svg viewBox="0 0 520 330" width="100%" style="max-height:330px;background:#d9dce1">
+        <rect x="{260-canvas_w/2:.1f}" y="{165-canvas_h/2:.1f}" width="{canvas_w:.1f}" height="{canvas_h:.1f}" fill="#fff" stroke="#aab1bd" stroke-dasharray="5 4"/>
+        <g transform="rotate({angle_degrees:.2f} 260 165)">
+          <rect x="150" y="96" width="220" height="138" rx="8" fill="#dcebcf" stroke="#1769d1" stroke-width="3"/>
+          <line x1="150" y1="165" x2="370" y2="165" stroke="#1769d1" stroke-dasharray="5 4"/>
+          <text x="260" y="170" text-anchor="middle" fill="#173a72" font-size="16">CNI</text>
+        </g>
+        <circle cx="260" cy="165" r="4" fill="#b42318"/><text x="270" y="158" font-size="13">centre</text>
+      </svg>
+      <b>Angle θ = {angle_degrees:.2f}° = {theta:.4f} rad</b><br>
+      cos(θ) = {cosine:.4f} · sin(θ) = {sine:.4f}<br>
+      <code>x' = cos(θ)(x−cx) − sin(θ)(y−cy) + cx</code><br>
+      <code>y' = sin(θ)(x−cx) + cos(θ)(y−cy) + cy</code><br>
+      Canevas sans découpe : W' = |W cosθ| + |H sinθ| = <b>{canvas_w:.1f}px</b> · H' = |W sinθ| + |H cosθ| = <b>{canvas_h:.1f}px</b>.
+    </div>"""
 
 
 def _write_image(image: Image.Image, path: Path, *, mode: str | None = None) -> str:
@@ -580,6 +607,9 @@ def build_ui() -> gr.Blocks:
                 "- `getRotationMatrix2D` construit la matrice de rotation et `warpAffine` déplace/interpole les pixels avec un fond blanc.\n\n"
                 "Les deux méthodes redressent une rotation dans le plan. Une carte en trapèze (photo prise de biais) nécessite une future correction de perspective à quatre coins."
             )
+        with gr.Accordion("Animation mathématique : tourner une CNI", open=True):
+            rotation_demo_angle = gr.Slider(-90, 90, value=-48, step=1, label="Angle θ (degrés)")
+            rotation_demo = gr.HTML(rotation_math_demo_html(-48))
         with gr.Row(elem_id="crop-workspace"):
             with gr.Column(scale=3):
                 stage_image = gr.Image(
@@ -624,6 +654,7 @@ def build_ui() -> gr.Blocks:
         previous.click(previous_stage, inputs=[stage_index, state], outputs=[stage_index, stage_image, stage_name, stage_note, download])
         dpi.change(dpi_impact_markdown, inputs=[dpi, card_width_mm], outputs=[dpi_impact], queue=False)
         card_width_mm.change(dpi_impact_markdown, inputs=[dpi, card_width_mm], outputs=[dpi_impact], queue=False)
+        rotation_demo_angle.change(rotation_math_demo_html, inputs=[rotation_demo_angle], outputs=[rotation_demo], queue=False)
     return app
 
 
