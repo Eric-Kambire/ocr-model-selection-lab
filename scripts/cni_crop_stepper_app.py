@@ -31,14 +31,28 @@ from ocr_benchmark.cni_images import render_single_page_pdf
 
 
 APP_CSS = """
-.gradio-container { max-width: 1440px !important; background: #f1f2f4 !important; }
-#crop-lab-header { border-bottom: 1px solid #d7d9de; padding: 8px 0 18px; }
+.gradio-container { max-width: 1440px !important; background: #f1f2f4 !important; padding: 14px 22px 28px !important; }
+#crop-lab-header { border-bottom: 1px solid #d7d9de; padding: 6px 0 16px; margin-bottom: 14px; }
 #crop-lab-header h1 { margin: 0; color: #12233f; font-size: 30px; }
 #crop-lab-header p { margin: 6px 0 0; color: #58677d; }
 #crop-stage-name { font-size: 18px; font-weight: 700; color: #173a72; }
-#crop-stage-note { min-height: 80px; color: #3d4b60; }
-#crop-toolbar { align-items: end; border-bottom: 1px solid #d7d9de; padding-bottom: 12px; }
-#crop-workspace { min-height: 590px; }
+#crop-stage-note { min-height: 120px; color: #3d4b60; line-height: 1.55; }
+#crop-toolbar { align-items: stretch; gap: 0 !important; border-bottom: 1px solid #d7d9de; padding: 0 0 16px; margin-bottom: 12px; }
+#crop-toolbar > .gr-column { min-width: 0; padding: 0 16px; border-left: 1px solid #d7d9de; }
+#crop-toolbar > .gr-column:first-child { padding-left: 0; border-left: 0; }
+#crop-toolbar > .gr-column:last-child { padding-right: 0; }
+.crop-section-title { color: #173a72; font-size: 14px; font-weight: 700; letter-spacing: .02em; margin: 0 0 8px; }
+.crop-section-copy { color: #58677d; font-size: 12px; margin: -3px 0 8px; }
+#crop-action { display: flex; justify-content: flex-end; }
+#crop-action button { min-height: 42px; margin-top: 8px; font-weight: 700; }
+#crop-workspace { min-height: 590px; align-items: flex-start; gap: 28px !important; margin-top: 8px; }
+#crop-inspector { border-left: 1px solid #d7d9de; padding-left: 24px !important; }
+#crop-nav { max-width: 428px; margin: 10px auto 0 !important; }
+#crop-nav button { min-height: 38px; }
+#crop-options { margin: 4px 0 12px; }
+#crop-options summary { font-weight: 700; color: #173a72; }
+#rotation-playback { border-top: 1px solid #d7d9de; margin-top: 10px; padding-top: 8px; }
+#rotation-playback button { min-height: 38px; }
 #crop-preview {
     width: 428px !important;
     max-width: 100% !important;
@@ -679,34 +693,41 @@ def build_ui() -> gr.Blocks:
         state = gr.State({})
         stage_index = gr.State(0)
         with gr.Row(elem_id="crop-toolbar"):
-            with gr.Column(scale=3):
+            with gr.Column(scale=4, elem_id="crop-document"):
+                gr.HTML("<div class='crop-section-title'>1. Document source</div><div class='crop-section-copy'>Un scan A4, un PDF ou une image de carte.</div>")
                 source = gr.File(
-                    label="1. PDF A4 ou image de carte",
+                    label="Fichier à traiter",
                     type="filepath",
                     file_types=[".pdf", ".png", ".jpg", ".jpeg", ".webp"],
                 )
-                input_mode = gr.Radio(
+                input_mode = gr.Dropdown(
                     choices=[
                         ("Scan existant : analyser directement", "direct"),
                         ("Image carte → PDF A4 simulé", "simulate_a4"),
                     ],
                     value="direct",
-                    label="2. Chemin de préparation",
+                    label="Mode de préparation",
                     info="Le second mode place l'image sur un A4 blanc incliné, comme un dépôt de travers au scanner.",
+                    filterable=False,
                 )
-                dpi = gr.Slider(72, 600, value=300, step=1, label="3. DPI PDF")
-                prepare = gr.Button("Préparer / régénérer", variant="primary")
-            with gr.Column(scale=2):
-                gr.Markdown("### Détection et rotation")
+            with gr.Column(scale=3, elem_id="crop-detection"):
+                gr.HTML("<div class='crop-section-title'>2. Rendu et détection</div><div class='crop-section-copy'>Qualité du rendu et limite entre fond et contenu.</div>")
+                dpi = gr.Slider(72, 600, value=300, step=1, label="DPI de rendu")
                 threshold = gr.Slider(180, 252, value=242, step=1, label="Seuil blanc")
+            with gr.Column(scale=3, elem_id="crop-rotation"):
+                gr.HTML("<div class='crop-section-title'>3. Redressement</div><div class='crop-section-copy'>Optionnel : corrigez une carte déposée de travers.</div>")
                 auto_rotate = gr.Checkbox(value=False, label="Corriger automatiquement la rotation")
-                rotation_method = gr.Radio(
+                rotation_method = gr.Dropdown(
                     [("Pillow : recherche par ratio", "pillow"), ("OpenCV : rectangle orienté", "opencv")],
                     value="pillow",
                     label="Méthode de rotation",
+                    filterable=False,
                 )
                 rotation_method_help = gr.Markdown(rotation_method_markdown("pillow", False))
-        with gr.Accordion("Simulation A4 et mesures DPI", open=True):
+            with gr.Column(scale=2, elem_id="crop-action"):
+                gr.HTML("<div class='crop-section-title'>4. Générer</div><div class='crop-section-copy'>Crée les six artefacts et leur journal.</div>")
+                prepare = gr.Button("Préparer les étapes", variant="primary")
+        with gr.Accordion("Options de simulation A4 et mesures DPI", open=False, elem_id="crop-options"):
             gr.Markdown(
                 "**Optionnel.** Choisissez « Image carte → PDF A4 simulé » pour produire un A4. "
                 "L'image est réduite sans déformation, tournée autour de son centre, puis posée dans le coin supérieur gauche. "
@@ -726,20 +747,21 @@ def build_ui() -> gr.Blocks:
                 "demande une correction de perspective à quatre coins, qui est hors de ce laboratoire."
             )
         with gr.Row(elem_id="crop-workspace"):
-            with gr.Column(scale=3):
+            with gr.Column(scale=6, elem_id="crop-canvas"):
                 stage_image = gr.Image(
                     label="Aperçu de l'étape",
                     type="filepath",
                     height=560,
                     elem_id="crop-preview",
                 )
-                with gr.Row():
+                with gr.Row(elem_id="crop-nav"):
                     previous = gr.Button("← Précédent")
                     next_button = gr.Button("Suivant →", variant="secondary")
-            with gr.Column(scale=2):
+            with gr.Column(scale=4, elem_id="crop-inspector"):
                 stage_name = gr.HTML("<div id='crop-stage-name'>En attente d'une entrée</div>")
                 stage_note = gr.Markdown(
-                    "1. Chargez un fichier. 2. Choisissez le chemin de préparation. 3. Réglez le DPI et le seuil. 4. Cliquez sur **Préparer / régénérer**.",
+                    "Chargez le document, réglez les paramètres puis cliquez sur **Préparer les étapes**. "
+                    "L’image de gauche et les mesures de cette étape seront mises à jour ensemble.",
                     elem_id="crop-stage-note",
                 )
                 download = gr.File(label="Télécharger l'artefact affiché", type="filepath", interactive=False)
@@ -752,7 +774,7 @@ def build_ui() -> gr.Blocks:
                         label="Angles testés, ratios et scores",
                         value={"status": "Préparez une image avec la rotation activée."},
                     )
-                with gr.Accordion("Lire les itérations Pillow", open=True):
+                with gr.Accordion("Lire les itérations Pillow", open=True, elem_id="rotation-playback"):
                     gr.Markdown(
                         "Lance la recherche sur une miniature de l'A4 : chaque image montre l'angle candidat, "
                         "le contour redessiné et son score. La dernière image revient au résultat final complet."
