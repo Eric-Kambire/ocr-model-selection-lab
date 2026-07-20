@@ -485,6 +485,7 @@ def _cni_result_table(results: list[dict[str, Any]]) -> pd.DataFrame:
             "CIN recto": item.get("cin_recto") or "—",
             "CIN verso": item.get("cin_verso") or "—",
             "CIN cohérent": "Oui" if item.get("cin_coherent") is True else "Non" if item.get("cin_coherent") is False else "—",
+            "Champs à revoir": ", ".join(key for key, state in _cni_field_comparisons(item).items() if state == "different") or "—",
             "Latence (s)": round(float(item.get("latency") or 0), 3),
         }
         for item in results
@@ -511,6 +512,28 @@ def _read_json_if_available(path_value: Any) -> Any:
         return json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         return {"status": "read_failed", "error": f"{type(exc).__name__}: {exc}"}
+
+
+def _cni_field_comparisons(result: dict[str, Any]) -> dict[str, str]:
+    """Compare les champs canoniques au label, quand celui-ci existe."""
+    label = _read_json_if_available(result.get("label_path"))
+    extracted = _read_json_if_available(result.get("global_json_path"))
+    fields = ("cin", "prenom", "nom", "date_naissance", "ville_naissance", "date_validite", "adresse")
+    if not isinstance(label, dict) or "status" in label:
+        return {field: "label_missing" for field in fields}
+    if not isinstance(extracted, dict) or "status" in extracted:
+        return {field: "missing_model" for field in fields}
+    aliases = {"cin": "cin_fusionne", "date_validite": "date_validite_fusionnee"}
+    def normal(value: Any) -> str:
+        return re.sub(r"[^a-z0-9]", "", str(value or "").casefold())
+    output: dict[str, str] = {}
+    for field in fields:
+        expected = label.get(field)
+        if expected is None:
+            expected = next((side.get(field) for side in (label.get("recto"), label.get("verso")) if isinstance(side, dict) and field in side), None)
+        actual = extracted.get(aliases.get(field, field))
+        output[field] = "label_missing" if expected in (None, "") else "missing_model" if actual in (None, "") else "correct" if normal(expected) == normal(actual) else "different"
+    return output
 
 
 def _cni_raw_output(path_value: Any) -> str:
@@ -1088,7 +1111,7 @@ def build_ui() -> gr.Blocks:
                             cni_live_image = gr.Image(label="Face en cours", type="filepath", height=400)
                             cni_live_result = gr.Markdown("Les JSON et mesures apparaîtront après le premier appel.")
                         cni_live_table = gr.Dataframe(
-                            headers=["Client", "Modèle", "Statut", "Accuracy", "Label", "CIN recto", "CIN verso", "CIN cohérent", "Latence (s)"],
+                            headers=["Client", "Modèle", "Statut", "Accuracy", "Label", "CIN recto", "CIN verso", "CIN cohérent", "Champs à revoir", "Latence (s)"],
                             label="Résultats reçus pendant le run",
                             interactive=False,
                         )
@@ -1100,8 +1123,10 @@ def build_ui() -> gr.Blocks:
                             cni_accuracy_min = gr.Slider(0, 100, value=0, step=1, label="Accuracy minimale (%)")
                             cni_accuracy_max = gr.Slider(0, 100, value=100, step=1, label="Accuracy maximale (%)")
                             cni_include_unscored = gr.Checkbox(value=True, label="Inclure non notés")
+                            cni_field_filter = gr.Dropdown([("Tous les champs", ""), ("CIN", "cin"), ("Prénom", "prenom"), ("Nom", "nom"), ("Date de naissance", "date_naissance"), ("Ville de naissance", "ville_naissance"), ("Date de validité", "date_validite"), ("Adresse", "adresse")], value="", label="Champ")
+                            cni_field_state_filter = gr.Dropdown([("Tous les états", ""), ("Correct", "correct"), ("Différent", "different"), ("Valeur modèle absente", "missing_model"), ("Label absent", "label_missing")], value="", label="État")
                             cni_apply_filters = gr.Button("Appliquer les filtres")
-                        cni_results_table = gr.Dataframe(headers=["Client", "Modèle", "Statut", "Accuracy", "Label", "CIN recto", "CIN verso", "CIN cohérent", "Latence (s)"], label="Éléments passés par le benchmark", interactive=False, elem_id="cni-results-table")
+                        cni_results_table = gr.Dataframe(headers=["Client", "Modèle", "Statut", "Accuracy", "Label", "CIN recto", "CIN verso", "CIN cohérent", "Champs à revoir", "Latence (s)"], label="Éléments passés par le benchmark", interactive=False, elem_id="cni-results-table")
                         with gr.Row():
                             cni_accuracy_plot = gr.Plot(value=cni_accuracy_chart([]))
                             cni_latency_plot = gr.Plot(value=cni_latency_chart([]))
@@ -1614,17 +1639,20 @@ def build_ui() -> gr.Blocks:
                 for index, result in enumerate(results or [])
             ]
 
-        def filter_cni_results(results, minimum, maximum, include_unscored):
+        def filter_cni_results(results, minimum, maximum, include_unscored, field_name, field_state):
             """Filtre l'accuracy sans masquer par défaut les lignes non notées."""
             lower, upper = sorted((float(minimum or 0), float(maximum or 100)))
             selected = []
             for result in results or []:
                 accuracy = result.get("accuracy")
                 if accuracy is None:
-                    if include_unscored:
-                        selected.append(result)
-                elif lower <= float(accuracy) * 100 <= upper:
-                    selected.append(result)
+                    if not include_unscored:
+                        continue
+                elif not lower <= float(accuracy) * 100 <= upper:
+                    continue
+                if field_name and field_state and _cni_field_comparisons(result).get(field_name) != field_state:
+                    continue
+                selected.append(result)
             return _cni_result_table(selected)
 
         def cni_detail_metric_summary(result):
@@ -1966,7 +1994,7 @@ def build_ui() -> gr.Blocks:
         )
         cni_apply_filters.click(
             filter_cni_results,
-            inputs=[cni_results_state, cni_accuracy_min, cni_accuracy_max, cni_include_unscored],
+            inputs=[cni_results_state, cni_accuracy_min, cni_accuracy_max, cni_include_unscored, cni_field_filter, cni_field_state_filter],
             outputs=[cni_results_table], queue=False,
         )
         # L'exploration détaillée reste indépendante du générateur : les
