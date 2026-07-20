@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import shutil
 import sys
 import tempfile
 import time
@@ -97,6 +98,8 @@ STEPS = (
 A4_WIDTH_MM = 210.0
 A4_HEIGHT_MM = 297.0
 DEFAULT_CARD_WIDTH_MM = 120.0
+TEMP_ROOT = Path(tempfile.gettempdir()) / "cni-crop-lab"
+MAX_SAVED_SESSIONS = 2
 
 
 def _mm_to_px(millimeters: float, dpi: int) -> int:
@@ -164,6 +167,31 @@ def _write_image(image: Image.Image, path: Path, *, mode: str | None = None) -> 
     path.parent.mkdir(parents=True, exist_ok=True)
     (image.convert(mode) if mode else image).save(path, format="PNG")
     return str(path)
+
+
+def _write_preview_jpeg(image: Image.Image, path: Path) -> str:
+    """Écrit un seul aperçu léger, réutilisé pendant une lecture d'itérations."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    image.convert("RGB").save(path, format="JPEG", quality=82, optimize=True)
+    return str(path)
+
+
+def _cleanup_old_crop_sessions() -> None:
+    """Conserve seulement les dernières sessions temporaires créées par ce script.
+
+    Les artefacts restent téléchargeables pendant la session active. Sans cette
+    limite, six PNG haute résolution par préparation et les animations peuvent
+    remplir le disque temporaire local après plusieurs essais.
+    """
+    if not TEMP_ROOT.exists():
+        return
+    sessions = sorted(
+        (path for path in TEMP_ROOT.iterdir() if path.is_dir() and path.name.startswith("session-")),
+        key=lambda path: path.stat().st_mtime,
+        reverse=True,
+    )
+    for stale_session in sessions[MAX_SAVED_SESSIONS:]:
+        shutil.rmtree(stale_session, ignore_errors=True)
 
 
 def _write_pdf(image: Image.Image, path: Path, dpi: int) -> str:
@@ -442,11 +470,13 @@ def play_pillow_iterations(state: dict[str, Any], delay_ms: int):
         # Contrairement au crop final, l'animation affiche aussi les rectangles
         # rejetés afin d'expliquer chaque essai d'angle.
         frame = _overlay_iteration_box(candidate, geometry)
-        frame_path = _write_image(frame, output_dir / f"{position:03d}_{phase.lower().replace(' ', '_')}_{angle:+.0f}.png")
+        # Une seule image JPEG est réécrite : garder 68 PNG par lecture a
+        # rempli le disque temporaire après plusieurs essais successifs.
+        frame_path = _write_preview_jpeg(frame, output_dir / "current_iteration.jpg")
         status = f"Lecture en cours : {phase.lower()} — angle {angle:+.0f}° ({position}/{len(candidates)})"
         yield (
             3,
-            frame_path,
+            frame,
             _stage_html(3),
             _rotation_iteration_note(phase, position, len(candidates), angle, geometry),
             frame_path,
@@ -557,7 +587,8 @@ def build_pipeline(
     if not 72 <= int(dpi) <= 600:
         raise gr.Error("Le DPI doit être compris entre 72 et 600.")
 
-    output_dir = Path(tempfile.gettempdir()) / "cni-crop-lab" / f"session-{time.strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:8]}"
+    _cleanup_old_crop_sessions()
+    output_dir = TEMP_ROOT / f"session-{time.strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:8]}"
     started = time.perf_counter()
     source_path, prepared_pdf, source_preparation = _prepare_source(
         input_path,
