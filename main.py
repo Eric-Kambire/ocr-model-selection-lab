@@ -27,6 +27,7 @@ from ocr_benchmark.cni import (
     scan_cni_clients,
 )
 from ocr_benchmark.cni_runner import iter_cni_benchmark
+from ocr_benchmark.cni_qlicker import QlickerImportConfig, import_qlicker_clients
 from ocr_benchmark.domain import BenchmarkCase
 from ocr_benchmark.dataset_repository import DatasetRepository
 from ocr_benchmark.registry import build_default_registry
@@ -948,21 +949,22 @@ def _cni_scan_table(records: list[dict[str, Any]]) -> pd.DataFrame:
 
 
 def _cni_source_choices(records: list[dict[str, Any]]) -> list[tuple[str, str]]:
-    """Return readable recto/verso PDF choices after a client-folder scan."""
+    """Retourne les sources recto/verso PDF ou image détectées après le scan."""
     choices: list[tuple[str, str]] = []
     for record in records:
         client_id = str(record.get("folder_client_id") or "Client inconnu")
         for side in ("recto", "verso"):
-            path_value = record.get(f"{side}_pdf")
+            path_value = record.get(f"{side}_source") or record.get(f"{side}_pdf")
             if path_value:
-                choices.append((f"{client_id} — {side.title()} (PDF)", str(path_value)))
+                source_format = str(record.get(f"{side}_format") or Path(str(path_value)).suffix.lstrip(".") or "fichier").upper()
+                choices.append((f"{client_id} — {side.title()} ({source_format})", str(path_value)))
     return choices
 
 
 def _preview_cni_source(path_value: str | None) -> tuple[Any, str]:
     """Show an image preview only after the user selects a source document."""
     if not path_value:
-        return gr.update(value=None, visible=False), "Sélectionnez un PDF détecté pour l’aperçu."
+        return gr.update(value=None, visible=False), "Sélectionnez un document détecté pour l’aperçu."
     source = Path(path_value)
     if not source.is_file():
         return gr.update(value=None, visible=False), "⚠️ Le fichier sélectionné n’est plus disponible sur le disque."
@@ -979,9 +981,13 @@ def _preview_cni_source(path_value: str | None) -> tuple[Any, str]:
     return gr.update(value=str(preview_path), visible=True), f"**Aperçu :** `{source.name}` · PDF rendu à 150 DPI"
 
 
-def _cni_source_mode_visibility(mode: str) -> tuple[Any, Any]:
-    """Switch between local-folder fields and the ZIP upload, without mixing them."""
-    return gr.update(visible=mode == "folder"), gr.update(visible=mode == "zip")
+def _cni_source_mode_visibility(mode: str) -> tuple[Any, Any, Any]:
+    """Bascule entre dossier, ZIP et import API sans mélanger leurs entrées."""
+    return (
+        gr.update(visible=mode == "folder"),
+        gr.update(visible=mode == "zip"),
+        gr.update(visible=mode == "api"),
+    )
 
 
 def _cni_prompt_preview(
@@ -1024,6 +1030,9 @@ def _cni_result_table(results: list[dict[str, Any]]) -> pd.DataFrame:
                 "CIN recto": item.get("cin_recto") or "—",
                 "CIN verso": item.get("cin_verso") or "—",
                 "CIN cohérent": _cni_boolean(item.get("cin_coherent")),
+                "Champs à revoir": ", ".join(
+                    key for key, state in _cni_field_comparisons(item).items() if state == "different"
+                ) or "—",
                 "Latence (s)": round(float(item.get("latency") or 0), 3),
             }
         )
@@ -1050,6 +1059,50 @@ def _read_json_if_available(path_value: Any) -> Any:
             return json.load(stream)
     except (OSError, json.JSONDecodeError) as exc:
         return {"status": "read_failed", "error": f"{type(exc).__name__}: {exc}"}
+
+
+def _cni_field_comparisons(result: dict[str, Any]) -> dict[str, str]:
+    """Compare les champs canoniques lorsque le label est disponible.
+
+    Le label reste optionnel : l'absence de label produit ``label_missing`` et
+    ne transforme jamais une extraction techniquement réussie en échec.
+    """
+    label = _read_json_if_available(result.get("label_path"))
+    extracted = _read_json_if_available(result.get("global_json_path"))
+    fields = ("cin", "prenom", "nom", "date_naissance", "ville_naissance", "date_validite", "adresse")
+    if not isinstance(label, dict) or "status" in label:
+        return {field: "label_missing" for field in fields}
+    if not isinstance(extracted, dict) or "status" in extracted:
+        return {field: "missing_model" for field in fields}
+
+    def label_value(field: str) -> Any:
+        if field in label:
+            return label.get(field)
+        for side in ("recto", "verso"):
+            nested = label.get(side)
+            if isinstance(nested, dict) and field in nested:
+                return nested.get(field)
+        return None
+
+    def extracted_value(field: str) -> Any:
+        aliases = {
+            "cin": "cin_fusionne", "date_validite": "date_validite_fusionnee",
+        }
+        return extracted.get(aliases.get(field, field))
+
+    def normalized(value: Any) -> str:
+        return re.sub(r"[^a-z0-9]", "", str(value or "").casefold())
+
+    comparison: dict[str, str] = {}
+    for field in fields:
+        expected, actual = label_value(field), extracted_value(field)
+        if expected in (None, ""):
+            comparison[field] = "label_missing"
+        elif actual in (None, ""):
+            comparison[field] = "missing_model"
+        else:
+            comparison[field] = "correct" if normalized(expected) == normalized(actual) else "different"
+    return comparison
 
 
 def _read_text_if_available(path_value: Any) -> str:
@@ -1666,7 +1719,7 @@ def build_ui() -> gr.Blocks:
                         with gr.Column(scale=1, elem_id="cni-source"):
                             gr.HTML("<div class='cni-section-title'>01 <span>Source des documents</span></div>")
                             cni_input_mode = gr.Radio(
-                                [("Dossier local", "folder"), ("Archive ZIP", "zip")],
+                                [("Dossier local", "folder"), ("Archive ZIP", "zip"), ("API Qlicker", "api")],
                                 value="folder",
                                 label="Source",
                             )
@@ -1677,6 +1730,25 @@ def build_ui() -> gr.Blocks:
                             with gr.Group(visible=False) as cni_zip_source:
                                 cni_zip = gr.File(label="Archive ZIP de test", file_types=[".zip"], type="filepath")
                                 cni_import_zip = gr.Button("Importer le ZIP")
+                            with gr.Group(visible=False) as cni_api_source:
+                                cni_qlicker_client_ids = gr.Textbox(
+                                    label="Identifiants clients Qlicker",
+                                    lines=4,
+                                    placeholder="Un identifiant par ligne",
+                                )
+                                cni_qlicker_config = gr.Code(
+                                    label="Contrat API Qlicker (JSON)",
+                                    language="json",
+                                    value=json.dumps({
+                                        "base_url": "https://api.exemple.tld/v1",
+                                        "recto_path_template": "documents/{client_id}/recto",
+                                        "verso_path_template": "documents/{client_id}/verso",
+                                        "label_path_template": "labels/{client_id}",
+                                        "document_url_key": "",
+                                    }, ensure_ascii=False, indent=2),
+                                )
+                                cni_import_qlicker = gr.Button("Importer depuis Qlicker", variant="secondary")
+                                gr.Markdown("Le token est lu uniquement depuis la variable d’environnement `QLICKER_API_TOKEN`. Consultez `docs/QLICKER_API_CONTRACT.md` avant le premier import.")
                             cni_scan_status = gr.Markdown("Indiquez un dossier clients, puis scannez-le.")
                             with gr.Accordion("Aperçu d’un document", open=False):
                                 with gr.Row():
@@ -1684,7 +1756,7 @@ def build_ui() -> gr.Blocks:
                                         cni_source_selector = gr.Dropdown(
                                             choices=_cni_source_choices([]),
                                             label="Document",
-                                            info="Les PDF recto/verso détectés après un scan apparaissent ici.",
+                                            info="Les PDF, JPEG et PNG recto/verso détectés après un scan apparaissent ici.",
                                         )
                                         cni_source_preview_info = gr.Markdown("Sélectionnez un document.")
                                     with gr.Column(scale=1):
@@ -1727,7 +1799,7 @@ def build_ui() -> gr.Blocks:
                         cni_live_image = gr.Image(label="Face en cours", type="filepath", height=430, elem_id="cni-live-image")
                         cni_live_result = gr.Markdown("Les JSON et mesures apparaîtront après le premier appel.")
                     cni_live_table = gr.Dataframe(
-                        headers=["Client", "Modèle", "Statut", "Accuracy", "Label", "CIN recto", "CIN verso", "CIN cohérent", "Latence (s)"],
+                        headers=["Client", "Modèle", "Statut", "Accuracy", "Label", "CIN recto", "CIN verso", "CIN cohérent", "Champs à revoir", "Latence (s)"],
                         label="Résultats reçus pendant le run",
                         interactive=False,
                     )
@@ -1739,9 +1811,19 @@ def build_ui() -> gr.Blocks:
                         cni_accuracy_min = gr.Slider(0, 100, value=0, step=1, label="Accuracy minimale (%)")
                         cni_accuracy_max = gr.Slider(0, 100, value=100, step=1, label="Accuracy maximale (%)")
                         cni_include_unscored = gr.Checkbox(value=True, label="Inclure les résultats non notés")
+                        cni_field_filter = gr.Dropdown(
+                            [("Tous les champs", ""), ("CIN", "cin"), ("Prénom", "prenom"), ("Nom", "nom"), ("Date de naissance", "date_naissance"), ("Ville de naissance", "ville_naissance"), ("Date de validité", "date_validite"), ("Adresse", "adresse")],
+                            value="",
+                            label="Champ à contrôler",
+                        )
+                        cni_field_state_filter = gr.Dropdown(
+                            [("Tous les états", ""), ("Correct", "correct"), ("Différent", "different"), ("Valeur modèle absente", "missing_model"), ("Label absent", "label_missing")],
+                            value="",
+                            label="État du champ",
+                        )
                         cni_apply_filters = gr.Button("Appliquer les filtres")
                     cni_results_table = gr.Dataframe(
-                        headers=["Client", "Modèle", "Statut", "Accuracy", "Label", "CIN recto", "CIN verso", "CIN cohérent", "Latence (s)"],
+                        headers=["Client", "Modèle", "Statut", "Accuracy", "Label", "CIN recto", "CIN verso", "CIN cohérent", "Champs à revoir", "Latence (s)"],
                         label="Éléments passés par le benchmark",
                         interactive=False,
                         elem_id="cni-results-table",
@@ -1809,16 +1891,27 @@ def build_ui() -> gr.Blocks:
                         cni_timeout = gr.Number(value=300, minimum=1, maximum=7200, precision=0, label="Temps maximum par appel (s)")
                         cni_cpu_threads = gr.Number(value=max(1, min(8, os.cpu_count() or 1)), minimum=1, maximum=max(1, os.cpu_count() or 1), precision=0, label="Threads CPU Ollama")
                         cni_unload = gr.Checkbox(value=True, label="Décharger le modèle après chaque appel")
+                    cni_preprocessing = gr.CheckboxGroup(
+                        [
+                            ("Redresser une légère inclinaison", "deskew"),
+                            ("Corriger la perspective de la carte", "perspective"),
+                            ("Améliorer le contraste local", "contrast"),
+                            ("Réduire le bruit", "denoise"),
+                        ],
+                        value=[],
+                        label="Prétraitement image (optionnel)",
+                        info="OpenCV s’applique après normalisation PDF/JPEG/PNG et avant crop. Les opérations sont gardées dans preparation.json.",
+                    )
                     with gr.Row():
                         cni_recto_suffix = gr.Textbox(
                             value=DEFAULT_RECTO_SUFFIX,
-                            label="Suffixe PDF recto",
-                            info="Texte final avant .pdf. Exemple : _CIN_Recto. Il sert uniquement à détecter le recto.",
+                            label="Suffixe recto",
+                            info="Texte final avant l’extension. Exemple : _CIN_Recto. PDF, JPEG et PNG sont acceptés.",
                         )
                         cni_verso_suffix = gr.Textbox(
                             value=DEFAULT_VERSO_SUFFIX,
-                            label="Suffixe PDF verso",
-                            info="Texte final avant .pdf. Exemple : _CIN_Verso. Il sert uniquement à détecter le verso.",
+                            label="Suffixe verso",
+                            info="Texte final avant l’extension. Exemple : _CIN_Verso. PDF, JPEG et PNG sont acceptés.",
                         )
                     cni_system_prompt = gr.Textbox(
                         value=DEFAULT_CNI_SYSTEM_PROMPT,
@@ -2275,6 +2368,38 @@ def build_ui() -> gr.Blocks:
                 LOGGER.exception("CNI ZIP import failed")
                 return gr.update(), gr.update(), f"Import ZIP impossible : {type(exc).__name__}: {exc}"
 
+        def import_cni_from_qlicker(client_ids_text, config_text):
+            """Importe Qlicker avec un contrat explicite, sans exposer le token dans l'UI."""
+            identifiers = [line.strip() for line in str(client_ids_text or "").splitlines() if line.strip()]
+            if not identifiers:
+                return gr.update(), gr.update(), "Import API impossible : ajoutez au moins un identifiant client."
+            try:
+                payload = json.loads(str(config_text or "{}"))
+                config = QlickerImportConfig(
+                    base_url=str(payload["base_url"]),
+                    recto_path_template=str(payload["recto_path_template"]),
+                    verso_path_template=str(payload["verso_path_template"]),
+                    label_path_template=str(payload["label_path_template"]),
+                    document_url_key=str(payload.get("document_url_key") or ""),
+                    token_env_name=str(payload.get("token_env_name") or "QLICKER_API_TOKEN"),
+                    auth_header_name=str(payload.get("auth_header_name") or "Authorization"),
+                    auth_prefix=str(payload.get("auth_prefix") or "Bearer "),
+                    timeout_seconds=float(payload.get("timeout_seconds") or 30),
+                )
+                root = CNI_IMPORTS_DIR / "qlicker" / time.strftime("%Y%m%d-%H%M%S")
+                report = import_qlicker_clients(identifiers, root, config)
+                imported = sum(item.get("status") == "ready" for item in report)
+                failed = len(report) - imported
+                LOGGER.info("Qlicker import completed | requested=%d | imported=%d | failed=%d", len(identifiers), imported, failed)
+                return (
+                    gr.update(value=str(root)),
+                    gr.update(value=""),
+                    f"Import Qlicker terminé : {imported} client(s) importé(s), {failed} échec(s). Scannez le dossier pour contrôler les paires.",
+                )
+            except Exception as exc:
+                LOGGER.exception("Qlicker import failed")
+                return gr.update(), gr.update(), f"Import Qlicker impossible : {type(exc).__name__}: {exc}"
+
         def scan_cni_input(clients_root_text, labels_root_text, recto_suffix, verso_suffix):
             """Scanne les dossiers et copie les JSONB valides près des clients."""
             if not clients_root_text or not str(clients_root_text).strip():
@@ -2304,7 +2429,7 @@ def build_ui() -> gr.Blocks:
                     _cni_scan_table(records),
                     (
                         f"Scan terminé : {len(records)} client(s) détecté(s), {ready} prêt(s), {labels} label(s) converti(s)."
-                        + (" Cochez **Continuer sans labels** pour lancer les PDF non notés." if unlabeled else "")
+                        + (" Cochez **Continuer sans labels** pour lancer les documents non notés." if unlabeled else "")
                     ),
                     gr.update(choices=_cni_source_choices(records), value=None),
                 )
@@ -2322,18 +2447,22 @@ def build_ui() -> gr.Blocks:
                 for index, result in enumerate(results or [])
             ]
 
-        def filter_cni_results(results, minimum, maximum, include_unscored):
-            """Filtre l'intervalle d'accuracy sans cacher les lignes non notées."""
+        def filter_cni_results(results, minimum, maximum, include_unscored, field_name, field_state):
+            """Filtre l'accuracy et, si demandé, l'état d'un champ CNI précis."""
             lower, upper = sorted((float(minimum or 0), float(maximum or 100)))
             filtered = []
             for result in results or []:
                 accuracy = result.get("accuracy")
                 if accuracy is None:
                     if include_unscored:
-                        filtered.append(result)
+                        pass
+                    else:
+                        continue
+                elif not lower <= float(accuracy) * 100 <= upper:
                     continue
-                if lower <= float(accuracy) * 100 <= upper:
-                    filtered.append(result)
+                if field_name and field_state and _cni_field_comparisons(result).get(str(field_name)) != str(field_state):
+                    continue
+                filtered.append(result)
             return _cni_result_table(filtered)
 
         def cni_detail_metric_summary(result):
@@ -2404,7 +2533,7 @@ def build_ui() -> gr.Blocks:
             """Passe à la paire CNI suivante."""
             return show_cni_detail(index, results, 1)
 
-        def on_cni_run(model_specs, client_records, strategy, dpi, timeout, threads, unload, system_prompt, prompt_instructions, continue_without_label):
+        def on_cni_run(model_specs, client_records, strategy, dpi, timeout, threads, unload, preprocessing, system_prompt, prompt_instructions, continue_without_label):
             """Valide le lancement puis diffuse l'avancement CNI document par document."""
             results: list[dict[str, Any]] = []
 
@@ -2452,7 +2581,7 @@ def build_ui() -> gr.Blocks:
             ready_records = [record for record in client_records if record.get("status") == "ready"]
             invalid_count = len(client_records) - len(ready_records)
             if not ready_records:
-                message = f"Pré-contrôle impossible : aucune paire PDF prête ({invalid_count} dossier(s) à corriger dans le rapport de scan)."
+                message = f"Pré-contrôle impossible : aucune paire recto/verso prête ({invalid_count} dossier(s) à corriger dans le rapport de scan)."
                 LOGGER.warning("CNI launch rejected | reason=no_ready_pair | clients=%d", len(client_records))
                 yield view(message, message, 0, None, message, 0, alert_level="warning")
                 return
@@ -2481,6 +2610,7 @@ def build_ui() -> gr.Blocks:
                     fields=cni_fields,
                     prompt_instructions=prompt_instructions,
                     system_prompt=system_prompt,
+                    preprocessing={str(option): True for option in (preprocessing or [])},
                 )
                 for event in events:
                     total, completed = int(event.get("total", total_pairs)), int(event.get("completed", 0))
@@ -2652,12 +2782,18 @@ def build_ui() -> gr.Blocks:
             outputs=[cni_clients_root, cni_labels_root, cni_scan_status],
             queue=False,
         )
+        cni_import_qlicker.click(
+            import_cni_from_qlicker,
+            inputs=[cni_qlicker_client_ids, cni_qlicker_config],
+            outputs=[cni_clients_root, cni_labels_root, cni_scan_status],
+            queue=False,
+        )
         # Changer de mode ne modifie que la visibilité : un chemin saisi reste
         # mémorisé si l'utilisateur revient ensuite au mode dossier.
         cni_input_mode.change(
             _cni_source_mode_visibility,
             inputs=[cni_input_mode],
-            outputs=[cni_folder_source, cni_zip_source],
+            outputs=[cni_folder_source, cni_zip_source, cni_api_source],
             queue=False,
         )
         cni_scan.click(
@@ -2713,6 +2849,7 @@ def build_ui() -> gr.Blocks:
                 cni_timeout,
                 cni_cpu_threads,
                 cni_unload,
+                cni_preprocessing,
                 cni_system_prompt,
                 cni_prompt_instructions,
                 cni_continue_without_label,
@@ -2747,7 +2884,7 @@ def build_ui() -> gr.Blocks:
         )
         cni_apply_filters.click(
             filter_cni_results,
-            inputs=[cni_results_state, cni_accuracy_min, cni_accuracy_max, cni_include_unscored],
+            inputs=[cni_results_state, cni_accuracy_min, cni_accuracy_max, cni_include_unscored, cni_field_filter, cni_field_state_filter],
             outputs=[cni_results_table],
             queue=False,
         )

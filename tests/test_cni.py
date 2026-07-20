@@ -29,6 +29,13 @@ def _write_pdf(path: Path) -> None:
     document.close()
 
 
+def _write_image(path: Path) -> None:
+    """Crée une page blanche contenant une carte synthétique pour le test."""
+    page = Image.new("RGB", (1200, 1600), "white")
+    ImageDraw.Draw(page).rectangle((40, 40, 760, 495), fill=(170, 205, 190))
+    page.save(path)
+
+
 def test_scan_uses_folder_identifier_and_materializes_external_label(tmp_path: Path):
     clients_root = tmp_path / "clients"
     labels_root = tmp_path / "labels"
@@ -64,6 +71,19 @@ def test_crop_detects_card_area_without_using_a4_as_the_result(tmp_path: Path):
         assert 1.2 <= cropped.width / cropped.height <= 2.05
 
 
+def test_scan_accepts_jpeg_and_png_sources_with_the_same_suffix_contract(tmp_path: Path):
+    client = tmp_path / "clients" / "folder-client-image"
+    client.mkdir(parents=True)
+    _write_image(client / "source_CIN_Recto.jpg")
+    _write_image(client / "source_CIN_Verso.png")
+
+    record = scan_cni_clients(tmp_path / "clients")[0]
+    assert record["status"] == "ready"
+    assert record["recto_format"] == "jpg"
+    assert record["verso_format"] == "png"
+    assert record["recto_source"].endswith("source_CIN_Recto.jpg")
+
+
 def test_side_json_parser_and_global_preserve_both_cin_values():
     recto, error = parse_cni_json_response(
         '{"cin":"BM42518","nom":"ZAAD","prenom":"CHAIMAA","date_naissance":"2001-01-20","ville_naissance":"CASA","date_validite":"2029-03-21"}',
@@ -86,6 +106,7 @@ def test_cni_prompt_covers_old_new_layout_and_operator_instructions():
     assert "old or new layout" in prompt
     assert "Prioritize a sharp reading" in prompt
     assert '"cin": null' in prompt
+    assert "first personal name is prenom" in prompt
 
 
 def test_zip_import_rejects_path_traversal(tmp_path: Path):
@@ -132,6 +153,21 @@ def test_separate_runner_creates_recto_verso_and_global_outputs(tmp_path: Path):
     assert Path(result["recto_json_path"]).is_file()
     assert Path(result["verso_json_path"]).is_file()
     assert Path(result["global_json_path"]).is_file()
+
+
+def test_runner_normalizes_direct_image_sources_before_crop(tmp_path: Path):
+    client = tmp_path / "clients" / "folder-client"
+    client.mkdir(parents=True)
+    _write_image(client / "source_CIN_Recto.jpg")
+    _write_image(client / "source_CIN_Verso.png")
+    records = scan_cni_clients(tmp_path / "clients")
+
+    events = list(iter_cni_benchmark(_FakeRegistry(), ["fake:vision"], records, tmp_path / "runs"))
+    result = events[-1]["result"]
+    preparation = json.loads((Path(result["recto_image_path"]).parent / "preparation.json").read_text(encoding="utf-8"))
+    assert result["status"] == "success"
+    assert preparation["recto_page"]["source_type"] == "jpg"
+    assert preparation["verso_page"]["source_type"] == "png"
 
 
 class _RecordingModel:

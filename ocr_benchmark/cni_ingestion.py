@@ -54,13 +54,17 @@ LOGGER = logging.getLogger(__name__)
 # ``-recto``. L'extension ``.pdf`` n'est volontairement pas saisie par l'user.
 DEFAULT_RECTO_SUFFIX = "_CIN_Recto"
 DEFAULT_VERSO_SUFFIX = "_CIN_Verso"
+# Les sources peuvent venir d'un scanner PDF ou directement d'une image.
+# L'extension est validée lors du scan afin de ne jamais traiter un fichier
+# arbitraire dont le nom ressemble seulement à une CNI.
+SUPPORTED_CNI_SOURCE_SUFFIXES = (".pdf", ".png", ".jpg", ".jpeg")
 
 
 def _build_side_filename_patterns(recto_suffix: str, verso_suffix: str) -> dict[str, re.Pattern[str]]:
-    """Construit les patrons PDF depuis les suffixes configurés par l'utilisateur.
+    """Construit les patrons source depuis les suffixes configurés.
 
     Entrées :
-        recto_suffix, verso_suffix: texte final placé avant ``.pdf``.
+        recto_suffix, verso_suffix: texte final placé avant l'extension.
     Sortie :
         un patron par face qui extrait le préfixe en ``document_id``.
 
@@ -74,7 +78,10 @@ def _build_side_filename_patterns(recto_suffix: str, verso_suffix: str) -> dict[
     if not normalized["recto"] or not normalized["verso"]:
         raise ValueError("Les suffixes PDF recto et verso ne peuvent pas être vides.")
     return {
-        side: re.compile(rf"^(?P<document_id>.+){re.escape(suffix)}\.pdf$", re.IGNORECASE)
+        side: re.compile(
+            rf"^(?P<document_id>.+){re.escape(suffix)}(?P<extension>{'|'.join(re.escape(value) for value in SUPPORTED_CNI_SOURCE_SUFFIXES)})$",
+            re.IGNORECASE,
+        )
         for side, suffix in normalized.items()
     }
 
@@ -121,7 +128,13 @@ def scan_cni_clients(
             "folder_client_id": folder.name,
             # "client_dir" : le chemin complet du dossier client (en texte).
             "client_dir": str(folder),
-            # Les chemins des PDF commencent à None, ils seront remplis si trouvés.
+            # Les chemins source sont PDF, JPEG ou PNG. Les anciennes clés
+            # ``*_pdf`` sont conservées provisoirement pour compatibilité des
+            # runs déjà écrits, mais tout nouveau code doit utiliser ``*_source``.
+            "recto_source": None,
+            "verso_source": None,
+            "recto_format": None,
+            "verso_format": None,
             "recto_pdf": None,
             "verso_pdf": None,
             # Les IDs des documents (la partie avant "_cin_recto") commencent à None.
@@ -161,10 +174,15 @@ def scan_cni_clients(
 
                 # Si on avait déjà trouvé un fichier recto (ou verso), c'est un doublon.
                 # On enregistre le problème mais on ne plante pas.
-                if record[f"{side}_pdf"] is not None:
-                    record["issues"].append(f"duplicate_{side}_pdf")
+                if record[f"{side}_source"] is not None:
+                    record["issues"].append(f"duplicate_{side}_source")
                 else:
-                    # On enregistre le chemin complet du fichier PDF trouvé.
+                    # On enregistre le chemin source et son format réel.
+                    record[f"{side}_source"] = str(candidate)
+                    record[f"{side}_format"] = candidate.suffix.lower().lstrip(".")
+                    # Alias de transition : il évite de rendre illisibles les
+                    # anciens rapports tant que tous les consommateurs n'ont
+                    # pas migré vers ``*_source``.
                     record[f"{side}_pdf"] = str(candidate)
                     # On extrait le "document_id" (la partie capturée par la regex).
                     record[f"{side}_document_id"] = match.group("document_id")
@@ -173,8 +191,8 @@ def scan_cni_clients(
         # On fait ça pour "recto" et "verso".
         for side in ("recto", "verso"):
             # Si le PDF n'a pas été trouvé, on ajoute un problème à la fiche.
-            if record[f"{side}_pdf"] is None:
-                record["issues"].append(f"missing_{side}_pdf")
+            if record[f"{side}_source"] is None:
+                record["issues"].append(f"missing_{side}_source")
 
         # Si les deux document_id existent mais sont différents, c'est suspect :
         # les deux PDF viennent peut-être de deux clients différents.
@@ -186,6 +204,10 @@ def scan_cni_clients(
         # au client existe, on marque le label comme disponible.
         if labels_root and Path(record["label_source"]).is_file():
             record["label_status"] = "label_available"
+        # Les imports API déposent déjà le JSON normalisé dans le dossier client.
+        # Il est donc immédiatement utilisable sans dossier JSONB externe.
+        elif Path(record["label_path"]).is_file():
+            record["label_status"] = "label_materialized"
 
         # S'il y a au moins un problème détecté, le statut global devient "invalid_input".
         # Cela signifie que ce client ne sera PAS traité par le runner.

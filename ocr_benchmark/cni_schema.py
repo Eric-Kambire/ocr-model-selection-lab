@@ -15,14 +15,14 @@ from typing import Any
 # vient de ``config/cni_fields.json`` afin d'ajouter un champ sans dupliquer le
 # texte du prompt dans plusieurs fichiers.
 RECTO_FIELDS = (
-    "cin", "nom", "prenom", "date_naissance", "ville_naissance", "date_validite",
+    "cin", "prenom", "nom", "date_naissance", "ville_naissance", "date_validite",
 )
 VERSO_FIELDS = ("cin", "date_validite", "adresse")
 
 DEFAULT_CNI_FIELD_CONFIG = {
     "recto": [
-        {"key": "cin", "type": "text"}, {"key": "nom", "type": "text"},
-        {"key": "prenom", "type": "text"}, {"key": "date_naissance", "type": "date"},
+        {"key": "cin", "type": "text"}, {"key": "prenom", "type": "text"},
+        {"key": "nom", "type": "text"}, {"key": "date_naissance", "type": "date"},
         {"key": "ville_naissance", "type": "text"}, {"key": "date_validite", "type": "date"},
     ],
     "verso": [
@@ -36,6 +36,7 @@ DEFAULT_CNI_FIELD_CONFIG = {
 # clés (parents, CAN, état civil, QR ou MRZ) dans le contrat JSON.
 CNI_READING_RULES = (
     "The card can use an old or new Moroccan CNI layout; the version is irrelevant. "
+    "For the holder's Latin name, the first personal name is prenom (given name) and the following family name is nom (surname); never reverse them. "
     "Use the visible side being processed. A date next to 'Né le' is the birth date; "
     "a place near 'à' and that birth date is the birth city; a date next to 'Valable jusqu’au' is the expiry date. "
     "Do not confuse the holder with parent names near 'Fils de' or 'Et de'. "
@@ -83,7 +84,7 @@ def build_cni_prompt(side: str, fields: dict[str, list[dict[str, str]]] | None =
     config = fields or load_cni_field_config()
     schema = {str(item["key"]): None for item in config[side]}
     side_focus = (
-        "Read the identity number, surname, given name, birth date, birth city and validity date."
+        "Read the identity number, given name (prenom), surname (nom), birth date, birth city and validity date."
         if side == "recto"
         else "Read the identity number, validity date and full address. Do not use parent names or civil-status data."
     )

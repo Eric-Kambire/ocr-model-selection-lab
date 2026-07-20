@@ -1,8 +1,8 @@
 {
   "recto": [
     {"key": "cin", "type": "text"},
-    {"key": "nom", "type": "text"},
     {"key": "prenom", "type": "text"},
+    {"key": "nom", "type": "text"},
     {"key": "date_naissance", "type": "date"},
     {"key": "ville_naissance", "type": "text"},
     {"key": "date_validite", "type": "date"}
