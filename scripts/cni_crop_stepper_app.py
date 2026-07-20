@@ -208,6 +208,47 @@ def _estimate_rotation(source: Image.Image, threshold: int, enabled: bool) -> tu
     return rotated, best_angle
 
 
+def _rotate_with_opencv(source: Image.Image, threshold: int, enabled: bool) -> tuple[Image.Image, float]:
+    """Détecte le rectangle CNI avec OpenCV puis applique sa matrice de rotation.
+
+    ``minAreaRect`` calcule le plus petit rectangle orienté contenant les
+    pixels non blancs. Son angle fournit deux orientations possibles (à 90°
+    près) : celle dont le ratio est le plus proche de 1,586 est retenue.
+    """
+    if not enabled:
+        return source.copy(), 0.0
+    try:
+        import cv2
+        import numpy as np
+    except ImportError as exc:
+        raise RuntimeError("OpenCV n'est pas installé. Exécutez : pip install opencv-python-headless") from exc
+
+    rgb = np.asarray(source.convert("RGB"))
+    gray = cv2.cvtColor(rgb, cv2.COLOR_RGB2GRAY)
+    points = cv2.findNonZero(cv2.threshold(gray, threshold, 255, cv2.THRESH_BINARY_INV)[1])
+    if points is None:
+        return source.copy(), 0.0
+    raw_angle = float(cv2.minAreaRect(points)[-1])
+    # On teste les équivalents géométriques : les conventions OpenCV varient
+    # selon la version et l'orientation de l'image.
+    candidates = (raw_angle, raw_angle + 90.0, raw_angle - 90.0)
+    target_ratio, best_angle, best_score = 1.586, 0.0, float("inf")
+    for angle in candidates:
+        candidate = source.rotate(angle, expand=True, resample=Image.Resampling.BICUBIC, fillcolor="white")
+        box, info = _validated_box(_threshold_mask(ImageOps.grayscale(candidate), threshold), candidate.size)
+        if box is not None and abs(float(info["ratio"]) - target_ratio) < best_score:
+            best_angle, best_score = angle, abs(float(info["ratio"]) - target_ratio)
+
+    height, width = rgb.shape[:2]
+    matrix = cv2.getRotationMatrix2D((width / 2.0, height / 2.0), best_angle, 1.0)
+    cosine, sine = abs(matrix[0, 0]), abs(matrix[0, 1])
+    target_width, target_height = int(height * sine + width * cosine), int(height * cosine + width * sine)
+    matrix[0, 2] += target_width / 2.0 - width / 2.0
+    matrix[1, 2] += target_height / 2.0 - height / 2.0
+    rotated = cv2.warpAffine(rgb, matrix, (target_width, target_height), flags=cv2.INTER_CUBIC, borderValue=(255, 255, 255))
+    return Image.fromarray(rotated), round(best_angle, 3)
+
+
 def _overlay_box(source: Image.Image, box: tuple[int, int, int, int] | None, metadata: dict[str, Any]) -> Image.Image:
     """Dessine le contour détecté et les mesures visibles pour l'apprentissage."""
     overlay = source.copy().convert("RGB")
@@ -302,6 +343,7 @@ def build_pipeline(
     dpi: int,
     threshold: int,
     auto_rotate: bool,
+    rotation_method: str,
     simulation_angle: float,
     card_width_mm: float,
 ) -> tuple[dict[str, Any], int, str, str, str, str, str, str, str]:
@@ -336,7 +378,10 @@ def build_pipeline(
     mask_elapsed = time.perf_counter() - started
 
     started = time.perf_counter()
-    rotated, angle = _estimate_rotation(source, int(threshold), bool(auto_rotate))
+    rotated, angle = (
+        _rotate_with_opencv(source, int(threshold), bool(auto_rotate))
+        if rotation_method == "opencv" else _estimate_rotation(source, int(threshold), bool(auto_rotate))
+    )
     rotated_path = _write_image(rotated, output_dir / "04_rotated.png")
     rotate_elapsed = time.perf_counter() - started
 
@@ -365,7 +410,7 @@ def build_pipeline(
         _stage_metric(STEPS[0][0], paths[0], source_elapsed, {"dpi": int(dpi), **source_preparation}),
         _stage_metric(STEPS[1][0], paths[1], gray_elapsed, {"conversion": "RGB → niveaux de gris"}),
         _stage_metric(STEPS[2][0], paths[2], mask_elapsed, {"threshold": int(threshold)}),
-        _stage_metric(STEPS[3][0], paths[3], rotate_elapsed, {"auto_rotation": bool(auto_rotate), "detected_angle_degrees": angle}),
+        _stage_metric(STEPS[3][0], paths[3], rotate_elapsed, {"auto_rotation": bool(auto_rotate), "method": rotation_method, "detected_angle_degrees": angle}),
         _stage_metric(STEPS[4][0], paths[4], contour_elapsed, geometry),
         _stage_metric(STEPS[5][0], paths[5], crop_elapsed, {"crop_box": geometry.get("crop_box"), "fallback": box is None}),
     ]
@@ -375,6 +420,7 @@ def build_pipeline(
         "dpi": int(dpi),
         "threshold": int(threshold),
         "auto_rotation": bool(auto_rotate),
+        "rotation_method": rotation_method,
         "simulation_angle_degrees": float(simulation_angle),
         "card_width_mm": float(card_width_mm),
         "prepared_pdf": prepared_pdf,
@@ -473,7 +519,13 @@ def build_ui() -> gr.Blocks:
             )
             dpi = gr.Slider(72, 600, value=300, step=1, label="DPI PDF")
             threshold = gr.Slider(180, 252, value=242, step=1, label="Seuil blanc")
-            auto_rotate = gr.Checkbox(value=False, label="Corriger une légère rotation")
+            auto_rotate = gr.Checkbox(value=False, label="Corriger automatiquement la rotation")
+            rotation_method = gr.Radio(
+                [("Pillow : recherche par ratio", "pillow"), ("OpenCV : rectangle orienté", "opencv")],
+                value="pillow",
+                label="Méthode de rotation",
+                info="OpenCV utilise minAreaRect puis warpAffine ; installez opencv-python-headless si vous le choisissez.",
+            )
             prepare = gr.Button("Préparer / régénérer", variant="primary")
         with gr.Accordion("Simulation A4 et mesures DPI", open=True):
             gr.Markdown(
@@ -517,7 +569,7 @@ def build_ui() -> gr.Blocks:
 
         prepare.click(
             build_pipeline,
-            inputs=[source, input_mode, dpi, threshold, auto_rotate, simulation_angle, card_width_mm],
+            inputs=[source, input_mode, dpi, threshold, auto_rotate, rotation_method, simulation_angle, card_width_mm],
             outputs=[state, stage_index, stage_image, stage_name, stage_note, download, prepared_pdf, processing_log, log_download],
         )
         next_button.click(next_stage, inputs=[stage_index, state], outputs=[stage_index, stage_image, stage_name, stage_note, download])
