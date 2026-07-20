@@ -332,6 +332,96 @@ def _overlay_box(source: Image.Image, box: tuple[int, int, int, int] | None, met
     return overlay
 
 
+def _rotation_iteration_note(
+    phase: str,
+    position: int,
+    total: int,
+    angle: float,
+    geometry: dict[str, Any],
+) -> str:
+    """Décrit une itération Pillow visible pendant la lecture pédagogique."""
+    ratio = float(geometry.get("ratio", 0.0))
+    score = abs(ratio - 1.586)
+    decision = "contour exploitable" if geometry.get("status") == "crop_detected" else "contour non retenu"
+    return (
+        f"## 4. Rotation — {phase}\n\n"
+        f"**Itération {position}/{total}** : Pillow tourne la page complète de `{angle:+.0f}°`, "
+        "reconstruit le masque, puis dessine le contour trouvé.\n\n"
+        f"- Ratio mesuré : `{ratio:.4f}`\n"
+        f"- Score : `|{ratio:.4f} − 1,586| = {score:.4f}` ; le plus petit score est le meilleur.\n"
+        f"- Validation du contour : **{decision}**.\n\n"
+        "Cette image est une prévisualisation réduite pour que la lecture reste fluide. "
+        "Le résultat final téléchargé est calculé à la résolution complète."
+    )
+
+
+def play_pillow_iterations(state: dict[str, Any], delay_ms: int):
+    """Joue les itérations Pillow sans recalculer toute la pipeline finale.
+
+    Gradio transmet chaque ``yield`` au navigateur. ``sleep`` entre deux
+    images rend visible le cycle réel : rotation de l'A4, masque, contour,
+    score, puis candidat suivant. La lecture recommence au premier angle à
+    chaque clic sur le bouton.
+    """
+    if not state or not state.get("paths"):
+        raise gr.Error("Préparez d'abord un document.")
+    if not state.get("auto_rotation"):
+        raise gr.Error("Activez « Corriger automatiquement la rotation », puis régénérez les étapes.")
+    if state.get("rotation_method") != "pillow":
+        raise gr.Error("Cette lecture détaille la recherche Pillow. Sélectionnez Pillow, puis régénérez les étapes.")
+
+    search = state.get("rotation_search", {})
+    if search.get("status") != "applied":
+        raise gr.Error("Aucune recherche Pillow terminée n'est disponible pour ce document.")
+
+    # La recherche large réelle teste tous les angles de -90° à +90° par pas de 3°.
+    coarse_angles = list(range(-90, 91, int(search.get("coarse_step_degrees", 3))))
+    coarse_best = int(round(float(search.get("coarse_best_angle_degrees", 0.0))))
+    # L'affinage réel teste les sept degrés proches du meilleur candidat large.
+    fine_angles = list(range(coarse_best - 3, coarse_best + 4))
+    candidates = [("Recherche large", float(angle)) for angle in coarse_angles] + [
+        ("Affinage", float(angle)) for angle in fine_angles
+    ]
+
+    # Animer l'A4 complet à 300 DPI serait inutilement lent. Une miniature
+    # conserve les proportions et le comportement géométrique pour l'explication.
+    with Image.open(state["paths"][0]) as source_file:
+        preview = ImageOps.exif_transpose(source_file).convert("RGB")
+    preview.thumbnail((900, 900))
+    output_dir = Path(state["paths"][3]).parent / "rotation_iterations"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    pause_seconds = max(0.05, min(float(delay_ms) / 1000.0, 3.0))
+
+    for position, (phase, angle) in enumerate(candidates, start=1):
+        candidate = preview.rotate(angle, expand=True, resample=Image.Resampling.BICUBIC, fillcolor="white")
+        candidate_mask = _threshold_mask(ImageOps.grayscale(candidate), int(state["threshold"]))
+        box, geometry = _validated_box(candidate_mask, candidate.size, preview.size)
+        frame = _overlay_box(candidate, box, geometry)
+        frame_path = _write_image(frame, output_dir / f"{position:03d}_{phase.lower().replace(' ', '_')}_{angle:+.0f}.png")
+        status = f"Lecture en cours : {phase.lower()} — angle {angle:+.0f}° ({position}/{len(candidates)})"
+        yield (
+            3,
+            frame_path,
+            _stage_html(3),
+            _rotation_iteration_note(phase, position, len(candidates), angle, geometry),
+            frame_path,
+            status,
+            gr.update(visible=True, interactive=True),
+        )
+        time.sleep(pause_seconds)
+
+    # On termine sur l'artefact final haute résolution déjà calculé par la pipeline.
+    yield (
+        3,
+        state["paths"][3],
+        _stage_html(3),
+        _stage_markdown(3, state),
+        state["paths"][3],
+        "Lecture terminée : l'image affichée est maintenant la rotation finale à résolution complète.",
+        gr.update(visible=True, interactive=True),
+    )
+
+
 def _prepare_direct_source(input_path: str, output_dir: Path, dpi: int) -> tuple[Path, str, dict[str, Any]]:
     """Prépare une entrée déjà scannée, sans imposer de simulation A4."""
     source = Path(input_path)
@@ -514,6 +604,7 @@ def build_pipeline(
         json.dumps(metadata, ensure_ascii=False, indent=2),
         str(report_path),
         rotation_search,
+        gr.update(visible=True, interactive=True),
     )
 
 
@@ -552,12 +643,20 @@ def _stage_html(index: int) -> str:
     return f"<div id='crop-stage-name'>{STEPS[index][0]}</div>"
 
 
-def show_stage(index: int, state: dict[str, Any]) -> tuple[int, str, str, str, str]:
+def show_stage(index: int, state: dict[str, Any]) -> tuple[Any, ...]:
     """Affiche une étape existante sans recalculer les transformations."""
     if not state or not state.get("paths"):
         raise gr.Error("Préparez d'abord une entrée.")
     safe_index = max(0, min(int(index), len(STEPS) - 1))
-    return safe_index, state["paths"][safe_index], _stage_html(safe_index), _stage_markdown(safe_index, state), state["paths"][safe_index]
+    is_last_stage = safe_index == len(STEPS) - 1
+    return (
+        safe_index,
+        state["paths"][safe_index],
+        _stage_html(safe_index),
+        _stage_markdown(safe_index, state),
+        state["paths"][safe_index],
+        gr.update(visible=not is_last_stage, interactive=not is_last_stage),
+    )
 
 
 def next_stage(index: int, state: dict[str, Any]):
@@ -653,6 +752,14 @@ def build_ui() -> gr.Blocks:
                         label="Angles testés, ratios et scores",
                         value={"status": "Préparez une image avec la rotation activée."},
                     )
+                with gr.Accordion("Lire les itérations Pillow", open=True):
+                    gr.Markdown(
+                        "Lance la recherche sur une miniature de l'A4 : chaque image montre l'angle candidat, "
+                        "le contour redessiné et son score. La dernière image revient au résultat final complet."
+                    )
+                    playback_delay = gr.Slider(80, 1000, value=180, step=20, label="Pause entre deux itérations (ms)")
+                    play_iterations = gr.Button("Lire / recommencer les itérations", variant="secondary")
+                    rotation_playback_status = gr.Markdown("Préparez une image avec Pillow et la rotation activée.")
                 gr.Markdown(
                     "### Comment lire le laboratoire\n\n"
                     "- **DPI** : nombre de pixels par pouce lors du rendu PDF. L'estimation au-dessus change immédiatement ; cliquez sur préparer pour recalculer les images.\n"
@@ -664,10 +771,16 @@ def build_ui() -> gr.Blocks:
         prepare.click(
             build_pipeline,
             inputs=[source, input_mode, dpi, threshold, auto_rotate, rotation_method, simulation_angle, card_width_mm],
-            outputs=[state, stage_index, stage_image, stage_name, stage_note, download, prepared_pdf, processing_log, log_download, rotation_search_view],
+            outputs=[state, stage_index, stage_image, stage_name, stage_note, download, prepared_pdf, processing_log, log_download, rotation_search_view, next_button],
         )
-        next_button.click(next_stage, inputs=[stage_index, state], outputs=[stage_index, stage_image, stage_name, stage_note, download])
-        previous.click(previous_stage, inputs=[stage_index, state], outputs=[stage_index, stage_image, stage_name, stage_note, download])
+        next_button.click(next_stage, inputs=[stage_index, state], outputs=[stage_index, stage_image, stage_name, stage_note, download, next_button])
+        previous.click(previous_stage, inputs=[stage_index, state], outputs=[stage_index, stage_image, stage_name, stage_note, download, next_button])
+        play_iterations.click(
+            play_pillow_iterations,
+            inputs=[state, playback_delay],
+            outputs=[stage_index, stage_image, stage_name, stage_note, download, rotation_playback_status, next_button],
+            queue=True,
+        )
         dpi.change(dpi_impact_markdown, inputs=[dpi, card_width_mm], outputs=[dpi_impact], queue=False)
         card_width_mm.change(dpi_impact_markdown, inputs=[dpi, card_width_mm], outputs=[dpi_impact], queue=False)
         rotation_method.change(rotation_method_markdown, inputs=[rotation_method, auto_rotate], outputs=[rotation_method_help], queue=False)
