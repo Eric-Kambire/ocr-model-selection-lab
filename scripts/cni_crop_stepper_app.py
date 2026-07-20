@@ -73,7 +73,7 @@ STEPS = (
     ("1. Source", "Le PDF est rendu en PNG, ou l'image est normalisée en RGB. En mode simulation, la carte est placée sur une feuille A4 blanche avant cette étape."),
     ("2. Niveaux de gris", "Chaque pixel couleur devient une intensité entre 0 (noir) et 255 (blanc). Les couleurs ne sont pas encore supprimées : seule la luminance est conservée."),
     ("3. Masque binaire", "Les pixels plus sombres que le seuil deviennent blancs ; le fond A4 blanc devient noir. Ce masque permet de localiser le contenu imprimé."),
-    ("4. Rotation", "Si activée, une recherche d'angle teste de -12° à +12° pour rendre la zone détectée proche d'une carte horizontale. Ce n'est pas une correction de perspective."),
+    ("4. Rotation", "Pillow teste -90° à +90° puis affine autour du meilleur ratio. OpenCV calcule un rectangle orienté (minAreaRect), puis applique une matrice affine (warpAffine). La rotation agrandit parfois le canevas afin de ne pas couper la carte."),
     ("5. Contour détecté", "Le rectangle bleu englobe les pixels détectés comme non blancs, avec une marge de sécurité. Ses dimensions et son ratio sont vérifiés."),
     ("6. Crop final", "Seule la zone validée comme carte est conservée. Si le ratio ou la surface semblent incohérents, la page entière est conservée afin de ne rien perdre."),
 )
@@ -150,7 +150,11 @@ def _threshold_mask(gray: Image.Image, threshold: int) -> Image.Image:
     return gray.point(lambda pixel: 255 if pixel < threshold else 0)
 
 
-def _validated_box(mask: Image.Image, source_size: tuple[int, int]) -> tuple[tuple[int, int, int, int] | None, dict[str, Any]]:
+def _validated_box(
+    mask: Image.Image,
+    source_size: tuple[int, int],
+    reference_size: tuple[int, int] | None = None,
+) -> tuple[tuple[int, int, int, int] | None, dict[str, Any]]:
     """Retourne un rectangle CNI plausible et ses métriques géométriques."""
     bbox = mask.getbbox()
     if bbox is None:
@@ -162,7 +166,10 @@ def _validated_box(mask: Image.Image, source_size: tuple[int, int]) -> tuple[tup
     right, bottom = min(source_size[0], right + padding), min(source_size[1], bottom + padding)
     width, height = right - left, bottom - top
     ratio = width / height if height else 0.0
-    coverage = width * height / (source_size[0] * source_size[1])
+    # Après une rotation avec expand=True, le canevas devient plus grand. La
+    # couverture doit donc être rapportée à la page d'origine, pas au canevas.
+    reference = reference_size or source_size
+    coverage = width * height / (reference[0] * reference[1])
     valid = 1.20 <= ratio <= 2.05 and 0.02 <= coverage <= 0.65
     info = {
         "status": "crop_detected" if valid else "crop_fallback_full_page",
@@ -191,11 +198,14 @@ def _estimate_rotation(source: Image.Image, threshold: int, enabled: bool) -> tu
     def evaluate(angle: int) -> None:
         nonlocal best_angle, best_score
         candidate = preview.rotate(angle, expand=True, resample=Image.Resampling.BICUBIC, fillcolor="white")
-        box, info = _validated_box(_threshold_mask(ImageOps.grayscale(candidate), threshold), candidate.size)
+        # La miniature est réduite : la référence doit être sa taille avant
+        # rotation, pas celle de l'image source haute résolution.
+        box, info = _validated_box(_threshold_mask(ImageOps.grayscale(candidate), threshold), candidate.size, preview.size)
         if box is None:
             return
-        # Le score favorise une forme de carte plausible et une zone compacte.
-        score = abs(float(info["ratio"]) - target_ratio) + abs(float(info["coverage"]) - 0.18) * 0.25
+        # La sélection d'angle ne dépend que du ratio : le canevas change de
+        # taille pendant la rotation et ne doit pas influencer le score.
+        score = abs(float(info["ratio"]) - target_ratio)
         if score < best_score:
             best_score, best_angle = score, float(angle)
 
@@ -235,7 +245,7 @@ def _rotate_with_opencv(source: Image.Image, threshold: int, enabled: bool) -> t
     target_ratio, best_angle, best_score = 1.586, 0.0, float("inf")
     for angle in candidates:
         candidate = source.rotate(angle, expand=True, resample=Image.Resampling.BICUBIC, fillcolor="white")
-        box, info = _validated_box(_threshold_mask(ImageOps.grayscale(candidate), threshold), candidate.size)
+        box, info = _validated_box(_threshold_mask(ImageOps.grayscale(candidate), threshold), candidate.size, source.size)
         if box is not None and abs(float(info["ratio"]) - target_ratio) < best_score:
             best_angle, best_score = angle, abs(float(info["ratio"]) - target_ratio)
 
@@ -388,7 +398,7 @@ def build_pipeline(
     started = time.perf_counter()
     rotated_gray = ImageOps.grayscale(rotated)
     rotated_mask = _threshold_mask(rotated_gray, int(threshold))
-    box, geometry = _validated_box(rotated_mask, rotated.size)
+    box, geometry = _validated_box(rotated_mask, rotated.size, source.size)
     contour = _overlay_box(rotated, box, geometry)
     contour_path = _write_image(contour, output_dir / "05_detected_contour.png")
     contour_elapsed = time.perf_counter() - started
@@ -537,6 +547,23 @@ def build_ui() -> gr.Blocks:
                 simulation_angle = gr.Slider(-15, 15, value=0, step=0.5, label="Inclinaison simulée (degrés)")
                 card_width_mm = gr.Slider(70, 150, value=DEFAULT_CARD_WIDTH_MM, step=1, label="Largeur de la carte sur l'A4 (mm)")
             dpi_impact = gr.Markdown(dpi_impact_markdown(300, DEFAULT_CARD_WIDTH_MM))
+        with gr.Accordion("Algorithmes de rotation : ce que vous voyez", open=False):
+            gr.Markdown(
+                "### Étapes communes\n\n"
+                "1. L'image devient un masque : pixels plus foncés que le seuil = contenu ; fond presque blanc = ignoré. "
+                "2. La zone de contenu est encadrée. Une CNI attendue a un ratio largeur/hauteur proche de **1,586**. "
+                "3. Après rotation, le crop est validé avec une couverture calculée sur la **taille de page originale**. "
+                "Ainsi, l'agrandissement temporaire du canevas ne biaise pas le choix de l'angle.\n\n"
+                "### Méthode Pillow — recherche par ratio\n\n"
+                "- Test rapide des angles de −90° à +90° par pas de 3°, puis affinage degré par degré autour du meilleur.\n"
+                "- Score : `|ratio détecté − 1,586|`. Le plus petit score gagne.\n"
+                "- `expand=True` agrandit l'image tournée pour ne pas couper les coins ; ce changement de taille est normal et n'affecte plus le score.\n\n"
+                "### Méthode OpenCV — rectangle orienté\n\n"
+                "- `minAreaRect` trouve le plus petit rectangle tourné contenant les pixels de la carte.\n"
+                "- Son angle est corrigé parmi les équivalents à 90° près.\n"
+                "- `getRotationMatrix2D` construit la matrice de rotation et `warpAffine` déplace/interpole les pixels avec un fond blanc.\n\n"
+                "Les deux méthodes redressent une rotation dans le plan. Une carte en trapèze (photo prise de biais) nécessite une future correction de perspective à quatre coins."
+            )
         with gr.Row(elem_id="crop-workspace"):
             with gr.Column(scale=3):
                 stage_image = gr.Image(
