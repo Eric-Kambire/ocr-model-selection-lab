@@ -181,7 +181,7 @@ def _validated_box(
     return ((left, top, right, bottom) if valid else None), info
 
 
-def _estimate_rotation(source: Image.Image, threshold: int, enabled: bool) -> tuple[Image.Image, float]:
+def _estimate_rotation(source: Image.Image, threshold: int, enabled: bool) -> tuple[Image.Image, float, dict[str, Any]]:
     """Estime la rotation d'une carte, y compris une carte tournée de 45°.
 
     Une première passe rapide couvre -90° à +90° par pas de 3°, puis une passe
@@ -189,13 +189,15 @@ def _estimate_rotation(source: Image.Image, threshold: int, enabled: bool) -> tu
     rectangle dont le ratio est le plus proche du format ISO ID-1 (1,586).
     """
     if not enabled:
-        return source.copy(), 0.0
+        return source.copy(), 0.0, {"status": "disabled", "coarse": [], "refinement": []}
 
     preview = source.copy()
     preview.thumbnail((650, 650))
     target_ratio = 1.586
     best_angle, best_score = 0.0, float("inf")
-    def evaluate(angle: int) -> None:
+    coarse: list[dict[str, float]] = []
+    refinement: list[dict[str, float]] = []
+    def evaluate(angle: int, bucket: list[dict[str, float]]) -> None:
         nonlocal best_angle, best_score
         candidate = preview.rotate(angle, expand=True, resample=Image.Resampling.BICUBIC, fillcolor="white")
         # La miniature est réduite : la référence doit être sa taille avant
@@ -206,19 +208,25 @@ def _estimate_rotation(source: Image.Image, threshold: int, enabled: bool) -> tu
         # La sélection d'angle ne dépend que du ratio : le canevas change de
         # taille pendant la rotation et ne doit pas influencer le score.
         score = abs(float(info["ratio"]) - target_ratio)
+        bucket.append({"angle_degrees": float(angle), "ratio": float(info["ratio"]), "score": round(score, 6)})
         if score < best_score:
             best_score, best_angle = score, float(angle)
 
     for angle in range(-90, 91, 3):
-        evaluate(angle)
+        evaluate(angle, coarse)
+    coarse_best_angle = best_angle
     for angle in range(int(best_angle) - 3, int(best_angle) + 4):
-        evaluate(angle)
+        evaluate(angle, refinement)
 
     rotated = source.rotate(best_angle, expand=True, resample=Image.Resampling.BICUBIC, fillcolor="white")
-    return rotated, best_angle
+    return rotated, best_angle, {
+        "status": "applied", "method": "pillow_ratio_search", "target_ratio": target_ratio,
+        "coarse_step_degrees": 3, "coarse_best_angle_degrees": coarse_best_angle,
+        "coarse": coarse, "refinement": refinement, "final_angle_degrees": best_angle,
+    }
 
 
-def _rotate_with_opencv(source: Image.Image, threshold: int, enabled: bool) -> tuple[Image.Image, float]:
+def _rotate_with_opencv(source: Image.Image, threshold: int, enabled: bool) -> tuple[Image.Image, float, dict[str, Any]]:
     """Détecte le rectangle CNI avec OpenCV puis applique sa matrice de rotation.
 
     ``minAreaRect`` calcule le plus petit rectangle orienté contenant les
@@ -226,7 +234,7 @@ def _rotate_with_opencv(source: Image.Image, threshold: int, enabled: bool) -> t
     près) : celle dont le ratio est le plus proche de 1,586 est retenue.
     """
     if not enabled:
-        return source.copy(), 0.0
+        return source.copy(), 0.0, {"status": "disabled", "candidates": []}
     try:
         import cv2
         import numpy as np
@@ -237,17 +245,20 @@ def _rotate_with_opencv(source: Image.Image, threshold: int, enabled: bool) -> t
     gray = cv2.cvtColor(rgb, cv2.COLOR_RGB2GRAY)
     points = cv2.findNonZero(cv2.threshold(gray, threshold, 255, cv2.THRESH_BINARY_INV)[1])
     if points is None:
-        return source.copy(), 0.0
+        return source.copy(), 0.0, {"status": "no_foreground", "candidates": []}
     raw_angle = float(cv2.minAreaRect(points)[-1])
     # On teste les équivalents géométriques : les conventions OpenCV varient
     # selon la version et l'orientation de l'image.
     candidates = (raw_angle, raw_angle + 90.0, raw_angle - 90.0)
     target_ratio, best_angle, best_score = 1.586, 0.0, float("inf")
+    candidates_report: list[dict[str, float]] = []
     for angle in candidates:
         candidate = source.rotate(angle, expand=True, resample=Image.Resampling.BICUBIC, fillcolor="white")
         box, info = _validated_box(_threshold_mask(ImageOps.grayscale(candidate), threshold), candidate.size, source.size)
         if box is not None and abs(float(info["ratio"]) - target_ratio) < best_score:
             best_angle, best_score = angle, abs(float(info["ratio"]) - target_ratio)
+        if box is not None:
+            candidates_report.append({"angle_degrees": angle, "ratio": float(info["ratio"]), "score": round(abs(float(info["ratio"]) - target_ratio), 6)})
 
     height, width = rgb.shape[:2]
     matrix = cv2.getRotationMatrix2D((width / 2.0, height / 2.0), best_angle, 1.0)
@@ -256,7 +267,10 @@ def _rotate_with_opencv(source: Image.Image, threshold: int, enabled: bool) -> t
     matrix[0, 2] += target_width / 2.0 - width / 2.0
     matrix[1, 2] += target_height / 2.0 - height / 2.0
     rotated = cv2.warpAffine(rgb, matrix, (target_width, target_height), flags=cv2.INTER_CUBIC, borderValue=(255, 255, 255))
-    return Image.fromarray(rotated), round(best_angle, 3)
+    return Image.fromarray(rotated), round(best_angle, 3), {
+        "status": "applied", "method": "opencv_min_area_rect", "raw_angle_degrees": raw_angle,
+        "target_ratio": target_ratio, "candidates": candidates_report, "final_angle_degrees": best_angle,
+    }
 
 
 def _overlay_box(source: Image.Image, box: tuple[int, int, int, int] | None, metadata: dict[str, Any]) -> Image.Image:
@@ -388,7 +402,7 @@ def build_pipeline(
     mask_elapsed = time.perf_counter() - started
 
     started = time.perf_counter()
-    rotated, angle = (
+    rotated, angle, rotation_search = (
         _rotate_with_opencv(source, int(threshold), bool(auto_rotate))
         if rotation_method == "opencv" else _estimate_rotation(source, int(threshold), bool(auto_rotate))
     )
@@ -436,6 +450,7 @@ def build_pipeline(
         "prepared_pdf": prepared_pdf,
         "source_preparation": source_preparation,
         "rotation_degrees": angle,
+        "rotation_search": rotation_search,
         "geometry": geometry,
         "paths": paths,
         "metrics": metrics,
@@ -453,6 +468,7 @@ def build_pipeline(
         prepared_pdf,
         json.dumps(metadata, ensure_ascii=False, indent=2),
         str(report_path),
+        rotation_search,
     )
 
 
@@ -586,6 +602,11 @@ def build_ui() -> gr.Blocks:
                 with gr.Accordion("Journal des paramètres et mesures", open=False):
                     processing_log = gr.Code(label="Journal JSON", language=None, lines=14, interactive=False)
                     log_download = gr.File(label="Télécharger le journal JSON", type="filepath", interactive=False)
+                with gr.Accordion("Voir la recherche et l'affinage de rotation", open=False):
+                    rotation_search_view = gr.JSON(
+                        label="Angles testés, ratios et scores",
+                        value={"status": "Préparez une image avec la rotation activée."},
+                    )
                 gr.Markdown(
                     "### Comment lire le laboratoire\n\n"
                     "- **DPI** : nombre de pixels par pouce lors du rendu PDF. L'estimation au-dessus change immédiatement ; cliquez sur préparer pour recalculer les images.\n"
@@ -597,7 +618,7 @@ def build_ui() -> gr.Blocks:
         prepare.click(
             build_pipeline,
             inputs=[source, input_mode, dpi, threshold, auto_rotate, rotation_method, simulation_angle, card_width_mm],
-            outputs=[state, stage_index, stage_image, stage_name, stage_note, download, prepared_pdf, processing_log, log_download],
+            outputs=[state, stage_index, stage_image, stage_name, stage_note, download, prepared_pdf, processing_log, log_download, rotation_search_view],
         )
         next_button.click(next_stage, inputs=[stage_index, state], outputs=[stage_index, stage_image, stage_name, stage_note, download])
         previous.click(previous_stage, inputs=[stage_index, state], outputs=[stage_index, stage_image, stage_name, stage_note, download])
