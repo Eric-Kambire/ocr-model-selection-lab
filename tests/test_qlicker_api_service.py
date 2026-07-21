@@ -1,0 +1,36 @@
+"""Tests unitaires du constructeur de requêtes Qlicker sans réseau réel."""
+
+import pytest
+
+from ocr_benchmark.application.qlicker_api_service import (
+    build_qlicker_url,
+    merge_query_params,
+    parse_extra_query_params,
+)
+
+
+def test_extra_params_keep_empty_string_and_null():
+    """Le formulaire doit distinguer une valeur vide d'un paramètre omis."""
+    assert parse_extra_query_params('{"sort": null, "filter": ""}') == {
+        "sort": None,
+        "filter": "",
+    }
+
+
+def test_guided_params_override_extra_json():
+    """Les cinq paramètres connus restent contrôlés par leurs champs dédiés."""
+    assert merge_query_params({"page": 2, "step": None}, {"page": 99, "other": "x"}) == {
+        "page": 2,
+        "other": "x",
+    }
+
+
+def test_url_uses_base_and_endpoint_segment():
+    """La Base URL commune et la fonction HTTP sont assemblées sans double slash."""
+    assert build_qlicker_url("http://qlicker.internal/api/", "/GetCustomers") == "http://qlicker.internal/api/GetCustomers"
+
+
+def test_invalid_extra_json_is_explicit():
+    """Un JSON mal formé doit être corrigé avant qu'une requête parte."""
+    with pytest.raises(ValueError, match="JSON invalide"):
+        parse_extra_query_params("{invalid}")

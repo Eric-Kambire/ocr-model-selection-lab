@@ -89,8 +89,9 @@ STEPS = (
     ("2. Niveaux de gris", "Chaque pixel couleur devient une intensité entre 0 (noir) et 255 (blanc). Les couleurs ne sont pas encore supprimées : seule la luminance est conservée."),
     ("3. Masque binaire", "Les pixels plus sombres que le seuil deviennent blancs ; le fond A4 blanc devient noir. Ce masque permet de localiser le contenu imprimé."),
     ("4. Rotation", "Pillow teste -90° à +90° puis affine autour du meilleur ratio. OpenCV calcule un rectangle orienté (minAreaRect), puis applique une matrice affine (warpAffine). La rotation agrandit parfois le canevas afin de ne pas couper la carte."),
-    ("5. Contour détecté", "Le rectangle bleu englobe les pixels détectés comme non blancs, avec une marge de sécurité. Ses dimensions et son ratio sont vérifiés."),
-    ("6. Crop final", "Seule la zone validée comme carte est conservée. Si le ratio ou la surface semblent incohérents, la page entière est conservée afin de ne rien perdre."),
+    ("5. Perspective", "Option OpenCV : les bords sont recherchés, un quadrilatère est identifié, puis la carte est projetée sur un rectangle droit. Sans quadrilatère fiable, l'image issue de la rotation est conservée."),
+    ("6. Contour détecté", "Le rectangle bleu englobe les pixels détectés comme non blancs, avec une marge de sécurité. Ses dimensions et son ratio sont vérifiés."),
+    ("7. Crop final", "Le mode rectangulaire conserve le rectangle validé. Le mode enveloppe convexe blanchit les pixels hors du polygone détecté avant de produire une image rectangulaire téléchargeable."),
 )
 
 # Dimensions physiques de référence. Elles rendent l'effet du DPI mesurable :
@@ -171,7 +172,7 @@ def _write_image(image: Image.Image, path: Path, *, mode: str | None = None) -> 
 def _cleanup_crop_sessions() -> None:
     """Supprime uniquement les sorties temporaires générées par Crop Lab.
 
-    Une session active garde ses six artefacts PNG et son JSON jusqu'au prochain
+    Une session active garde ses sept artefacts PNG et son JSON jusqu'au prochain
     document ou rechargement de la page. Les images d'animation ne sont jamais
     écrites sur disque : Gradio reçoit directement l'image PIL en mémoire.
     """
@@ -341,16 +342,125 @@ def _rotate_with_opencv(source: Image.Image, threshold: int, enabled: bool) -> t
         if box is not None:
             candidates_report.append({"angle_degrees": angle, "ratio": float(info["ratio"]), "score": round(abs(float(info["ratio"]) - target_ratio), 6)})
 
-    height, width = rgb.shape[:2]
-    matrix = cv2.getRotationMatrix2D((width / 2.0, height / 2.0), best_angle, 1.0)
-    cosine, sine = abs(matrix[0, 0]), abs(matrix[0, 1])
-    target_width, target_height = int(height * sine + width * cosine), int(height * cosine + width * sine)
-    matrix[0, 2] += target_width / 2.0 - width / 2.0
-    matrix[1, 2] += target_height / 2.0 - height / 2.0
-    rotated = cv2.warpAffine(rgb, matrix, (target_width, target_height), flags=cv2.INTER_CUBIC, borderValue=(255, 255, 255))
+    rotated = _opencv_rotate_rgb(rgb, best_angle, cv2)
     return Image.fromarray(rotated), round(best_angle, 3), {
         "status": "applied", "method": "opencv_min_area_rect", "raw_angle_degrees": raw_angle,
-        "target_ratio": target_ratio, "candidates": candidates_report, "final_angle_degrees": best_angle,
+        "target_ratio": target_ratio, "candidates": candidates_report,
+        "candidate_angles": list(candidates), "final_angle_degrees": best_angle,
+    }
+
+
+def _opencv_rotate_rgb(rgb: Any, angle: float, cv2: Any) -> Any:
+    """Tourne un tableau RGB entier sans perdre les coins du canevas.
+
+    La matrice affine est construite autour du centre de la page. Le canevas est
+    ensuite agrandi selon |cos(angle)| et |sin(angle)|, puis translaté pour que
+    l'image complète reste visible.
+    """
+    height, width = rgb.shape[:2]
+    matrix = cv2.getRotationMatrix2D((width / 2.0, height / 2.0), float(angle), 1.0)
+    cosine, sine = abs(matrix[0, 0]), abs(matrix[0, 1])
+    target_width = int(height * sine + width * cosine)
+    target_height = int(height * cosine + width * sine)
+    matrix[0, 2] += target_width / 2.0 - width / 2.0
+    matrix[1, 2] += target_height / 2.0 - height / 2.0
+    return cv2.warpAffine(
+        rgb,
+        matrix,
+        (target_width, target_height),
+        flags=cv2.INTER_CUBIC,
+        borderValue=(255, 255, 255),
+    )
+
+
+def _order_corners(points: Any, np: Any) -> Any:
+    """Ordonne quatre coins : haut-gauche, haut-droit, bas-droit, bas-gauche."""
+    ordered = np.zeros((4, 2), dtype="float32")
+    sums = points.sum(axis=1)
+    differences = np.diff(points, axis=1).reshape(-1)
+    ordered[0] = points[np.argmin(sums)]
+    ordered[2] = points[np.argmax(sums)]
+    ordered[1] = points[np.argmin(differences)]
+    ordered[3] = points[np.argmax(differences)]
+    return ordered
+
+
+def _correct_perspective_with_opencv(source: Image.Image, enabled: bool) -> tuple[Image.Image, dict[str, Any]]:
+    """Redresse un quadrilatère détecté, sans jamais détruire l'image en cas d'échec.
+
+    Canny détecte les bords, `approxPolyDP` simplifie les contours et le premier
+    grand contour à quatre coins devient la source de l'homographie. Si aucune
+    carte crédible n'est trouvée, la copie de départ est retournée explicitement.
+    """
+    if not enabled:
+        return source.copy(), {"status": "disabled"}
+    try:
+        import cv2
+        import numpy as np
+    except ImportError as exc:
+        raise RuntimeError("OpenCV est requis pour corriger la perspective.") from exc
+
+    rgb = np.asarray(source.convert("RGB"))
+    gray = cv2.cvtColor(rgb, cv2.COLOR_RGB2GRAY)
+    blurred = cv2.GaussianBlur(gray, (5, 5), 0)
+    edges = cv2.Canny(blurred, 40, 140)
+    contours, _ = cv2.findContours(edges, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
+    minimum_area = rgb.shape[0] * rgb.shape[1] * 0.02
+
+    for contour in sorted(contours, key=cv2.contourArea, reverse=True)[:25]:
+        perimeter = cv2.arcLength(contour, True)
+        candidate = cv2.approxPolyDP(contour, 0.02 * perimeter, True)
+        if len(candidate) != 4 or cv2.contourArea(candidate) <= minimum_area:
+            continue
+        corners = _order_corners(candidate.reshape(4, 2).astype("float32"), np)
+        width = int(max(np.linalg.norm(corners[1] - corners[0]), np.linalg.norm(corners[2] - corners[3])))
+        height = int(max(np.linalg.norm(corners[3] - corners[0]), np.linalg.norm(corners[2] - corners[1])))
+        if width <= 0 or height <= 0:
+            continue
+        target = np.array(
+            [[0, 0], [width - 1, 0], [width - 1, height - 1], [0, height - 1]],
+            dtype="float32",
+        )
+        matrix = cv2.getPerspectiveTransform(corners, target)
+        corrected = cv2.warpPerspective(rgb, matrix, (width, height), borderValue=(255, 255, 255))
+        return Image.fromarray(corrected), {
+            "status": "applied",
+            "corners": corners.astype(int).tolist(),
+            "target_size_px": [width, height],
+            "canny_thresholds": [40, 140],
+        }
+    return source.copy(), {"status": "skipped_no_quadrilateral", "canny_thresholds": [40, 140]}
+
+
+def _apply_convex_hull_mask(source: Image.Image, binary_mask: Image.Image, crop_box: tuple[int, int, int, int] | None) -> tuple[Image.Image, dict[str, Any]]:
+    """Blanchit les pixels hors enveloppe convexe, puis garde un PNG rectangulaire.
+
+    Un PNG est toujours rectangulaire : « crop enveloppe convexe » signifie donc
+    que son rectangle englobant est conservé, mais que les pixels situés hors du
+    polygone convexe sont blancs. Cela rend la zone utilisée visible sans créer
+    un fichier à forme irrégulière, peu pratique pour les modèles OCR/VLM.
+    """
+    if crop_box is None:
+        return source.copy(), {"status": "skipped_no_valid_rectangle"}
+    try:
+        import cv2
+        import numpy as np
+    except ImportError as exc:
+        raise RuntimeError("OpenCV est requis pour le masque d'enveloppe convexe.") from exc
+
+    mask_array = np.asarray(binary_mask.convert("L"))
+    points = cv2.findNonZero(mask_array)
+    if points is None:
+        return source.crop(crop_box), {"status": "skipped_no_foreground"}
+    hull = cv2.convexHull(points)
+    hull_mask = np.zeros(mask_array.shape, dtype="uint8")
+    cv2.fillConvexPoly(hull_mask, hull.reshape(-1, 2), 255)
+    source_array = np.asarray(source.convert("RGB")).copy()
+    source_array[hull_mask == 0] = (255, 255, 255)
+    return Image.fromarray(source_array).crop(crop_box), {
+        "status": "applied",
+        "vertices": hull.reshape(-1, 2).astype(int).tolist(),
+        "mode": "pixels_hors_enveloppe_blanchis",
     }
 
 
@@ -397,6 +507,25 @@ def _overlay_iteration_box(source: Image.Image, metadata: dict[str, Any]) -> Ima
     return overlay
 
 
+def _overlay_opencv_min_area_rect(source: Image.Image, threshold: int) -> Image.Image:
+    """Dessine le rectangle incliné renvoyé par OpenCV sur la page d'origine."""
+    try:
+        import cv2
+        import numpy as np
+    except ImportError:
+        return source.copy()
+    rgb = np.asarray(source.convert("RGB"))
+    gray = cv2.cvtColor(rgb, cv2.COLOR_RGB2GRAY)
+    points = cv2.findNonZero(cv2.threshold(gray, int(threshold), 255, cv2.THRESH_BINARY_INV)[1])
+    if points is None:
+        return source.copy()
+    rectangle = cv2.minAreaRect(points)
+    corners = cv2.boxPoints(rectangle).astype("int32")
+    canvas = rgb.copy()
+    cv2.polylines(canvas, [corners], isClosed=True, color=(240, 140, 30), thickness=max(2, max(source.size) // 450))
+    return Image.fromarray(canvas)
+
+
 def _rotation_iteration_note(
     phase: str,
     position: int,
@@ -420,33 +549,36 @@ def _rotation_iteration_note(
     )
 
 
-def play_pillow_iterations(state: dict[str, Any], delay_ms: int):
-    """Joue les itérations Pillow sans recalculer toute la pipeline finale.
+def play_rotation_iterations(state: dict[str, Any], delay_ms: int):
+    """Joue les candidats Pillow ou OpenCV sans recalculer la pipeline finale.
 
-    Gradio transmet chaque ``yield`` au navigateur. ``sleep`` entre deux
-    images rend visible le cycle réel : rotation de l'A4, masque, contour,
-    score, puis candidat suivant. La lecture recommence au premier angle à
-    chaque clic sur le bouton.
+    Pillow montre sa recherche large puis son affinage. OpenCV montre d'abord
+    son rectangle incliné (`minAreaRect`), puis les trois angles équivalents
+    évalués à 90° près. Chaque `yield` est visible dans Gradio ; `sleep` rend
+    l'enchaînement pédagogique plutôt qu'instantané.
     """
     if not state or not state.get("paths"):
         raise gr.Error("Préparez d'abord un document.")
     if not state.get("auto_rotation"):
         raise gr.Error("Activez « Corriger automatiquement la rotation », puis régénérez les étapes.")
-    if state.get("rotation_method") != "pillow":
-        raise gr.Error("Cette lecture détaille la recherche Pillow. Sélectionnez Pillow, puis régénérez les étapes.")
 
     search = state.get("rotation_search", {})
     if search.get("status") != "applied":
-        raise gr.Error("Aucune recherche Pillow terminée n'est disponible pour ce document.")
+        raise gr.Error("Aucune recherche de rotation terminée n'est disponible pour ce document.")
 
-    # La recherche large réelle teste tous les angles de -90° à +90° par pas de 3°.
-    coarse_angles = list(range(-90, 91, int(search.get("coarse_step_degrees", 3))))
-    coarse_best = int(round(float(search.get("coarse_best_angle_degrees", 0.0))))
-    # L'affinage réel teste les sept degrés proches du meilleur candidat large.
-    fine_angles = list(range(coarse_best - 3, coarse_best + 4))
-    candidates = [("Recherche large", float(angle)) for angle in coarse_angles] + [
-        ("Affinage", float(angle)) for angle in fine_angles
-    ]
+    method = str(state.get("rotation_method") or "pillow")
+    if method == "pillow":
+        # La recherche large réelle teste tous les angles de -90° à +90° par pas de 3°.
+        coarse_angles = list(range(-90, 91, int(search.get("coarse_step_degrees", 3))))
+        coarse_best = int(round(float(search.get("coarse_best_angle_degrees", 0.0))))
+        fine_angles = list(range(coarse_best - 3, coarse_best + 4))
+        candidates = [("Pillow — recherche large", float(angle)) for angle in coarse_angles] + [
+            ("Pillow — affinage", float(angle)) for angle in fine_angles
+        ]
+    else:
+        candidates = [("OpenCV — angle équivalent", float(angle)) for angle in search.get("candidate_angles", [])]
+        if not candidates:
+            raise gr.Error("OpenCV n'a fourni aucun angle candidat pour ce document.")
 
     # Animer l'A4 complet à 300 DPI serait inutilement lent. Une miniature
     # conserve les proportions et le comportement géométrique pour l'explication.
@@ -455,8 +587,31 @@ def play_pillow_iterations(state: dict[str, Any], delay_ms: int):
     preview.thumbnail((900, 900))
     pause_seconds = max(0.05, min(float(delay_ms) / 1000.0, 3.0))
 
+    if method == "opencv":
+        raw_angle = float(search.get("raw_angle_degrees", 0.0))
+        yield (
+            3,
+            _overlay_opencv_min_area_rect(preview, int(state["threshold"])),
+            _stage_html(3),
+            "## 4. Rotation — rectangle orienté OpenCV\n\n"
+            "Le contour orange est le plus petit rectangle incliné qui englobe les pixels non blancs. "
+            f"OpenCV retourne ici l'angle brut `{raw_angle:+.2f}°`. Ensuite, ses trois orientations équivalentes sont testées.",
+            state["paths"][3],
+            "Lecture OpenCV : détection du rectangle incliné.",
+            gr.update(visible=True, interactive=True),
+        )
+        time.sleep(pause_seconds)
+
     for position, (phase, angle) in enumerate(candidates, start=1):
-        candidate = preview.rotate(angle, expand=True, resample=Image.Resampling.BICUBIC, fillcolor="white")
+        if method == "opencv":
+            try:
+                import cv2
+                import numpy as np
+            except ImportError as exc:
+                raise gr.Error("OpenCV n'est pas installé : impossible de lire ses itérations.") from exc
+            candidate = Image.fromarray(_opencv_rotate_rgb(np.asarray(preview), angle, cv2))
+        else:
+            candidate = preview.rotate(angle, expand=True, resample=Image.Resampling.BICUBIC, fillcolor="white")
         candidate_mask = _threshold_mask(ImageOps.grayscale(candidate), int(state["threshold"]))
         box, geometry = _validated_box(candidate_mask, candidate.size, preview.size)
         # Contrairement au crop final, l'animation affiche aussi les rectangles
@@ -569,6 +724,8 @@ def build_pipeline(
     threshold: int,
     auto_rotate: bool,
     rotation_method: str,
+    correct_perspective: bool,
+    crop_mode: str,
     simulation_angle: float,
     card_width_mm: float,
 ) -> tuple[Any, ...]:
@@ -613,16 +770,25 @@ def build_pipeline(
     rotate_elapsed = time.perf_counter() - started
 
     started = time.perf_counter()
-    rotated_gray = ImageOps.grayscale(rotated)
-    rotated_mask = _threshold_mask(rotated_gray, int(threshold))
-    box, geometry = _validated_box(rotated_mask, rotated.size, source.size)
-    contour = _overlay_box(rotated, box, geometry)
-    contour_path = _write_image(contour, output_dir / "05_detected_contour.png")
+    perspective_image, perspective_info = _correct_perspective_with_opencv(rotated, bool(correct_perspective))
+    perspective_path = _write_image(perspective_image, output_dir / "05_perspective.png")
+    perspective_elapsed = time.perf_counter() - started
+
+    started = time.perf_counter()
+    processed_gray = ImageOps.grayscale(perspective_image)
+    processed_mask = _threshold_mask(processed_gray, int(threshold))
+    box, geometry = _validated_box(processed_mask, perspective_image.size, source.size)
+    contour = _overlay_box(perspective_image, box, geometry)
+    contour_path = _write_image(contour, output_dir / "06_detected_contour.png")
     contour_elapsed = time.perf_counter() - started
 
     started = time.perf_counter()
-    crop = rotated.crop(box) if box else rotated
-    crop_path = _write_image(crop, output_dir / "06_cni_crop.png")
+    if crop_mode == "convex_hull":
+        crop, hull_info = _apply_convex_hull_mask(perspective_image, processed_mask, box)
+    else:
+        crop = perspective_image.crop(box) if box else perspective_image
+        hull_info = {"status": "disabled", "mode": "rectangle"}
+    crop_path = _write_image(crop, output_dir / "07_cni_crop.png")
     crop_elapsed = time.perf_counter() - started
 
     paths = [
@@ -630,6 +796,7 @@ def build_pipeline(
         gray_path,
         mask_path,
         rotated_path,
+        perspective_path,
         contour_path,
         crop_path,
     ]
@@ -638,8 +805,9 @@ def build_pipeline(
         _stage_metric(STEPS[1][0], paths[1], gray_elapsed, {"conversion": "RGB → niveaux de gris"}),
         _stage_metric(STEPS[2][0], paths[2], mask_elapsed, {"threshold": int(threshold)}),
         _stage_metric(STEPS[3][0], paths[3], rotate_elapsed, {"auto_rotation": bool(auto_rotate), "method": rotation_method, "detected_angle_degrees": angle}),
-        _stage_metric(STEPS[4][0], paths[4], contour_elapsed, geometry),
-        _stage_metric(STEPS[5][0], paths[5], crop_elapsed, {"crop_box": geometry.get("crop_box"), "fallback": box is None}),
+        _stage_metric(STEPS[4][0], paths[4], perspective_elapsed, perspective_info),
+        _stage_metric(STEPS[5][0], paths[5], contour_elapsed, geometry),
+        _stage_metric(STEPS[6][0], paths[6], crop_elapsed, {"crop_box": geometry.get("crop_box"), "fallback": box is None, "mode": crop_mode, "convex_hull": hull_info}),
     ]
     metadata = {
         "input": str(Path(input_path).resolve()),
@@ -648,13 +816,17 @@ def build_pipeline(
         "threshold": int(threshold),
         "auto_rotation": bool(auto_rotate),
         "rotation_method": rotation_method,
+        "correct_perspective": bool(correct_perspective),
+        "crop_mode": crop_mode,
         "simulation_angle_degrees": float(simulation_angle),
         "card_width_mm": float(card_width_mm),
         "prepared_pdf": prepared_pdf,
         "source_preparation": source_preparation,
         "rotation_degrees": angle,
         "rotation_search": rotation_search,
+        "perspective": perspective_info,
         "geometry": geometry,
+        "convex_hull": hull_info,
         "paths": paths,
         "metrics": metrics,
     }
@@ -684,11 +856,16 @@ def _stage_markdown(index: int, state: dict[str, Any]) -> str:
     if index == 3:
         explanation = rotation_method_markdown(state["rotation_method"], state["auto_rotation"])
         explanation += f"\n\nAngle effectivement appliqué : `{state['rotation_degrees']:+.0f}°`."
-    if index in {4, 5}:
+    if index == 4:
+        perspective = state.get("perspective", {})
+        explanation += "\n\nDonnées techniques :\n```json\n" + json.dumps(perspective, ensure_ascii=False, indent=2) + "\n```"
+    if index in {5, 6}:
         geometry = state["geometry"]
         explanation += "\n\n" + geometry_markdown(geometry)
         explanation += "\n\nDonnées techniques :\n```json\n" + json.dumps(geometry, ensure_ascii=False, indent=2) + "\n```"
-    if index == 5:
+    if index == 6:
+        hull = state.get("convex_hull", {})
+        explanation += "\n\nMode de crop :\n```json\n" + json.dumps(hull, ensure_ascii=False, indent=2) + "\n```"
         explanation += (
             "\n\n> Le gris autour de l'image est uniquement le cadre de prévisualisation : "
             "il ne fait pas partie du PNG téléchargé. La carte visible est le crop final à sa vraie proportion."
@@ -781,6 +958,18 @@ def build_ui() -> gr.Blocks:
                     filterable=False,
                 )
                 rotation_method_help = gr.Markdown(rotation_method_markdown("pillow", False))
+                correct_perspective = gr.Checkbox(
+                    value=False,
+                    label="Corriger la perspective (OpenCV)",
+                    info="À activer si la carte est un trapèze ; recherche quatre coins avec Canny puis homographie.",
+                )
+                crop_mode = gr.Dropdown(
+                    [("Rectangle validé — recommandé", "rectangle"), ("Enveloppe convexe — pixels hors carte blanchis", "convex_hull")],
+                    value="rectangle",
+                    label="Forme du crop final",
+                    info="Un fichier image reste rectangulaire : le mode convexe masque en blanc l'extérieur du polygone.",
+                    filterable=False,
+                )
             with gr.Column(scale=2, elem_id="crop-action"):
                 gr.HTML("<div class='crop-section-title'>4. Générer</div><div class='crop-section-copy'>Crée les six artefacts et leur journal.</div>")
                 prepare = gr.Button("Préparer les étapes", variant="primary")
@@ -800,8 +989,8 @@ def build_ui() -> gr.Blocks:
                 "Le ratio de la CNI est ensuite comparé à `1,586`. La **couverture** ne choisit pas l'angle : "
                 "elle valide seulement le contour final, rapporté à la taille de la source avant rotation. "
                 "Un canevas agrandi par la rotation ne peut donc pas fausser cette mesure.\n\n"
-                "Pillow et OpenCV redressent une rotation dans le plan. Une carte photographiée en trapèze "
-                "demande une correction de perspective à quatre coins, qui est hors de ce laboratoire."
+                "Pillow et OpenCV redressent une rotation dans le plan. Activez l'option Perspective si la carte est photographiée en trapèze : "
+                "OpenCV cherchera quatre coins, puis projettera cette zone sur un rectangle."
             )
         with gr.Row(elem_id="crop-workspace"):
             with gr.Column(scale=6, elem_id="crop-canvas"):
@@ -831,31 +1020,31 @@ def build_ui() -> gr.Blocks:
                         label="Angles testés, ratios et scores",
                         value={"status": "Préparez une image avec la rotation activée."},
                     )
-                with gr.Accordion("Lire les itérations Pillow", open=True, elem_id="rotation-playback"):
+                with gr.Accordion("Lire les itérations de rotation", open=True, elem_id="rotation-playback"):
                     gr.Markdown(
-                        "Lance la recherche sur une miniature de l'A4 : chaque image montre l'angle candidat, "
-                        "le contour redessiné et son score. La dernière image revient au résultat final complet."
+                        "Pillow montre sa recherche large et son affinage. OpenCV montre d'abord son rectangle orienté, puis ses trois angles équivalents. "
+                        "Chaque image montre l'angle candidat, le contour redessiné et son score."
                     )
                     playback_delay = gr.Slider(80, 1000, value=180, step=20, label="Pause entre deux itérations (ms)")
                     play_iterations = gr.Button("Lire / recommencer les itérations", variant="secondary")
-                    rotation_playback_status = gr.Markdown("Préparez une image avec Pillow et la rotation activée.")
+                    rotation_playback_status = gr.Markdown("Préparez une image avec la rotation activée, puis lancez la lecture.")
                 gr.Markdown(
                     "### Comment lire le laboratoire\n\n"
                     "- **DPI** : nombre de pixels par pouce lors du rendu PDF. L'estimation au-dessus change immédiatement ; cliquez sur préparer pour recalculer les images.\n"
                     "- **Seuil blanc** : limite entre fond et contenu. Un seuil trop bas oublie des pixels clairs ; trop haut détecte le bruit.\n"
-                    "- **Rotation** : cherche seulement une inclinaison. Les perspectives de photo ne sont pas rectifiées dans cette version.\n"
+                    "- **Rotation** : redresse une inclinaison dans le plan. **Perspective** : redresse une carte en trapèze avec quatre coins, si un quadrilatère fiable est trouvé.\n"
                     "- Chaque étape affiche ses dimensions, son volume, sa durée et ses paramètres ; le même contenu est exporté en JSON."
                 )
 
         prepare.click(
             build_pipeline,
-            inputs=[source, input_mode, dpi, threshold, auto_rotate, rotation_method, simulation_angle, card_width_mm],
+            inputs=[source, input_mode, dpi, threshold, auto_rotate, rotation_method, correct_perspective, crop_mode, simulation_angle, card_width_mm],
             outputs=[state, stage_index, stage_image, stage_name, stage_note, download, prepared_pdf, processing_log, log_download, rotation_search_view, next_button],
         )
         next_button.click(next_stage, inputs=[stage_index, state], outputs=[stage_index, stage_image, stage_name, stage_note, download, next_button])
         previous.click(previous_stage, inputs=[stage_index, state], outputs=[stage_index, stage_image, stage_name, stage_note, download, next_button])
         play_iterations.click(
-            play_pillow_iterations,
+            play_rotation_iterations,
             inputs=[state, playback_delay],
             outputs=[stage_index, stage_image, stage_name, stage_note, download, rotation_playback_status, next_button],
             queue=True,
