@@ -6,10 +6,30 @@ Docker, et sur CPU/GPU dans Google Colab.
 
 ## Architecture locale
 
-Le projet est organisé en couches simples :
+Le projet est un **monolithe modulaire avec une architecture hexagonale légère** :
+Gradio, le CLI et une future API sont les interfaces ; les services applicatifs
+portent les cas d'usage ; le domaine calcule et évalue ; les adaptateurs parlent
+à Ollama, au disque, aux ZIP ou à une API externe. Ainsi, la logique n'est pas
+liée à Gradio et peut être réutilisée plus tard dans un outil de détection de
+fraude ou un worker serveur.
+
+```text
+Interface (Gradio / CLI / future API)
+                  ↓
+Services applicatifs
+                  ↓
+Domaine benchmark et CNI
+                  ↓
+Adaptateurs (Ollama, fichiers, ZIP, Qlicker, Docker)
+```
+
+Les fichiers ont des responsabilités explicites :
 
 ```text
 main.py                         # démarrage Gradio ou CLI, configuration et flux UI
+ocr_benchmark/application/benchmark_service.py # cas d'usage benchmark classique
+ocr_benchmark/application/cni_service.py       # scan/import/exécution CNI
+ocr_benchmark/application/run_service.py       # restauration et rétention des runs
 ocr_benchmark/domain.py         # objets métier : cas, inférence, résultat, statuts
 ocr_benchmark/runner.py         # orchestration séquentielle, timeout et progression
 ocr_benchmark/registry.py       # frontière entre un nom de modèle et son adaptateur
@@ -26,7 +46,8 @@ Le flux CNI n’est pas concentré dans un seul gros fichier :
 
 ```text
 ocr_benchmark/cni_ingestion.py  # scan client, import ZIP, JSONB externe → JSON local
-ocr_benchmark/cni_images.py     # PDF une page → PNG, crop CNI, image recto/verso
+ocr_benchmark/cni_images.py     # rendu PDF/image et opérations d'image réutilisables
+ocr_benchmark/cni_preprocessing.py # source unique : rotation, contour et crop CNI
 ocr_benchmark/cni_schema.py     # champs configurables, prompt, parsing et fusion JSON
 ocr_benchmark/cni_runner.py     # exécution séquentielle, live events, artefacts de run
 ocr_benchmark/cni.py            # façade d'import compatible pour le reste de l'application
@@ -34,9 +55,13 @@ config/cni_fields.json          # champs d'extraction modifiables sans changer l
 docs/CNI_BENCHMARK_IMPLEMENTATION_PLAN.md # contrat de données et décisions métier
 ```
 
-Chaque module a une seule responsabilité. Un problème de fichier, de crop,
-de réponse JSON ou d’exécution peut donc être retrouvé immédiatement dans le
-bon module, sans modifier l’interface ni les imports existants.
+Chaque module a une seule responsabilité. La préparation CNI n'est notamment
+implémentée qu'une fois dans `cni_preprocessing.py`; `cni_images.py` l'utilise
+au lieu de dupliquer la logique. Un problème de fichier, crop, réponse JSON ou
+exécution peut donc être retrouvé dans le bon module, sans modifier l'interface.
+
+La description détaillée des frontières, de la réutilisation future et des
+choix de stockage est disponible dans `docs/ARCHITECTURE_INTERNE.md`.
 
 Le flux d'une image est : `dataset → registry → adapter → runner → evaluator →
 reporting/UI`. Le runner charge un seul modèle à la fois, traite les documents,
@@ -121,10 +146,26 @@ docker compose up --build
 
 Ouvrez `http://localhost:7860`. Le conteneur contacte Ollama sur la machine hôte
 via `host.docker.internal:11434`. Les résultats sont conservés dans le volume
-Docker `benchmark-runs`.
+Docker `benchmark-runs`. Le service `init-storage` initialise les volumes
+`benchmark-runs` et `benchmark-dataset` avec les permissions du compte applicatif
+non-root. Les données CNI, imports et logs sont exclus du contexte de build via
+`.dockerignore`.
 
 Le Dockerfile ne contient aucun secret. Copiez `.env.example` vers `.env`
 uniquement si une configuration locale est nécessaire.
+
+## Données sensibles, volumes et rétention
+
+Les scans CNI, labels, sorties brutes et runs ne doivent pas être committés ni
+placés dans l'image Docker. Montez des volumes dédiés et protégez le disque de
+l'hôte (BitLocker sous Windows, LUKS sous Linux) ; les permissions Docker ne
+remplacent pas le chiffrement du disque.
+
+`RUN_RETENTION_DAYS=30` est la valeur par défaut : les dossiers de runs générés
+plus anciens sont supprimés au démarrage de l'interface. Mettez une valeur
+négative pour désactiver la purge temporairement. Les détails de déploiement et
+les limites actuelles (authentification, Qlicker et stockage central) figurent
+dans `DEPLOYMENT.md` et `docs/ARCHITECTURE_INTERNE.md`.
 
 ## Docker GPU
 
