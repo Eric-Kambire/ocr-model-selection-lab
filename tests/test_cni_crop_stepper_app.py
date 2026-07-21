@@ -22,7 +22,7 @@ def test_simulation_a4_creates_pdf_metrics_and_reusable_log(tmp_path: Path):
     card = tmp_path / "carte.png"
     _write_card(card)
 
-    result = build_pipeline(str(card), "simulate_a4", 150, 242, False, 7.5, 120)
+    result = build_pipeline(str(card), "simulate_a4", 150, 242, False, "pillow", 7.5, 120)
     state = result[0]
 
     assert len(state["paths"]) == 6
@@ -37,4 +37,3 @@ def test_simulation_a4_creates_pdf_metrics_and_reusable_log(tmp_path: Path):
     report = json.loads(Path(state["report_path"]).read_text(encoding="utf-8"))
     assert report["dpi"] == 150
     assert report["metrics"][5]["step"] == "6. Crop final"
-

@@ -121,3 +121,20 @@ Les nouvelles données intégrées dans une version plus récente de l’image n
 donc pas fusionnées automatiquement dans un volume existant. Cette opération
 doit être réalisée par une migration explicite pour ne jamais écraser les labels
 ajoutés par l’utilisateur.
+
+## Données internes et rétention
+
+Les documents CNI, sorties OCR, prompts et labels sont des données sensibles.
+
+- Les imports CNI et uploads sont exclus du contexte Docker : ils ne doivent
+  jamais être intégrés à une image ou poussés sur un registre.
+- Le service `init-storage` attribue les volumes au compte non-root de
+  l'application (`UID 10001`) avec des permissions `0750`.
+- Configurez `RUN_RETENTION_DAYS=30` dans `.env` pour supprimer les anciens
+  runs au démarrage de l'application. Téléchargez ou archivez les artefacts
+  nécessaires avant leur expiration.
+- Activez BitLocker sur le serveur Windows ou LUKS sur Linux : le chiffrement
+  du disque est indispensable, car Docker volumes et fichiers Python ne
+  chiffrent pas eux-mêmes les CNI au repos.
+- Placez l'interface derrière un reverse proxy interne avec HTTPS et SSO avant
+  de la rendre accessible à plusieurs collaborateurs.

@@ -15,23 +15,32 @@ import pandas as pd
 
 import dataset_generator
 from models.ollama_model import DEFAULT_OCR_PROMPT
+from ocr_benchmark.application.benchmark_service import (
+    iter_benchmark,
+    list_ollama_models,
+    load_dataset_catalog,
+    run_benchmark as execute_benchmark,
+    select_dataset_category,
+)
+from ocr_benchmark.application.cni_service import (
+    import_cni_archive,
+    import_cni_from_remote,
+    iter_cni_extraction,
+    scan_cni_documents,
+)
+from ocr_benchmark.application.run_service import list_run_ids, load_run_results, purge_expired_runs
 from ocr_benchmark.cni import (
     DEFAULT_RECTO_SUFFIX,
     DEFAULT_VERSO_SUFFIX,
     build_cni_prompt,
     build_combined_cni_prompt,
-    import_cni_zip,
     load_cni_field_config,
-    materialize_cni_labels,
     render_single_page_pdf,
-    scan_cni_clients,
 )
-from ocr_benchmark.cni_runner import iter_cni_benchmark
-from ocr_benchmark.domain import BenchmarkCase
+from ocr_benchmark.cni_qlicker import QlickerImportConfig
 from ocr_benchmark.dataset_repository import DatasetRepository
-from ocr_benchmark.registry import build_default_registry
-from ocr_benchmark.reporting import RunCheckpoint, save_run
-from ocr_benchmark.runner import BenchmarkRunner, summarize_results
+from ocr_benchmark.reporting import RunCheckpoint
+from ocr_benchmark.runner import summarize_results
 from ocr_benchmark.visualization import (
     category_quality_chart,
     cni_accuracy_chart,
@@ -47,6 +56,19 @@ DATASET_DIR = ROOT_DIR / "dataset"
 CATALOG_PATH = DATASET_DIR / "dataset.json"
 RUNS_DIR = ROOT_DIR / "runs"
 CNI_IMPORTS_DIR = ROOT_DIR / "cni_imports"
+
+
+def _read_retention_days() -> int | None:
+    """Lit la rétention locale des runs ; une valeur négative la désactive."""
+    raw_value = os.getenv("RUN_RETENTION_DAYS", "30").strip()
+    try:
+        return int(raw_value)
+    except ValueError:
+        logging.getLogger(__name__).warning("RUN_RETENTION_DAYS invalide (%s), rétention désactivée.", raw_value)
+        return None
+
+
+RUN_RETENTION_DAYS = _read_retention_days()
 
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
 logging.basicConfig(
@@ -555,44 +577,13 @@ def _cni_raw_output(path_value: Any) -> str:
 
 
 def load_dataset() -> list[dict[str, Any]]:
-    """Load and validate the catalog, generating it only when it is absent."""
-    if not CATALOG_PATH.exists():
-        dataset_generator.main()
-    with CATALOG_PATH.open("r", encoding="utf-8") as stream:
-        data = json.load(stream)
-    if not isinstance(data, list):
-        raise ValueError("dataset.json must contain a JSON array.")
-    required = {"image_path", "ground_truth", "category"}
-    for index, item in enumerate(data):
-        missing = required - item.keys()
-        if missing:
-            raise ValueError(f"Dataset item {index} is missing: {sorted(missing)}")
-        # Catalogs generated on Windows may contain backslashes. Convert both
-        # separator styles before any filesystem access so the same catalog
-        # works inside Linux containers and Colab.
-        item["image_path"] = item["image_path"].replace("\\", "/")
-        image_path = ROOT_DIR / Path(item["image_path"])
-        if not image_path.is_file():
-            raise FileNotFoundError(f"Dataset image does not exist: {image_path}")
-    return data
+    """Façade de compatibilité UI vers le cas d'usage dataset réutilisable."""
+    return load_dataset_catalog(ROOT_DIR, CATALOG_PATH, ensure_catalog=dataset_generator.main)
 
 
 def get_installed_ollama_models() -> list[str]:
-    try:
-        import ollama
-
-        response = ollama.list()
-        models = response.get("models", []) if isinstance(response, dict) else response.models
-        names = []
-        for model in models:
-            if isinstance(model, dict):
-                names.append(model.get("model") or model.get("name"))
-            else:
-                names.append(getattr(model, "model", None))
-        return [name for name in names if name]
-    except Exception as exc:
-        print(f"Could not list Ollama models: {exc}")
-        return []
+    """Façade UI vers le service d'inventaire Ollama."""
+    return list_ollama_models()
 
 
 def run_benchmark(
@@ -601,24 +592,17 @@ def run_benchmark(
     mock_noise: float = 0.05,
     eval_mode: str = "Standard",
 ) -> tuple[pd.DataFrame, list[dict[str, Any]], str]:
-    dataset = load_dataset()
-    if selected_category != "All":
-        dataset = [item for item in dataset if item["category"] == selected_category]
-    if not dataset:
-        return pd.DataFrame(), [], ""
-
-    runner = BenchmarkRunner(build_default_registry())
-    cases = [BenchmarkCase.from_dict(item) for item in dataset]
-    run_id, results = runner.run(
+    """Façade CLI vers le cas d'usage benchmark réutilisable."""
+    dataset = select_dataset_category(load_dataset(), selected_category)
+    return execute_benchmark(
         selected_models,
-        cases,
+        dataset,
+        RUNS_DIR,
         eval_mode=eval_mode,
         mock_noise=mock_noise,
+        cpu_threads=cpu_threads,
+        unload_after_task=unload_after_task,
     )
-    summary = summarize_results(results)
-    run_dir = save_run(run_id, summary, results, RUNS_DIR)
-    print(f"Benchmark {run_id} saved to {run_dir}")
-    return summary, results, run_id
 
 
 def _display_summary(summary: pd.DataFrame) -> pd.DataFrame:
@@ -744,6 +728,24 @@ def build_ui() -> gr.Blocks:
         for name in category_choices
         if any(item["category"] == name for item in dataset)
     ]
+
+    def available_run_choices() -> list[tuple[str, str]]:
+        """Return persisted runs newest first without loading their payloads."""
+        return [
+            (run_id, run_id)
+            for run_id in list_run_ids(RUNS_DIR)
+            if (RUNS_DIR / run_id / "results.json").is_file()
+        ]
+
+    def startup_run_info():
+        """Keep page startup light; payloads are loaded only on explicit open."""
+        deleted = purge_expired_runs(RUNS_DIR, retention_days=RUN_RETENTION_DAYS)
+        if deleted:
+            LOGGER.info("Run retention applied | deleted=%d | retention_days=%s", len(deleted), RUN_RETENTION_DAYS)
+        choices = available_run_choices()
+        if not choices:
+            return gr.update(choices=[], value=None), "Aucun run sauvegardé."
+        return gr.update(choices=choices, value=choices[0][1]), f"Dernier run disponible : `{choices[0][1]}`. Cliquez sur **Ouvrir le run**."
 
     with gr.Blocks(title="OCR Model Selection Lab", fill_height=True) as app:
         gr.HTML(
@@ -1267,8 +1269,7 @@ def build_ui() -> gr.Blocks:
                 )
                 return
 
-            cases = [BenchmarkCase.from_dict(item) for item in selected_records]
-            runner = BenchmarkRunner(build_default_registry())
+            case_count = len(selected_records)
             results: list[dict[str, Any]] = []
             checkpoint: RunCheckpoint | None = None
             summary = pd.DataFrame()
@@ -1288,14 +1289,14 @@ def build_ui() -> gr.Blocks:
                 None,
                 "Chargement du premier modèle…",
                 0,
-                f"**Traité :** 0 / {len(model_specs) * len(cases)} · **ETA :** calcul en cours",
+                f"**Traité :** 0 / {len(model_specs) * case_count} · **ETA :** calcul en cours",
                 pd.DataFrame(),
             )
 
             try:
-                updates = runner.iter_run(
+                updates = iter_benchmark(
                     model_specs,
-                    cases,
+                    selected_records,
                     eval_mode=selected_eval_mode,
                     mock_noise=float(selected_noise),
                     timeout_seconds=float(selected_timeout or 0),
@@ -1531,6 +1532,21 @@ def build_ui() -> gr.Blocks:
         def select_detail(selection, results):
             return show_detail(int(selection or 0), results)
 
+        def reload_persisted_runs():
+            choices = available_run_choices()
+            return gr.update(choices=choices, value=(choices[0][1] if choices else None))
+
+        def open_persisted_run(run_id):
+            """Load a run from disk and feed it through the normal detail renderer."""
+            if not run_id:
+                return [[], *show_detail(0, []), "Aucun run sélectionné."]
+            try:
+                safe_id = str(run_id)
+                restored = load_run_results(RUNS_DIR, safe_id)
+                return [restored, *show_detail(0, restored), f"✅ Run `{safe_id}` rechargé ({len(restored)} résultat(s))."]
+            except Exception as exc:
+                return [[], *show_detail(0, []), f"❌ Impossible de recharger `{safe_id}` : {type(exc).__name__}: {exc}"]
+
         def browse_dataset(selection):
             if not selection:
                 return None, "", "", ""
@@ -1580,7 +1596,7 @@ def build_ui() -> gr.Blocks:
             if not zip_path:
                 return gr.update(), gr.update(), "Import impossible : sélectionnez une archive ZIP."
             try:
-                imported = import_cni_zip(Path(zip_path), CNI_IMPORTS_DIR)
+                imported = import_cni_archive(Path(zip_path), CNI_IMPORTS_DIR)
                 root = Path(imported["import_root"])
                 clients_path = root / "clients" if (root / "clients").is_dir() else root
                 labels_path = root / "labels"
@@ -1594,6 +1610,38 @@ def build_ui() -> gr.Blocks:
                 LOGGER.exception("CNI ZIP import failed")
                 return gr.update(), gr.update(), f"Import ZIP impossible : {type(exc).__name__}: {exc}"
 
+        def import_cni_from_qlicker(client_ids_text, config_text):
+            """Importe Qlicker avec un contrat explicite, sans exposer le token dans l'UI."""
+            identifiers = [line.strip() for line in str(client_ids_text or "").splitlines() if line.strip()]
+            if not identifiers:
+                return gr.update(), gr.update(), "Import API impossible : ajoutez au moins un identifiant client."
+            try:
+                payload = json.loads(str(config_text or "{}"))
+                config = QlickerImportConfig(
+                    base_url=str(payload["base_url"]),
+                    recto_path_template=str(payload["recto_path_template"]),
+                    verso_path_template=str(payload["verso_path_template"]),
+                    label_path_template=str(payload["label_path_template"]),
+                    document_url_key=str(payload.get("document_url_key") or ""),
+                    token_env_name=str(payload.get("token_env_name") or "QLICKER_API_TOKEN"),
+                    auth_header_name=str(payload.get("auth_header_name") or "Authorization"),
+                    auth_prefix=str(payload.get("auth_prefix") or "Bearer "),
+                    timeout_seconds=float(payload.get("timeout_seconds") or 30),
+                )
+                root = CNI_IMPORTS_DIR / "qlicker" / time.strftime("%Y%m%d-%H%M%S")
+                report = import_cni_from_remote(identifiers, root, config)
+                imported = sum(item.get("status") == "ready" for item in report)
+                failed = len(report) - imported
+                LOGGER.info("Qlicker import completed | requested=%d | imported=%d | failed=%d", len(identifiers), imported, failed)
+                return (
+                    gr.update(value=str(root)),
+                    gr.update(value=""),
+                    f"Import Qlicker terminé : {imported} client(s) importé(s), {failed} échec(s). Scannez le dossier pour contrôler les paires.",
+                )
+            except Exception as exc:
+                LOGGER.exception("Qlicker import failed")
+                return gr.update(), gr.update(), f"Import Qlicker impossible : {type(exc).__name__}: {exc}"
+
         def scan_cni_input(clients_root_text, labels_root_text, recto_suffix, verso_suffix):
             """Scanne les dossiers et met à jour l'état CNI et les aperçus."""
             if not clients_root_text or not str(clients_root_text).strip():
@@ -1602,14 +1650,16 @@ def build_ui() -> gr.Blocks:
                 clients_root = Path(str(clients_root_text).strip()).expanduser()
                 labels_root = Path(str(labels_root_text).strip()).expanduser() if labels_root_text and str(labels_root_text).strip() else None
                 if labels_root is not None and not labels_root.is_dir():
-                    return [], pd.DataFrame(), f"Scan impossible : dossier labels introuvable : `{labels_root}`", gr.update(choices=_cni_source_choices([]), value=None)
-                # L'interface ne propose que les clients et PDF issus du scan :
-                # le rapprochement reste donc fondé sur le dossier client.
-                records = materialize_cni_labels(scan_cni_clients(
-                    clients_root, labels_root,
+                    LOGGER.warning("CNI scan rejected | labels_root_not_found=%s", labels_root)
+                    return [], pd.DataFrame(), f"Dossier labels introuvable : `{labels_root}`", gr.update(choices=_cni_source_choices([]), value=None)
+                # L'état retourné est l'unique source clients d'un run. La liste
+                # d'aperçu est donc elle aussi limitée aux PDF détectés au scan.
+                records = scan_cni_documents(
+                    clients_root,
+                    labels_root,
                     recto_suffix=str(recto_suffix or "").strip(),
                     verso_suffix=str(verso_suffix or "").strip(),
-                ))
+                )
                 ready = sum(record["status"] == "ready" for record in records)
                 labels = sum(record.get("label_status") == "label_materialized" for record in records)
                 unlabeled = sum(record["status"] == "ready" and record.get("label_status") != "label_materialized" for record in records)
@@ -1787,8 +1837,8 @@ def build_ui() -> gr.Blocks:
 
             fields = load_cni_field_config(ROOT_DIR / "config" / "cni_fields.json")
             try:
-                for event in iter_cni_benchmark(
-                    build_default_registry(), list(model_specs), ready_records, RUNS_DIR,
+                for event in iter_cni_extraction(
+                    list(model_specs), ready_records, RUNS_DIR,
                     strategy=str(strategy), dpi=int(dpi), timeout_seconds=float(timeout or 0),
                     cpu_threads=int(threads or 1), unload_after_task=bool(unload),
                     fields=fields, prompt_instructions=prompt_instructions, system_prompt=system_prompt,
