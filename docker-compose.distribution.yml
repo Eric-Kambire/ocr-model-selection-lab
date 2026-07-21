@@ -1,4 +1,13 @@
 services:
+  init-storage:
+    image: ${OCR_BENCHMARK_IMAGE:-erickambire/ocr-model-selection-lab:1.0.1}
+    user: "0:0"
+    command: ["sh", "-c", "mkdir -p /app/runs /app/dataset && chown -R 10001:10001 /app/runs /app/dataset && chmod 0750 /app/runs /app/dataset"]
+    volumes:
+      - benchmark-runs:/app/runs
+      - benchmark-dataset:/app/dataset
+    restart: "no"
+
   ocr-benchmark:
     image: ${OCR_BENCHMARK_IMAGE:-erickambire/ocr-model-selection-lab:1.0.1}
     container_name: ocr-benchmark-suite
@@ -12,8 +21,13 @@ services:
       - benchmark-dataset:/app/dataset
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    depends_on:
+      init-storage:
+        condition: service_completed_successfully
     restart: unless-stopped
 
 volumes:
   benchmark-runs:
+    driver: local
   benchmark-dataset:
+    driver: local
