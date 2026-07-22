@@ -8,6 +8,8 @@ explicitement dans ``QLICKER_ALLOWED_HOSTS`` sont autorisés.
 Exemple PowerShell (sur le PC interne) :
 
     $env:QLICKER_ALLOWED_HOSTS = "qlicker.intra.local,10.20.30.40"
+    $env:QLICKER_PROXY_URL = "http://proxy.entreprise.local:8080"
+    $env:QLICKER_VERIFY_SSL = "false"  # seulement si le certificat interne est non reconnu
     python scripts/qlicker_fastapi_gateway.py
 
 Consulter ensuite http://127.0.0.1:8120/docs. Le serveur écoute uniquement sur
@@ -76,6 +78,21 @@ def configured_allowed_hosts() -> set[str]:
     }
 
 
+def ssl_verification_enabled() -> bool:
+    """Lit l'option TLS du serveur, sécurisée par défaut.
+
+    La vérification reste active tant que ``QLICKER_VERIFY_SSL`` n'est pas
+    explicitement positionnée à ``false``/``0``. Ce réglage est volontairement
+    une variable du serveur et non un paramètre fourni par le navigateur.
+    """
+    value = os.environ.get("QLICKER_VERIFY_SSL", "true").strip().lower()
+    if value in {"true", "1", "yes", "on"}:
+        return True
+    if value in {"false", "0", "no", "off"}:
+        return False
+    raise RuntimeError("QLICKER_VERIFY_SSL doit valoir true ou false")
+
+
 def validate_internal_endpoint(endpoint: str) -> tuple[str, str, int]:
     """Valide schéma, hôte autorisé et port avant toute connexion sortante."""
     target = str(endpoint or "").strip()
@@ -133,12 +150,17 @@ def response_body(response: requests.Response) -> Any:
 @app.get("/health")
 def health() -> dict[str, Any]:
     """Expose seulement l'état local, sans contacter Qlicker."""
+    try:
+        ssl_verification = ssl_verification_enabled()
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     return {
         "status": "ok",
         "emetteur": "processus FastAPI local sur ce PC/serveur interne",
         "poste": socket.gethostname(),
         "allowed_hosts": sorted(configured_allowed_hosts()),
         "proxy_windows": windows_proxy_summary(),
+        "verification_ssl": "active" if ssl_verification else "DÉSACTIVÉE — uniquement pour certificat interne non reconnu",
     }
 
 
@@ -147,20 +169,27 @@ def qlicker_get(payload: QlickerGetRequest) -> dict[str, Any]:
     """Exécute un GET Qlicker local, limité à la liste blanche configurée."""
     target, host, port = validate_internal_endpoint(payload.endpoint)
     proxy_mapping, proxy_mode = gateway_proxy_mapping(target, payload.use_system_proxy)
+    try:
+        verify_ssl = ssl_verification_enabled()
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     query_pairs = [(item.name, item.value) for item in payload.parameters]
     started = time.perf_counter()
     try:
         with requests.Session() as session:
             session.trust_env = bool(payload.use_system_proxy)
             LOGGER.info(
-                "Qlicker GET | host=%s | port=%s | params=%s | proxy=%s",
-                host, port, [name for name, _value in query_pairs], proxy_mode,
+                "Qlicker GET | host=%s | port=%s | params=%s | proxy=%s | verify_ssl=%s",
+                host, port, [name for name, _value in query_pairs], proxy_mode, verify_ssl,
             )
+            if not verify_ssl:
+                LOGGER.warning("Vérification SSL désactivée pour Qlicker via QLICKER_VERIFY_SSL=false")
             response = session.get(
                 target,
                 params=query_pairs,
                 proxies=proxy_mapping,
                 timeout=(payload.connect_timeout_seconds, payload.read_timeout_seconds),
+                verify=verify_ssl,
             )
     except requests.RequestException as exc:
         LOGGER.exception("Qlicker GET échoué")
@@ -180,6 +209,7 @@ def qlicker_get(payload: QlickerGetRequest) -> dict[str, Any]:
         "target": f"{host}:{port}",
         "proxy_mode": proxy_mode,
         "proxy": {name: mask_proxy_url(value) for name, value in (proxy_mapping or {}).items()},
+        "verification_ssl": "active" if verify_ssl else "désactivée",
         "http_status": response.status_code,
         "content_type": response.headers.get("content-type", ""),
         "elapsed_seconds": round(time.perf_counter() - started, 3),
