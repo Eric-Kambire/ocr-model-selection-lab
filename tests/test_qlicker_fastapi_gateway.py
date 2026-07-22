@@ -3,7 +3,7 @@
 import pytest
 from fastapi import HTTPException
 
-from scripts.qlicker_fastapi_gateway import validate_internal_endpoint
+from scripts.qlicker_fastapi_gateway import ssl_verification_enabled, validate_internal_endpoint
 
 
 def test_gateway_accepts_only_configured_host(monkeypatch):
@@ -21,3 +21,11 @@ def test_gateway_rejects_host_outside_allowlist(monkeypatch):
         validate_internal_endpoint("https://example.com/")
 
     assert error.value.status_code == 403
+
+
+def test_ssl_verification_is_enabled_by_default_and_can_be_explicitly_disabled(monkeypatch):
+    monkeypatch.delenv("QLICKER_VERIFY_SSL", raising=False)
+    assert ssl_verification_enabled() is True
+
+    monkeypatch.setenv("QLICKER_VERIFY_SSL", "false")
+    assert ssl_verification_enabled() is False
