@@ -1,7 +1,7 @@
-"""Passerelle FastAPI locale et sécurisée vers les API Qlicker.
+"""Passerelle FastAPI locale et sécurisée vers les API QlickEER.
 
 Ce script est séparé de Gradio : le navigateur appelle FastAPI sur le PC ou le
-serveur interne, puis FastAPI appelle Qlicker avec le proxy Windows local si
+serveur interne, puis FastAPI appelle QlickEER avec le proxy Windows local si
 nécessaire. Il ne constitue pas un proxy HTTP général : seuls les hôtes placés
 explicitement dans ``QLICKER_ALLOWED_HOSTS`` sont autorisés.
 
@@ -44,9 +44,9 @@ if not LOGGER.handlers:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s")
 
 app = FastAPI(
-    title="Qlicker Internal Gateway",
+    title="QlickEER Internal Gateway",
     version="0.1.0",
-    description="Passerelle locale contrôlée pour les GET Qlicker. Aucun hôte non autorisé n'est accepté.",
+    description="Passerelle locale contrôlée pour les GET QlickEER. Aucun hôte non autorisé n'est accepté.",
     docs_url="/docs",
     redoc_url=None,
 )
@@ -60,9 +60,9 @@ class QueryParameter(BaseModel):
 
 
 class QlickerGetRequest(BaseModel):
-    """Contrat de l'unique appel Qlicker autorisé par cette passerelle."""
+    """Contrat de l'unique appel QlickEER autorisé par cette passerelle."""
 
-    endpoint: str = Field(description="URL complète de l'API Qlicker, dont l'hôte doit être autorisé.")
+    endpoint: str = Field(description="URL complète de l'API QlickEER, dont l'hôte doit être autorisé.")
     parameters: list[QueryParameter] = Field(default_factory=list)
     connect_timeout_seconds: float = Field(default=30, gt=0, le=300)
     read_timeout_seconds: float = Field(default=300, gt=0, le=900)
@@ -149,7 +149,7 @@ def response_body(response: requests.Response) -> Any:
 
 @app.get("/health")
 def health() -> dict[str, Any]:
-    """Expose seulement l'état local, sans contacter Qlicker."""
+    """Expose seulement l'état local, sans contacter QlickEER."""
     try:
         ssl_verification = ssl_verification_enabled()
     except RuntimeError as exc:
@@ -166,7 +166,7 @@ def health() -> dict[str, Any]:
 
 @app.post("/v1/qlicker/get")
 def qlicker_get(payload: QlickerGetRequest) -> dict[str, Any]:
-    """Exécute un GET Qlicker local, limité à la liste blanche configurée."""
+    """Exécute un GET QlickEER local, limité à la liste blanche configurée."""
     target, host, port = validate_internal_endpoint(payload.endpoint)
     proxy_mapping, proxy_mode = gateway_proxy_mapping(target, payload.use_system_proxy)
     try:
@@ -179,11 +179,11 @@ def qlicker_get(payload: QlickerGetRequest) -> dict[str, Any]:
         with requests.Session() as session:
             session.trust_env = bool(payload.use_system_proxy)
             LOGGER.info(
-                "Qlicker GET | host=%s | port=%s | params=%s | proxy=%s | verify_ssl=%s",
+                "QlickEER GET | host=%s | port=%s | params=%s | proxy=%s | verify_ssl=%s",
                 host, port, [name for name, _value in query_pairs], proxy_mode, verify_ssl,
             )
             if not verify_ssl:
-                LOGGER.warning("Vérification SSL désactivée pour Qlicker via QLICKER_VERIFY_SSL=false")
+                LOGGER.warning("Vérification SSL désactivée pour QlickEER via QLICKER_VERIFY_SSL=false")
             response = session.get(
                 target,
                 params=query_pairs,
@@ -192,7 +192,7 @@ def qlicker_get(payload: QlickerGetRequest) -> dict[str, Any]:
                 verify=verify_ssl,
             )
     except requests.RequestException as exc:
-        LOGGER.exception("Qlicker GET échoué")
+        LOGGER.exception("QlickEER GET échoué")
         raise HTTPException(
             status_code=502,
             detail={
@@ -205,7 +205,7 @@ def qlicker_get(payload: QlickerGetRequest) -> dict[str, Any]:
         ) from exc
 
     return {
-        "execution": "FastAPI local → proxy éventuel → Qlicker",
+        "execution": "FastAPI local → proxy éventuel → QlickEER",
         "target": f"{host}:{port}",
         "proxy_mode": proxy_mode,
         "proxy": {name: mask_proxy_url(value) for name, value in (proxy_mapping or {}).items()},

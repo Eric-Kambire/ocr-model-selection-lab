@@ -1,6 +1,6 @@
-"""Client HTTP minimal, sans persistance, pour explorer l'API Qlicker interne.
+"""Client HTTP minimal, sans persistance, pour explorer l'API QlickEER interne.
 
-Le contrat Qlicker n'est pas encore documenté complètement. Ce service ne
+Le contrat QlickEER n'est pas encore documenté complètement. Ce service ne
 suppose donc ni token, ni nom d'endpoint, ni structure de réponse. Il construit
 des GET à partir d'une Base URL, d'un segment d'endpoint et de paramètres, puis
 retourne un diagnostic prêt à afficher dans Gradio.
@@ -54,7 +54,7 @@ def build_qlicker_url(base_url: str, endpoint: str) -> str:
 
 
 def parse_qlicker_url(raw_url: str) -> tuple[str, str, list[list[Any]]]:
-    """Découpe une URL Qlicker complète en base, endpoint et table éditable.
+    """Découpe une URL QlickEER complète en base, endpoint et table éditable.
 
     Les query parameters sont conservés dans l'ordre, y compris les doublons
     et les valeurs vides. Cela permet à l'interface de reproduire une URL
@@ -64,7 +64,7 @@ def parse_qlicker_url(raw_url: str) -> tuple[str, str, list[list[Any]]]:
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
         raise ValueError("URL invalide : indiquez une URL complète http:// ou https://.")
     if not parsed.path or parsed.path == "/":
-        raise ValueError("URL incomplète : le chemin de la fonction Qlicker est absent.")
+        raise ValueError("URL incomplète : le chemin de la fonction QlickEER est absent.")
     base_url = urlunsplit((parsed.scheme, parsed.netloc, "", "", ""))
     endpoint = parsed.path.lstrip("/")
     rows = [[name, value, True] for name, value in parse_qsl(parsed.query, keep_blank_values=True)]

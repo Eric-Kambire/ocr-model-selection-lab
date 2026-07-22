@@ -471,7 +471,7 @@ def _preview_cni_source(path_value: str | None) -> tuple[Any, str]:
 
 
 def _cni_source_mode_visibility(mode: str) -> tuple[Any, Any, Any]:
-    """Sépare visuellement les sources locale, ZIP et API Qlicker."""
+    """Sépare visuellement les sources locale, ZIP et API QlickEER."""
     return (
         gr.update(visible=mode == "folder"),
         gr.update(visible=mode == "zip"),
@@ -488,7 +488,7 @@ def _qlicker_test_result(
     proxy_url: str,
     verify_ssl: bool,
 ) -> tuple[str, str]:
-    """Teste un GET Qlicker sans téléchargement ni écriture locale.
+    """Teste un GET QlickEER sans téléchargement ni écriture locale.
 
     Les paramètres guidés sont prioritaires afin qu'un JSON additionnel ne
     remplace pas accidentellement `page`, `customerID` ou `loadDocuments`.
@@ -509,7 +509,7 @@ def _qlicker_test_result(
         message = f"GET terminé : HTTP {code} · {tls}. Aucun document n'a été enregistré localement."
         return _cni_alert_html(level, message), json.dumps(payload, ensure_ascii=False, indent=2)
     except Exception as exc:
-        LOGGER.exception("Qlicker API test failed")
+        LOGGER.exception("QlickEER API test failed")
         return _cni_alert_html("error", f"Test API impossible : {type(exc).__name__}: {exc}"), ""
 
 
@@ -1100,7 +1100,7 @@ def build_ui() -> gr.Blocks:
                             with gr.Column(scale=1, elem_id="cni-source"):
                                 gr.HTML("<div class='cni-section-title'>01 <span>Source des documents</span></div>")
                                 cni_input_mode = gr.Radio(
-                                    [("Dossier local", "folder"), ("Archive ZIP", "zip"), ("API Qlicker", "api")],
+                                    [("Dossier local", "folder"), ("Archive ZIP", "zip"), ("API QlickEER", "api")],
                                     value="folder",
                                     label="Source",
                                 )
@@ -1113,7 +1113,7 @@ def build_ui() -> gr.Blocks:
                                     cni_import_zip = gr.Button("Importer le ZIP")
                                 with gr.Group(visible=False) as cni_api_source:
                                     gr.Markdown(
-                                        "**Exploration API Qlicker sans persistance.** Collez d'abord une URL si vous l'avez : "
+                                        "**Exploration API QlickEER sans persistance.** Collez d'abord une URL si vous l'avez : "
                                         "ses paramètres deviennent modifiables avant le GET. Aucun document n'est téléchargé ni injecté dans le benchmark."
                                     )
                                     with gr.Row():
@@ -1127,7 +1127,7 @@ def build_ui() -> gr.Blocks:
                                             label="Proxy explicite",
                                             type="password",
                                             placeholder="http://proxy.interne.local:8080",
-                                            info="Optionnel. Il est utilisé pour tous les tests Qlicker et n'est pas enregistré.",
+                                            info="Optionnel. Il est utilisé pour tous les tests QlickEER et n'est pas enregistré.",
                                             scale=3,
                                         )
                                         cni_api_verify_ssl = gr.Checkbox(
@@ -1137,7 +1137,7 @@ def build_ui() -> gr.Blocks:
                                             scale=1,
                                         )
                                     with gr.Group(elem_id="cni-api-parser"):
-                                        gr.Markdown("**Parser une URL Qlicker** · collez l'URL depuis Postman, puis modifiez les lignes avant l'appel.")
+                                        gr.Markdown("**Parser une URL QlickEER** · collez l'URL depuis Postman, puis modifiez les lignes avant l'appel.")
                                         with gr.Row():
                                             cni_api_raw_url = gr.Textbox(
                                                 label="URL complète à parser",
@@ -1171,7 +1171,7 @@ def build_ui() -> gr.Blocks:
                                             cni_api_list_endpoint = gr.Textbox(
                                                 label="Segment endpoint / fonction",
                                                 placeholder="Ex. GetCustomers",
-                                                info="L'URL finale est Base URL + ce segment. Ce n'est pas forcément une fonction Python : c'est le chemin HTTP fourni par Qlicker.",
+                                                info="L'URL finale est Base URL + ce segment. Ce n'est pas forcément une fonction Python : c'est le chemin HTTP fourni par QlickEER.",
                                             )
                                             with gr.Row():
                                                 cni_api_from_date = gr.Textbox(label="from_date", placeholder="YYYY-MM-DD")
@@ -1805,7 +1805,7 @@ def build_ui() -> gr.Blocks:
                     json.dumps(payload, ensure_ascii=False, indent=2),
                 )
             except Exception as exc:
-                LOGGER.exception("Qlicker parsed URL test failed")
+                LOGGER.exception("QlickEER parsed URL test failed")
                 return _cni_alert_html("error", f"Test API impossible : {type(exc).__name__}: {exc}"), ""
 
         def test_qlicker_list(base_url, endpoint, from_date, to_date, step, page, page_size, extra_json, timeout, proxy_url, verify_ssl):

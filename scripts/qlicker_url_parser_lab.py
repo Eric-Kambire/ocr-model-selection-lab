@@ -1,4 +1,4 @@
-"""Mini laboratoire Gradio : coller une URL Qlicker, éditer ses paramètres, lancer GET.
+"""Mini laboratoire Gradio : coller une URL QlickEER, éditer ses paramètres, lancer GET.
 
 Le script reproduit uniquement l'étape utile de Postman pour les API GET :
 analyse d'une URL, édition des query parameters et visualisation de la réponse.
@@ -379,7 +379,7 @@ def network_diagnostics(
     """Diagnostique DNS et TCP sans envoyer la requête API elle-même.
 
     Le test TCP est volontairement direct : il vérifie si le PC peut joindre
-    l'hôte Qlicker sans proxy. Si Postman passe par un proxy, un échec ici ne
+    l'hôte QlickEER sans proxy. Si Postman passe par un proxy, un échec ici ne
     prouve pas que l'API est indisponible ; il indique simplement que la route
     directe n'est pas utilisable.
     """
@@ -451,12 +451,12 @@ def network_diagnostics(
         report["tcp_proxy"] = {
             "proxy": f"{proxy_host}:{proxy_port}",
             "resultat": _tcp_probe(proxy_host, proxy_port, timeout),
-            "note": "Ce test joint le proxy ; il ne confirme pas encore le tunnel HTTPS vers Qlicker.",
+            "note": "Ce test joint le proxy ; il ne confirme pas encore le tunnel HTTPS vers QlickEER.",
         }
-        report["chemin_requete"] = "Python local → proxy configuré → serveur Qlicker"
+        report["chemin_requete"] = "Python local → proxy configuré → serveur QlickEER"
     else:
         report["tcp_proxy"] = {"statut": "non teste", "raison": "aucun proxy utilisable détecté par Python"}
-        report["chemin_requete"] = "Python local → serveur Qlicker (connexion directe)"
+        report["chemin_requete"] = "Python local → serveur QlickEER (connexion directe)"
 
     title, conclusions = _diagnostic_conclusion(report)
     report["conclusion"] = conclusions
@@ -591,11 +591,11 @@ def execute_get(
 
 
 def build_ui() -> gr.Blocks:
-    """Construit un petit équivalent Postman destiné aux GET Qlicker."""
-    with gr.Blocks(title="Qlicker URL Parser Lab", fill_width=True) as app:
+    """Construit un petit équivalent Postman destiné aux GET QlickEER."""
+    with gr.Blocks(title="QlickEER URL Parser Lab", fill_width=True) as app:
         gr.Markdown(
-            "# Qlicker URL Parser Lab\n"
-            "Collez l'URL fournie par Qlicker. Les paramètres deviennent éditables, puis vous lancez un GET sans enregistrer de document."
+            "# QlickEER URL Parser Lab\n"
+            "Collez l'URL fournie par QlickEER. Les paramètres deviennent éditables, puis vous lancez un GET sans enregistrer de document."
         )
         gr.Markdown(
             "**Pourquoi Postman/navigateur peuvent réussir alors que Python échoue ?**  \n"
@@ -637,7 +637,7 @@ def build_ui() -> gr.Blocks:
                 value=300,
                 precision=0,
                 minimum=1,
-                info="Temps maximal après connexion, pendant le traitement Qlicker.",
+                info="Temps maximal après connexion, pendant le traitement QlickEER.",
             )
             use_environment_proxy = gr.Checkbox(
                 label="Utiliser le proxy système Windows / Python",
