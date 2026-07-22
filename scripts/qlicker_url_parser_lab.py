@@ -11,6 +11,7 @@ Lancement :
 from __future__ import annotations
 
 import json
+import logging
 import socket
 import ssl
 import time
@@ -20,6 +21,18 @@ from urllib.parse import parse_qsl, urlsplit, urlunsplit
 
 import gradio as gr
 import requests
+
+
+# Les journaux restent dans le terminal qui lance le script. Ils permettent de
+# distinguer une coupure réseau d'un timeout applicatif sans logguer les valeurs
+# parfois sensibles des query parameters.
+LOGGER = logging.getLogger("qlicker_lab")
+if not LOGGER.handlers:
+    handler = logging.StreamHandler()
+    handler.setFormatter(logging.Formatter("%(asctime)s | %(levelname)s | %(message)s"))
+    LOGGER.addHandler(handler)
+    LOGGER.setLevel(logging.INFO)
+    LOGGER.propagate = False
 
 
 def parse_url_to_rows(raw_url: str) -> tuple[str, list[list[Any]], str]:
@@ -297,6 +310,49 @@ def _diagnostic_conclusion(report: dict[str, Any]) -> tuple[str, list[str]]:
     return "Diagnostic terminé", conclusions
 
 
+def _request_error_details(
+    error: requests.RequestException,
+    elapsed_seconds: float,
+    connect_timeout: float,
+    read_timeout: float,
+    proxy_mapping: dict[str, str] | None,
+) -> dict[str, Any]:
+    """Transforme l'exception Requests en diagnostic court et vérifiable."""
+    chain: list[dict[str, str]] = []
+    current: BaseException | None = error
+    seen: set[int] = set()
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        chain.append({"type": type(current).__name__, "message": str(current)})
+        current = current.__cause__ or current.__context__
+
+    if isinstance(error, requests.exceptions.ProxyError):
+        interpretation = "Python n'a pas pu joindre ou négocier avec le proxy configuré."
+    elif isinstance(error, requests.exceptions.ConnectTimeout):
+        interpretation = (
+            "La connexion TCP n'a pas été établie. Le délai de connexion est un maximum : "
+            "un proxy, VPN ou pare-feu peut refuser/couper plus tôt."
+        )
+    elif isinstance(error, requests.exceptions.ReadTimeout):
+        interpretation = "La connexion est établie, mais le serveur n'a pas répondu avant le délai de lecture."
+    elif isinstance(error, requests.exceptions.SSLError):
+        interpretation = "Le réseau est atteint, mais la négociation TLS/certificat a échoué."
+    elif isinstance(error, requests.exceptions.ConnectionError):
+        interpretation = "La connexion a échoué avant toute réponse HTTP. Consultez la chaîne d'exceptions."
+    else:
+        interpretation = "Erreur Requests ; consultez la chaîne d'exceptions et les logs terminal."
+
+    return {
+        "type_principal": type(error).__name__,
+        "duree_reelle_s": round(elapsed_seconds, 3),
+        "timeout_connexion_configure_s": connect_timeout,
+        "timeout_reponse_configure_s": read_timeout,
+        "proxy_effectif": {name: mask_proxy_url(value) for name, value in (proxy_mapping or {}).items()},
+        "interpretation": interpretation,
+        "chaine_exceptions": chain,
+    }
+
+
 def network_diagnostics(
     endpoint: str,
     connect_timeout_seconds: float,
@@ -435,6 +491,16 @@ def execute_get(
         # dans le diagnostic mais ne peut pas être évalué par Requests seul.
         with requests.Session() as session:
             session.trust_env = bool(use_environment_proxy)
+            LOGGER.info(
+                "GET | host=%s | port=%s | path=%s | parametres=%s | connect_timeout=%ss | read_timeout=%ss | proxy=%s",
+                parsed.hostname,
+                parsed.port or (443 if parsed.scheme == "https" else 80),
+                parsed.path,
+                [name for name, _value in pairs],
+                connect_timeout,
+                read_timeout,
+                proxy_mode,
+            )
             response = session.get(
                 target,
                 params=pairs,
@@ -443,13 +509,12 @@ def execute_get(
             )
     except requests.RequestException as exc:
         elapsed = time.perf_counter() - started
+        details = _request_error_details(exc, elapsed, connect_timeout, read_timeout, effective_mapping)
+        LOGGER.exception("GET échoué | diagnostic=%s", json.dumps(details, ensure_ascii=False))
         return (
             preview,
-            f"### Erreur réseau après `{elapsed:.1f} s`",
-            f"{type(exc).__name__}: {exc}\n\n"
-            "Un `ConnectTimeout` signifie que la connexion TCP/TLS n'a pas été établie. "
-            "Vérifiez l'hôte, le port, le VPN/réseau interne et le mode proxy. "
-            "Le diagnostic DNS/TCP peut aider à isoler la route en cause.",
+            f"### Erreur réseau après `{elapsed:.1f} s` — `{type(exc).__name__}`",
+            json.dumps(details, ensure_ascii=False, indent=2),
         )
 
     elapsed = time.perf_counter() - started
