@@ -11,6 +11,7 @@ Lancement :
 from __future__ import annotations
 
 import json
+import ipaddress
 import logging
 import socket
 import ssl
@@ -266,6 +267,20 @@ def _proxy_endpoint(mapping: dict[str, str] | None, scheme: str) -> tuple[str, i
     return parsed.hostname, parsed.port or 8080
 
 
+def _address_scope(address: str) -> str:
+    """Classe une IP sans prétendre déduire toute la politique réseau."""
+    candidate = ipaddress.ip_address(address)
+    if candidate.is_loopback:
+        return "boucle locale"
+    if candidate.is_private:
+        return "réseau privé"
+    if candidate.is_link_local:
+        return "link-local"
+    if candidate.is_global:
+        return "publique"
+    return "spéciale/réservée"
+
+
 def _diagnostic_conclusion(report: dict[str, Any]) -> tuple[str, list[str]]:
     """Produit uniquement les conclusions réellement déclenchées par le test.
 
@@ -387,6 +402,11 @@ def network_diagnostics(
     windows_mapping = windows_manual_proxy_mapping(target) if use_environment_proxy else None
     effective_mapping = explicit_mapping or windows_mapping or environment_proxies or None
     report: dict[str, Any] = {
+        "execution": {
+            "emetteur": "processus Python local sur ce PC interne (pas un service cloud)",
+            "poste": socket.gethostname(),
+            "destination": f"{parsed.hostname}:{port}",
+        },
         "hote": parsed.hostname,
         "port": port,
         "timeout_tcp_direct_s": timeout,
@@ -404,7 +424,10 @@ def network_diagnostics(
     try:
         addresses = socket.getaddrinfo(parsed.hostname, port, type=socket.SOCK_STREAM)
         unique_addresses = sorted({item[4][0] for item in addresses})
-        report["dns"] = {"statut": "ok", "adresses": unique_addresses}
+        report["dns"] = {
+            "statut": "ok",
+            "adresses": [{"ip": address, "type_reseau": _address_scope(address)} for address in unique_addresses],
+        }
     except OSError as exc:
         report["dns"] = {"statut": "erreur", "detail": repr(exc)}
         title, conclusions = _diagnostic_conclusion(report)
@@ -428,8 +451,10 @@ def network_diagnostics(
             "resultat": _tcp_probe(proxy_host, proxy_port, timeout),
             "note": "Ce test joint le proxy ; il ne confirme pas encore le tunnel HTTPS vers Qlicker.",
         }
+        report["chemin_requete"] = "Python local → proxy configuré → serveur Qlicker"
     else:
         report["tcp_proxy"] = {"statut": "non teste", "raison": "aucun proxy utilisable détecté par Python"}
+        report["chemin_requete"] = "Python local → serveur Qlicker (connexion directe)"
 
     title, conclusions = _diagnostic_conclusion(report)
     report["conclusion"] = conclusions
