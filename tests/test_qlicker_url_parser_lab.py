@@ -21,6 +21,17 @@ def test_rows_to_query_pairs_omits_disabled_row():
     ]
 
 
+def test_parse_windows_proxy_server_accepts_shared_and_protocol_specific_forms():
+    assert parser_lab.parse_windows_proxy_server("proxy.local:8080") == {
+        "http": "http://proxy.local:8080",
+        "https": "http://proxy.local:8080",
+    }
+    assert parser_lab.parse_windows_proxy_server("http=proxy-a:8080;https=proxy-b:8443") == {
+        "http": "http://proxy-a:8080",
+        "https": "http://proxy-b:8443",
+    }
+
+
 def test_get_uses_distinct_connect_and_read_timeouts(monkeypatch):
     """Le champ connexion et le champ réponse doivent arriver séparément à requests."""
     observed = {}
