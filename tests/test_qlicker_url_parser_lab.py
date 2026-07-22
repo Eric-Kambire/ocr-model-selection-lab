@@ -44,9 +44,10 @@ def test_get_uses_distinct_connect_and_read_timeouts(monkeypatch):
         def __exit__(self, *_args):
             return False
 
-        def get(self, _url, *, params, timeout):
+        def get(self, _url, *, params, timeout, proxies):
             observed["params"] = params
             observed["timeout"] = timeout
+            observed["proxies"] = proxies
             return FakeResponse()
 
     monkeypatch.setattr(parser_lab.requests, "Session", FakeSession)
@@ -56,9 +57,51 @@ def test_get_uses_distinct_connect_and_read_timeouts(monkeypatch):
         123,
         456,
         False,
+        "",
     )
 
     assert observed["timeout"] == (123.0, 456.0)
+    assert observed["proxies"] is None
     assert observed["session"].trust_env is False
     assert "HTTP : `200`" in status
     assert '"ok": true' in body
+
+
+def test_explicit_proxy_masks_password_and_dominates_environment_proxy(monkeypatch):
+    """Le proxy explicite est transmis à Requests, sans exposer le secret."""
+    observed = {}
+
+    class FakeResponse:
+        url = "https://qlicker.local/api/GetCustomers"
+        status_code = 200
+        headers = {"content-type": "application/json"}
+        content = b"{}"
+
+        def json(self):
+            return {"ok": True}
+
+    class FakeSession:
+        trust_env = True
+
+        def __enter__(self):
+            observed["session"] = self
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def get(self, _url, *, params, timeout, proxies):
+            observed["proxies"] = proxies
+            return FakeResponse()
+
+    monkeypatch.setattr(parser_lab.requests, "Session", FakeSession)
+    preview, _status, _body = parser_lab.execute_get(
+        "https://qlicker.local/api/GetCustomers", [], 10, 10, True, "http://alice:secret@proxy.local:8080"
+    )
+
+    assert observed["proxies"] == {
+        "http": "http://alice:secret@proxy.local:8080",
+        "https": "http://alice:secret@proxy.local:8080",
+    }
+    assert "secret" not in preview
+    assert "alice:***" in preview
