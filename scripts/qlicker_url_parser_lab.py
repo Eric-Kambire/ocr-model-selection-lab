@@ -468,7 +468,19 @@ def execute_get(
         return "### Requête non envoyée", "### Erreur de proxy", str(exc)
 
     windows_mapping = windows_manual_proxy_mapping(target) if use_environment_proxy else None
-    effective_mapping = explicit_mapping or windows_mapping
+    # Conserver aussi les proxys trouvés par Requests (HTTP_PROXY,
+    # HTTPS_PROXY…) afin que le rapport d'erreur indique l'intermédiaire
+    # réellement tenté, même lorsqu'aucun proxy manuel Windows n'est actif.
+    environment_mapping = (
+        {
+            name: value
+            for name, value in requests.utils.get_environ_proxies(target).items()
+            if name in {"http", "https", "all"}
+        }
+        if use_environment_proxy
+        else {}
+    )
+    effective_mapping = explicit_mapping or windows_mapping or environment_mapping or None
     pairs = rows_to_query_pairs(rows)
     proxy_mode = (
         f"proxy explicite : `{mask_proxy_url(explicit_proxy_url)}`"
