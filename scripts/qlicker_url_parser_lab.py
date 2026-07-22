@@ -253,6 +253,50 @@ def _proxy_endpoint(mapping: dict[str, str] | None, scheme: str) -> tuple[str, i
     return parsed.hostname, parsed.port or 8080
 
 
+def _diagnostic_conclusion(report: dict[str, Any]) -> tuple[str, list[str]]:
+    """Produit uniquement les conclusions réellement déclenchées par le test.
+
+    L'ancienne version affichait la liste de toutes les hypothèses possibles,
+    ce qui ressemblait à tort à cinq erreurs simultanées. Cette fonction rend
+    une synthèse courte, calculée à partir des statuts mesurés.
+    """
+    if report.get("dns", {}).get("statut") == "erreur":
+        return (
+            "Échec DNS",
+            ["Python ne résout pas le nom du serveur. Vérifiez l'URL, le DNS interne et la connexion Cisco Secure Client."],
+        )
+
+    direct_values = list(report.get("tcp_direct_par_ip", {}).values())
+    direct_ok = any(item.get("statut") == "ok" for item in direct_values)
+    proxy_result = report.get("tcp_proxy", {}).get("resultat", {})
+    proxy_ok = proxy_result.get("statut") == "ok"
+    tls_status = report.get("tls_direct", {}).get("statut")
+    pac_configured = report.get("configuration_proxy_windows", {}).get("script_pac") == "configuré"
+    conclusions: list[str] = []
+
+    if not direct_ok:
+        if proxy_result:
+            if proxy_ok:
+                conclusions.append("La route directe échoue, mais le proxy est joignable : le GET doit passer par ce proxy.")
+            else:
+                conclusions.append("La route directe et le proxy configuré échouent : vérifiez VPN, réseau, adresse/port du proxy et règles pare-feu.")
+        else:
+            conclusions.append("Aucune connexion TCP directe ne réussit et aucun proxy utilisable n'est détecté par Python.")
+    else:
+        conclusions.append("Au moins une adresse IP accepte la connexion TCP directe.")
+
+    if tls_status == "erreur":
+        conclusions.append("Le handshake TLS direct échoue : le détail indique un certificat interne ou une incompatibilité TLS possible.")
+    elif tls_status == "ok":
+        conclusions.append("Le handshake TLS direct est valide pour Python.")
+    if pac_configured:
+        conclusions.append("Un PAC Windows est configuré : Postman peut l'utiliser, Requests ne l'évalue pas automatiquement. Renseignez le proxy résolu si nécessaire.")
+
+    if direct_ok and tls_status in {None, "ok"}:
+        conclusions.append("Si le GET échoue maintenant, comparez URL, paramètres, headers, cookies, certificat client et auth proxy avec Postman.")
+    return "Diagnostic terminé", conclusions
+
+
 def network_diagnostics(
     endpoint: str,
     connect_timeout_seconds: float,
@@ -307,7 +351,9 @@ def network_diagnostics(
         report["dns"] = {"statut": "ok", "adresses": unique_addresses}
     except OSError as exc:
         report["dns"] = {"statut": "erreur", "detail": repr(exc)}
-        return "### Diagnostic réseau", json.dumps(report, ensure_ascii=False, indent=2)
+        title, conclusions = _diagnostic_conclusion(report)
+        report["conclusion"] = conclusions
+        return f"### Diagnostic réseau — {title}", json.dumps(report, ensure_ascii=False, indent=2)
 
     # Tester chaque IP explique les cas fréquents où IPv6 échoue alors qu'IPv4
     # fonctionne (ou l'inverse), un détail que Postman masque souvent.
@@ -329,16 +375,11 @@ def network_diagnostics(
     else:
         report["tcp_proxy"] = {"statut": "non teste", "raison": "aucun proxy utilisable détecté par Python"}
 
-    report["lecture"] = [
-        "DNS en erreur : Python ne trouve pas le nom du serveur ; Internet/Postman peuvent fonctionner pour d'autres noms.",
-        "TCP direct en erreur : port bloqué, VPN/routage absent, mauvais hôte ou accès autorisé seulement via proxy.",
-        "TLS en erreur : certificat interne, inspection TLS d'entreprise ou incompatibilité TLS ; ne désactivez pas verify=False.",
-        "TCP proxy en erreur : Python ne peut pas joindre le proxy configuré par Windows/Postman.",
-        "TCP/TLS OK mais GET en erreur : comparer URL, paramètres, headers, cookies, certificat client et éventuelle authentification proxy dans Postman.",
-    ]
+    title, conclusions = _diagnostic_conclusion(report)
+    report["conclusion"] = conclusions
     return (
-        "### Diagnostic réseau\n"
-        "Diagnostic terminé : chaque étape indique la couche réseau qui échoue. Le GET reste le test final de l'API.",
+        f"### Diagnostic réseau — {title}\n"
+        + "  \n".join(f"- {item}" for item in conclusions),
         json.dumps(report, ensure_ascii=False, indent=2),
     )
 

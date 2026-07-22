@@ -32,6 +32,14 @@ def test_parse_windows_proxy_server_accepts_shared_and_protocol_specific_forms()
     }
 
 
+def test_diagnostic_conclusion_only_reports_the_actual_dns_failure():
+    title, conclusions = parser_lab._diagnostic_conclusion({"dns": {"statut": "erreur"}})
+
+    assert title == "Échec DNS"
+    assert len(conclusions) == 1
+    assert "TLS" not in conclusions[0]
+
+
 def test_get_uses_distinct_connect_and_read_timeouts(monkeypatch):
     """Le champ connexion et le champ réponse doivent arriver séparément à requests."""
     observed = {}
