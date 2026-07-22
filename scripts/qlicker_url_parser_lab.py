@@ -97,6 +97,39 @@ def explicit_proxy_mapping(proxy_url: str) -> dict[str, str] | None:
     return {"http": candidate, "https": candidate}
 
 
+def windows_proxy_summary() -> dict[str, str]:
+    """Retourne un état non sensible du proxy Windows, sans afficher son URL.
+
+    Postman Desktop peut suivre les réglages WinINET de Windows. Requests peut
+    détecter un proxy manuel dans certains contextes, mais ne sait pas évaluer
+    fiablement un script PAC. On affiche donc le type de réglage plutôt que
+    l'URL complète, qui pourrait contenir un identifiant ou un mot de passe.
+    """
+    try:
+        import winreg  # Disponible uniquement sous Windows.
+
+        registry_path = r"Software\Microsoft\Windows\CurrentVersion\Internet Settings"
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, registry_path) as key:
+            def state(name: str, *, enabled: bool = False) -> str:
+                try:
+                    value, _ = winreg.QueryValueEx(key, name)
+                except FileNotFoundError:
+                    return "absent"
+                if enabled:
+                    return "actif" if bool(value) else "désactivé"
+                return "configuré" if value else "vide"
+
+            return {
+                "proxy_manuel": state("ProxyEnable", enabled=True),
+                "serveur_proxy": state("ProxyServer"),
+                "exceptions_proxy": state("ProxyOverride"),
+                "script_pac": state("AutoConfigURL"),
+                "detection_automatique": state("AutoDetect", enabled=True),
+            }
+    except (ImportError, OSError):
+        return {"windows": "non disponible (système non Windows ou registre inaccessible)"}
+
+
 def network_diagnostics(
     endpoint: str,
     connect_timeout_seconds: float,
@@ -124,6 +157,9 @@ def network_diagnostics(
     # Le diagnostic doit rester rapide, même si l'utilisateur a choisi un long
     # timeout de production pour les réponses de l'API.
     timeout = min(max(float(connect_timeout_seconds or 0), 1.0), 10.0)
+    # Cette fonction expose ce que Requests voit effectivement avant envoi.
+    # Sous Windows, la détection peut inclure le proxy manuel de WinINET ; un
+    # PAC reste toutefois un programme JavaScript qui n'est pas exécuté ici.
     environment_proxies = requests.utils.get_environ_proxies(target)
     report: dict[str, Any] = {
         "hote": parsed.hostname,
@@ -137,6 +173,7 @@ def network_diagnostics(
         "variables_proxy_detectees": {
             name: mask_proxy_url(value) for name, value in environment_proxies.items()
         },
+        "configuration_proxy_windows": windows_proxy_summary(),
     }
     try:
         addresses = socket.getaddrinfo(parsed.hostname, port, type=socket.SOCK_STREAM)
@@ -206,9 +243,9 @@ def execute_get(
     )
     started = time.perf_counter()
     try:
-        # `trust_env` active/désactive seulement les variables HTTP_PROXY,
-        # HTTPS_PROXY, NO_PROXY… : il ne lit pas un fichier PAC Windows. Le
-        # proxy explicite est transmis à l'appel pour dominer les variables.
+        # `trust_env` laisse Requests employer les proxys qu'il détecte dans
+        # l'environnement. Il ne sait pas évaluer un script PAC Windows ; le
+        # proxy explicite est transmis à l'appel pour dominer cette détection.
         with requests.Session() as session:
             session.trust_env = bool(use_environment_proxy)
             response = session.get(
@@ -302,9 +339,9 @@ def build_ui() -> gr.Blocks:
                 info="Temps maximal après connexion, pendant le traitement Qlicker.",
             )
             use_environment_proxy = gr.Checkbox(
-                label="Utiliser les variables proxy Python",
+                label="Utiliser le proxy détecté par Python",
                 value=True,
-                info="Lit HTTP_PROXY / HTTPS_PROXY / NO_PROXY. Ne lit pas automatiquement le proxy Windows ou un PAC.",
+                info="Utilise les variables proxy et, selon Windows, le proxy manuel. Un script PAC Windows n'est pas interprété.",
             )
             explicit_proxy_url = gr.Textbox(
                 label="Proxy explicite (facultatif)",
@@ -343,7 +380,7 @@ def build_ui() -> gr.Blocks:
             "- Coller une URL ne déclenche aucune requête : cela remplit seulement le tableau.  \n"
             "- `param=` est une valeur vide envoyée. Décochez **Envoyer** pour omettre réellement le paramètre.  \n"
             "- Les paramètres en double sont conservés, contrairement à une simple structure dictionnaire.  \n"
-            "- Postman peut utiliser le proxy Windows/PAC ; Python Requests utilise les variables proxy ou le proxy explicite ci-dessus."
+            "- Postman peut utiliser un proxy Windows/PAC ; Python Requests utilise ce qu'il détecte ou le proxy explicite ci-dessus. Le rapport indique la différence."
         )
     return app
 
