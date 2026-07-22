@@ -97,6 +97,89 @@ def explicit_proxy_mapping(proxy_url: str) -> dict[str, str] | None:
     return {"http": candidate, "https": candidate}
 
 
+def _windows_proxy_values() -> dict[str, Any] | None:
+    """Lit les valeurs WinINET nécessaires, uniquement sur Windows.
+
+    Cette fonction privée ne journalise jamais l'adresse brute du proxy. Elle
+    sert à reproduire, pour un proxy manuel, le choix « System proxy » de
+    Postman sur la machine où le script est réellement exécuté.
+    """
+    try:
+        import winreg
+
+        registry_path = r"Software\Microsoft\Windows\CurrentVersion\Internet Settings"
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, registry_path) as key:
+            def get_value(name: str, default: Any = "") -> Any:
+                try:
+                    value, _ = winreg.QueryValueEx(key, name)
+                    return value
+                except FileNotFoundError:
+                    return default
+
+            return {
+                "enabled": bool(get_value("ProxyEnable", 0)),
+                "server": str(get_value("ProxyServer", "") or "").strip(),
+                "override": str(get_value("ProxyOverride", "") or "").strip(),
+                "pac": str(get_value("AutoConfigURL", "") or "").strip(),
+                "auto_detect": bool(get_value("AutoDetect", 0)),
+            }
+    except (ImportError, OSError):
+        return None
+
+
+def _normalise_windows_proxy_address(address: str) -> str:
+    """Ajoute le protocole requis par Requests à une adresse WinINET."""
+    candidate = str(address or "").strip()
+    if not candidate:
+        return ""
+    return candidate if "://" in candidate else f"http://{candidate}"
+
+
+def parse_windows_proxy_server(proxy_server: str) -> dict[str, str] | None:
+    """Convertit ``ProxyServer`` Windows vers le format ``requests``.
+
+    Windows accepte soit ``proxy.local:8080`` pour tous les protocoles, soit
+    ``http=proxy-http:8080;https=proxy-https:8443``. Requests attend un
+    dictionnaire par protocole, avec une URL complète.
+    """
+    raw = str(proxy_server or "").strip()
+    if not raw:
+        return None
+    if "=" not in raw:
+        address = _normalise_windows_proxy_address(raw)
+        return {"http": address, "https": address}
+
+    mapping: dict[str, str] = {}
+    for item in raw.split(";"):
+        protocol, separator, address = item.partition("=")
+        if not separator:
+            continue
+        protocol = protocol.strip().lower()
+        if protocol in {"http", "https"} and address.strip():
+            mapping[protocol] = _normalise_windows_proxy_address(address)
+    return mapping or None
+
+
+def windows_manual_proxy_mapping(endpoint: str) -> dict[str, str] | None:
+    """Retourne le proxy manuel Windows applicable à cet endpoint.
+
+    Les exceptions simples de Windows (``localhost``, suffixes et ``<local>``)
+    sont respectées. Un PAC reste volontairement hors périmètre : c'est du
+    JavaScript dépendant de l'URL, que Requests ne peut pas exécuter seul.
+    """
+    settings = _windows_proxy_values()
+    if not settings or not settings["enabled"]:
+        return None
+    hostname = (urlsplit(endpoint).hostname or "").lower()
+    override = settings["override"]
+    if "<local>" in override.lower() and "." not in hostname:
+        return None
+    no_proxy = ",".join(item.strip() for item in override.split(";") if item.strip() and item.strip() != "<local>")
+    if no_proxy and requests.utils.should_bypass_proxies(endpoint, no_proxy=no_proxy):
+        return None
+    return parse_windows_proxy_server(settings["server"])
+
+
 def windows_proxy_summary() -> dict[str, str]:
     """Retourne un état non sensible du proxy Windows, sans afficher son URL.
 
@@ -105,29 +188,16 @@ def windows_proxy_summary() -> dict[str, str]:
     fiablement un script PAC. On affiche donc le type de réglage plutôt que
     l'URL complète, qui pourrait contenir un identifiant ou un mot de passe.
     """
-    try:
-        import winreg  # Disponible uniquement sous Windows.
-
-        registry_path = r"Software\Microsoft\Windows\CurrentVersion\Internet Settings"
-        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, registry_path) as key:
-            def state(name: str, *, enabled: bool = False) -> str:
-                try:
-                    value, _ = winreg.QueryValueEx(key, name)
-                except FileNotFoundError:
-                    return "absent"
-                if enabled:
-                    return "actif" if bool(value) else "désactivé"
-                return "configuré" if value else "vide"
-
-            return {
-                "proxy_manuel": state("ProxyEnable", enabled=True),
-                "serveur_proxy": state("ProxyServer"),
-                "exceptions_proxy": state("ProxyOverride"),
-                "script_pac": state("AutoConfigURL"),
-                "detection_automatique": state("AutoDetect", enabled=True),
-            }
-    except (ImportError, OSError):
+    settings = _windows_proxy_values()
+    if settings is None:
         return {"windows": "non disponible (système non Windows ou registre inaccessible)"}
+    return {
+        "proxy_manuel": "actif" if settings["enabled"] else "désactivé",
+        "serveur_proxy": "configuré" if settings["server"] else "vide",
+        "exceptions_proxy": "configuré" if settings["override"] else "vide",
+        "script_pac": "configuré" if settings["pac"] else "absent",
+        "detection_automatique": "active" if settings["auto_detect"] else "désactivée",
+    }
 
 
 def network_diagnostics(
@@ -161,6 +231,7 @@ def network_diagnostics(
     # Sous Windows, la détection peut inclure le proxy manuel de WinINET ; un
     # PAC reste toutefois un programme JavaScript qui n'est pas exécuté ici.
     environment_proxies = requests.utils.get_environ_proxies(target)
+    windows_mapping = windows_manual_proxy_mapping(target) if use_environment_proxy else None
     report: dict[str, Any] = {
         "hote": parsed.hostname,
         "port": port,
@@ -168,12 +239,13 @@ def network_diagnostics(
         "mode_proxy_demande": (
             f"proxy explicite : {mask_proxy_url(explicit_proxy_url)}"
             if explicit_mapping
-            else ("variables Python" if use_environment_proxy else "aucun proxy Python")
+            else ("proxy manuel Windows" if windows_mapping else ("proxy détecté par Python" if use_environment_proxy else "aucun proxy"))
         ),
         "variables_proxy_detectees": {
             name: mask_proxy_url(value) for name, value in environment_proxies.items()
         },
         "configuration_proxy_windows": windows_proxy_summary(),
+        "proxy_manuel_windows_utilise": sorted(windows_mapping) if windows_mapping else [],
     }
     try:
         addresses = socket.getaddrinfo(parsed.hostname, port, type=socket.SOCK_STREAM)
@@ -227,11 +299,13 @@ def execute_get(
     except ValueError as exc:
         return "### Requête non envoyée", "### Erreur de proxy", str(exc)
 
+    windows_mapping = windows_manual_proxy_mapping(target) if use_environment_proxy else None
+    effective_mapping = explicit_mapping or windows_mapping
     pairs = rows_to_query_pairs(rows)
     proxy_mode = (
         f"proxy explicite : `{mask_proxy_url(explicit_proxy_url)}`"
         if explicit_mapping
-        else ("variables proxy Python" if use_environment_proxy else "aucun proxy Python")
+        else ("proxy manuel Windows" if windows_mapping else ("proxy détecté par Python" if use_environment_proxy else "aucun proxy"))
     )
     preview = (
         "### GET prévu\n"
@@ -243,16 +317,17 @@ def execute_get(
     )
     started = time.perf_counter()
     try:
-        # `trust_env` laisse Requests employer les proxys qu'il détecte dans
-        # l'environnement. Il ne sait pas évaluer un script PAC Windows ; le
-        # proxy explicite est transmis à l'appel pour dominer cette détection.
+        # Pour un proxy manuel Windows, on transmet la configuration à la
+        # requête : cela reproduit le comportement de Postman sans dépendre
+        # du mécanisme de détection implicite de Requests. Un PAC est signalé
+        # dans le diagnostic mais ne peut pas être évalué par Requests seul.
         with requests.Session() as session:
             session.trust_env = bool(use_environment_proxy)
             response = session.get(
                 target,
                 params=pairs,
                 timeout=(connect_timeout, read_timeout),
-                proxies=explicit_mapping,
+                proxies=effective_mapping,
             )
     except requests.RequestException as exc:
         elapsed = time.perf_counter() - started
@@ -339,7 +414,7 @@ def build_ui() -> gr.Blocks:
                 info="Temps maximal après connexion, pendant le traitement Qlicker.",
             )
             use_environment_proxy = gr.Checkbox(
-                label="Utiliser le proxy détecté par Python",
+                label="Utiliser le proxy système Windows / Python",
                 value=True,
                 info="Utilise les variables proxy et, selon Windows, le proxy manuel. Un script PAC Windows n'est pas interprété.",
             )
