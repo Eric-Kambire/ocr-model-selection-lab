@@ -1,5 +1,6 @@
 """Tests sans réseau du parseur URL inspiré de Postman."""
 
+from scripts import qlicker_url_parser_lab as parser_lab
 from scripts.qlicker_url_parser_lab import parse_url_to_rows, rows_to_query_pairs
 
 
@@ -18,3 +19,46 @@ def test_rows_to_query_pairs_omits_disabled_row():
         ("page", "1"),
         ("filter", ""),
     ]
+
+
+def test_get_uses_distinct_connect_and_read_timeouts(monkeypatch):
+    """Le champ connexion et le champ réponse doivent arriver séparément à requests."""
+    observed = {}
+
+    class FakeResponse:
+        url = "http://qlicker.local/api/GetCustomers?page=1"
+        status_code = 200
+        headers = {"content-type": "application/json"}
+        content = b"{}"
+
+        def json(self):
+            return {"ok": True}
+
+    class FakeSession:
+        trust_env = True
+
+        def __enter__(self):
+            observed["session"] = self
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def get(self, _url, *, params, timeout):
+            observed["params"] = params
+            observed["timeout"] = timeout
+            return FakeResponse()
+
+    monkeypatch.setattr(parser_lab.requests, "Session", FakeSession)
+    _preview, status, body = parser_lab.execute_get(
+        "http://qlicker.local/api/GetCustomers",
+        [["page", "1", True]],
+        123,
+        456,
+        False,
+    )
+
+    assert observed["timeout"] == (123.0, 456.0)
+    assert observed["session"].trust_env is False
+    assert "HTTP : `200`" in status
+    assert '"ok": true' in body
