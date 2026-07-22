@@ -28,8 +28,10 @@ from ocr_benchmark.application.cni_service import (
     scan_cni_documents,
 )
 from ocr_benchmark.application.qlicker_api_service import (
+    editable_rows_to_query_pairs,
     execute_qlicker_get,
     merge_query_params,
+    parse_qlicker_url,
     parse_extra_query_params,
 )
 from ocr_benchmark.application.run_service import list_run_ids, load_run_results, purge_expired_runs
@@ -483,6 +485,8 @@ def _qlicker_test_result(
     explicit_params: dict[str, Any],
     extra_params_json: str,
     timeout_seconds: float,
+    proxy_url: str,
+    verify_ssl: bool,
 ) -> tuple[str, str]:
     """Teste un GET Qlicker sans téléchargement ni écriture locale.
 
@@ -496,10 +500,13 @@ def _qlicker_test_result(
             endpoint,
             merge_query_params(explicit_params, extra),
             timeout_seconds=float(timeout_seconds or 30),
+            proxy_url=proxy_url,
+            verify_ssl=bool(verify_ssl),
         )
         code = int(payload["response"]["status_code"])
         level = "success" if 200 <= code < 300 else "warning"
-        message = f"GET terminé : HTTP {code}. Aucun document n'a été enregistré localement."
+        tls = "SSL vérifié" if verify_ssl else "SSL non vérifié"
+        message = f"GET terminé : HTTP {code} · {tls}. Aucun document n'a été enregistré localement."
         return _cni_alert_html(level, message), json.dumps(payload, ensure_ascii=False, indent=2)
     except Exception as exc:
         LOGGER.exception("Qlicker API test failed")
@@ -1106,15 +1113,59 @@ def build_ui() -> gr.Blocks:
                                     cni_import_zip = gr.Button("Importer le ZIP")
                                 with gr.Group(visible=False) as cni_api_source:
                                     gr.Markdown(
-                                        "**Exploration API sans persistance.** Chaque test appelle Qlicker et affiche la requête/réponse, "
-                                        "sans télécharger ni injecter de document dans le benchmark. Les vrais noms de fonctions restent à renseigner."
+                                        "**Exploration API Qlicker sans persistance.** Collez d'abord une URL si vous l'avez : "
+                                        "ses paramètres deviennent modifiables avant le GET. Aucun document n'est téléchargé ni injecté dans le benchmark."
                                     )
                                     with gr.Row():
                                         cni_api_base_url = gr.Textbox(
                                             label="Base URL commune",
                                             placeholder="http://serveur-interne/api",
+                                            scale=3,
                                         )
-                                        cni_api_timeout = gr.Number(value=30, minimum=1, precision=0, label="Timeout API (s)")
+                                        cni_api_timeout = gr.Number(value=30, minimum=1, precision=0, label="Timeout API (s)", scale=1)
+                                        cni_api_proxy = gr.Textbox(
+                                            label="Proxy explicite",
+                                            type="password",
+                                            placeholder="http://proxy.interne.local:8080",
+                                            info="Optionnel. Il est utilisé pour tous les tests Qlicker et n'est pas enregistré.",
+                                            scale=3,
+                                        )
+                                        cni_api_verify_ssl = gr.Checkbox(
+                                            label="Vérifier SSL",
+                                            value=True,
+                                            info="Décochez seulement pour un certificat interne connu mais non reconnu.",
+                                            scale=1,
+                                        )
+                                    with gr.Group(elem_id="cni-api-parser"):
+                                        gr.Markdown("**Parser une URL Qlicker** · collez l'URL depuis Postman, puis modifiez les lignes avant l'appel.")
+                                        with gr.Row():
+                                            cni_api_raw_url = gr.Textbox(
+                                                label="URL complète à parser",
+                                                placeholder="https://serveur-interne/api/get_signed_documents_list?customerID=123",
+                                                scale=6,
+                                            )
+                                            cni_api_parse_url = gr.Button("Parser l'URL", variant="secondary", scale=1)
+                                        with gr.Row():
+                                            cni_api_parsed_endpoint = gr.Textbox(
+                                                label="Endpoint analysé",
+                                                placeholder="get_signed_documents_list",
+                                                info="Prérempli par le parser ; modifiable avant le test.",
+                                                scale=2,
+                                            )
+                                            cni_api_test_parsed = gr.Button("Tester l'URL analysée", variant="primary", scale=1)
+                                        cni_api_parsed_params = gr.Dataframe(
+                                            headers=["Paramètre", "Valeur", "Envoyer"],
+                                            datatype=["str", "str", "bool"],
+                                            row_count=(1, "dynamic"),
+                                            column_count=(3, "fixed"),
+                                            type="array",
+                                            interactive=True,
+                                            label="Paramètres modifiables après parsing",
+                                        )
+                                        gr.Markdown(
+                                            "Ajoutez une ligne si nécessaire. Décochez **Envoyer** pour omettre le paramètre ; "
+                                            "une valeur vide envoie `paramètre=`."
+                                        )
                                     with gr.Tabs():
                                         with gr.Tab("1. Liste clients"):
                                             cni_api_list_endpoint = gr.Textbox(
@@ -1148,16 +1199,30 @@ def build_ui() -> gr.Blocks:
                                             cni_api_info_extra = gr.Textbox(label="Autres paramètres — JSON libre", lines=4, placeholder='Ex. {"includeHistory": null}')
                                             cni_api_test_info = gr.Button("Tester GET info client", size="sm")
                                         with gr.Tab("3. Liste documents"):
-                                            cni_api_documents_endpoint = gr.Textbox(label="Segment endpoint / fonction", placeholder="Ex. GetSignedDocumentsList")
+                                            cni_api_documents_endpoint = gr.Textbox(
+                                                label="Segment endpoint / fonction",
+                                                value="get_signed_documents_list",
+                                                info="Fonction confirmée : customerID est l'unique paramètre connu.",
+                                            )
                                             cni_api_documents_customer_id = gr.Textbox(label="customerID", placeholder="Identifiant client")
                                             cni_api_documents_extra = gr.Textbox(label="Autres paramètres — JSON libre", lines=4, placeholder='Ex. {"documentType": "CIN"}')
                                             cni_api_test_documents = gr.Button("Tester GET liste documents", size="sm")
                                         with gr.Tab("4. Voir fichier"):
-                                            cni_api_view_endpoint = gr.Textbox(label="Segment endpoint / fonction", placeholder="Ex. ViewFile")
+                                            cni_api_view_endpoint = gr.Textbox(
+                                                label="Segment endpoint / fonction",
+                                                value="view_file",
+                                                info="Fonction confirmée. Six paramètres sont attendus au total.",
+                                            )
                                             with gr.Row():
                                                 cni_api_view_customer_id = gr.Textbox(label="customerID", placeholder="Identifiant client")
-                                                cni_api_document_id = gr.Textbox(label="documentID", placeholder="Identifiant document")
-                                            cni_api_view_extra = gr.Textbox(label="Autres paramètres — JSON libre", lines=4, placeholder='Ex. {"download": null}')
+                                                cni_api_view_page = gr.Number(value=1, minimum=1, precision=0, label="page")
+                                                cni_api_view_file = gr.Textbox(label="file", placeholder="Nom ou identifiant de fichier")
+                                            cni_api_view_extra = gr.Textbox(
+                                                label="3 autres paramètres — JSON libre",
+                                                lines=4,
+                                                placeholder='Ex. {"param4": "", "param5": null, "param6": "valeur"}',
+                                                info="view_file a 6 paramètres : customerID, page, file et trois paramètres à préciser quand le contrat complet sera connu.",
+                                            )
                                             cni_api_test_view = gr.Button("Tester GET voir fichier", size="sm")
                                     cni_api_feedback = gr.HTML(_cni_alert_html("ready", "Configurez un endpoint puis lancez un test. Aucune donnée n'est enregistrée."))
                                     cni_api_trace = gr.Code(label="Requête et réponse API", language="json", lines=16, interactive=False)
@@ -1703,7 +1768,47 @@ def build_ui() -> gr.Blocks:
                 LOGGER.exception("CNI ZIP import failed")
                 return gr.update(), gr.update(), f"Import ZIP impossible : {type(exc).__name__}: {exc}"
 
-        def test_qlicker_list(base_url, endpoint, from_date, to_date, step, page, page_size, extra_json, timeout):
+        def parse_qlicker_url_for_ui(raw_url):
+            """Remplit l'espace de travail éditable à partir d'une URL collée.
+
+            Cette action ne fait aucun appel réseau : elle découpe seulement
+            l'URL afin que l'utilisateur contrôle chaque paramètre avant GET.
+            """
+            try:
+                base_url, endpoint, rows = parse_qlicker_url(raw_url)
+                return (
+                    gr.update(value=base_url),
+                    gr.update(value=endpoint),
+                    rows,
+                    _cni_alert_html("success", f"URL analysée : {len(rows)} paramètre(s) modifiable(s) avant l'appel."),
+                )
+            except ValueError as exc:
+                return gr.update(), gr.update(), [], _cni_alert_html("error", str(exc))
+
+        def test_qlicker_parsed(base_url, endpoint, rows, timeout, proxy_url, verify_ssl):
+            """Teste les paramètres issus du parser, dans leur ordre édité."""
+            try:
+                pairs = editable_rows_to_query_pairs(rows)
+                payload = execute_qlicker_get(
+                    base_url,
+                    endpoint,
+                    pairs,
+                    timeout_seconds=float(timeout or 30),
+                    proxy_url=proxy_url,
+                    verify_ssl=bool(verify_ssl),
+                )
+                code = int(payload["response"]["status_code"])
+                level = "success" if 200 <= code < 300 else "warning"
+                tls = "SSL vérifié" if verify_ssl else "SSL non vérifié"
+                return (
+                    _cni_alert_html(level, f"GET analysé terminé : HTTP {code} · {tls}. Aucun fichier n'a été enregistré."),
+                    json.dumps(payload, ensure_ascii=False, indent=2),
+                )
+            except Exception as exc:
+                LOGGER.exception("Qlicker parsed URL test failed")
+                return _cni_alert_html("error", f"Test API impossible : {type(exc).__name__}: {exc}"), ""
+
+        def test_qlicker_list(base_url, endpoint, from_date, to_date, step, page, page_size, extra_json, timeout, proxy_url, verify_ssl):
             """Teste l'endpoint paginé, avec les cinq paramètres actuellement connus."""
             return _qlicker_test_result(
                 base_url,
@@ -1717,9 +1822,11 @@ def build_ui() -> gr.Blocks:
                 },
                 extra_json,
                 float(timeout or 30),
+                proxy_url,
+                bool(verify_ssl),
             )
 
-        def test_qlicker_info(base_url, endpoint, customer_id, load_documents, extra_json, timeout):
+        def test_qlicker_info(base_url, endpoint, customer_id, load_documents, extra_json, timeout, proxy_url, verify_ssl):
             """Teste l'endpoint d'information client sans supposer sa réponse JSON."""
             return _qlicker_test_result(
                 base_url,
@@ -1727,9 +1834,11 @@ def build_ui() -> gr.Blocks:
                 {"customerID": str(customer_id or "").strip() or None, "loadDocuments": int(load_documents or 0)},
                 extra_json,
                 float(timeout or 30),
+                proxy_url,
+                bool(verify_ssl),
             )
 
-        def test_qlicker_documents(base_url, endpoint, customer_id, extra_json, timeout):
+        def test_qlicker_documents(base_url, endpoint, customer_id, extra_json, timeout, proxy_url, verify_ssl):
             """Teste la liste distante des documents signés d'un client."""
             return _qlicker_test_result(
                 base_url,
@@ -1737,19 +1846,24 @@ def build_ui() -> gr.Blocks:
                 {"customerID": str(customer_id or "").strip() or None},
                 extra_json,
                 float(timeout or 30),
+                proxy_url,
+                bool(verify_ssl),
             )
 
-        def test_qlicker_view(base_url, endpoint, customer_id, document_id, extra_json, timeout):
+        def test_qlicker_view(base_url, endpoint, customer_id, page, file_name, extra_json, timeout, proxy_url, verify_ssl):
             """Teste le retour d'un fichier sans le persister dans le benchmark."""
             return _qlicker_test_result(
                 base_url,
                 endpoint,
                 {
                     "customerID": str(customer_id or "").strip() or None,
-                    "documentID": str(document_id or "").strip() or None,
+                    "page": int(page or 1),
+                    "file": str(file_name or "").strip() or None,
                 },
                 extra_json,
                 float(timeout or 30),
+                proxy_url,
+                bool(verify_ssl),
             )
 
         def scan_cni_input(clients_root_text, labels_root_text, recto_suffix, verso_suffix):
@@ -2103,12 +2217,28 @@ def build_ui() -> gr.Blocks:
             outputs=[cni_folder_source, cni_zip_source, cni_api_source],
             queue=False,
         )
+        cni_api_parse_url.click(
+            parse_qlicker_url_for_ui,
+            inputs=[cni_api_raw_url],
+            outputs=[cni_api_base_url, cni_api_parsed_endpoint, cni_api_parsed_params, cni_api_feedback],
+            queue=False,
+        )
+        cni_api_test_parsed.click(
+            test_qlicker_parsed,
+            inputs=[
+                cni_api_base_url, cni_api_parsed_endpoint, cni_api_parsed_params,
+                cni_api_timeout, cni_api_proxy, cni_api_verify_ssl,
+            ],
+            outputs=[cni_api_feedback, cni_api_trace],
+            queue=False,
+        )
         cni_api_test_list.click(
             test_qlicker_list,
             inputs=[
                 cni_api_base_url, cni_api_list_endpoint,
                 cni_api_from_date, cni_api_to_date, cni_api_step,
                 cni_api_page, cni_api_page_size, cni_api_list_extra, cni_api_timeout,
+                cni_api_proxy, cni_api_verify_ssl,
             ],
             outputs=[cni_api_feedback, cni_api_trace],
             queue=False,
@@ -2118,6 +2248,7 @@ def build_ui() -> gr.Blocks:
             inputs=[
                 cni_api_base_url, cni_api_info_endpoint, cni_api_customer_id,
                 cni_api_load_documents, cni_api_info_extra, cni_api_timeout,
+                cni_api_proxy, cni_api_verify_ssl,
             ],
             outputs=[cni_api_feedback, cni_api_trace],
             queue=False,
@@ -2127,6 +2258,7 @@ def build_ui() -> gr.Blocks:
             inputs=[
                 cni_api_base_url, cni_api_documents_endpoint, cni_api_documents_customer_id,
                 cni_api_documents_extra, cni_api_timeout,
+                cni_api_proxy, cni_api_verify_ssl,
             ],
             outputs=[cni_api_feedback, cni_api_trace],
             queue=False,
@@ -2135,7 +2267,8 @@ def build_ui() -> gr.Blocks:
             test_qlicker_view,
             inputs=[
                 cni_api_base_url, cni_api_view_endpoint, cni_api_view_customer_id,
-                cni_api_document_id, cni_api_view_extra, cni_api_timeout,
+                cni_api_view_page, cni_api_view_file, cni_api_view_extra, cni_api_timeout,
+                cni_api_proxy, cni_api_verify_ssl,
             ],
             outputs=[cni_api_feedback, cni_api_trace],
             queue=False,

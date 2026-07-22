@@ -4,7 +4,9 @@ import pytest
 
 from ocr_benchmark.application.qlicker_api_service import (
     build_qlicker_url,
+    editable_rows_to_query_pairs,
     merge_query_params,
+    parse_qlicker_url,
     parse_extra_query_params,
 )
 
@@ -34,3 +36,22 @@ def test_invalid_extra_json_is_explicit():
     """Un JSON mal formé doit être corrigé avant qu'une requête parte."""
     with pytest.raises(ValueError, match="JSON invalide"):
         parse_extra_query_params("{invalid}")
+
+
+def test_url_parser_preserves_blank_and_duplicate_parameters_for_editing():
+    """Une URL Postman devient une table Gradio modifiable sans perte."""
+    base_url, endpoint, rows = parse_qlicker_url(
+        "https://qlicker.internal/api/get_signed_documents_list?customerID=42&filter=&tag=a&tag=b"
+    )
+
+    assert base_url == "https://qlicker.internal"
+    assert endpoint == "api/get_signed_documents_list"
+    assert rows == [
+        ["customerID", "42", True],
+        ["filter", "", True],
+        ["tag", "a", True],
+        ["tag", "b", True],
+    ]
+    assert editable_rows_to_query_pairs(rows + [["disabled", "x", False]]) == [
+        ("customerID", "42"), ("filter", ""), ("tag", "a"), ("tag", "b"),
+    ]
