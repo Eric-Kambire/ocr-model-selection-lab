@@ -331,6 +331,7 @@ def _request_error_details(
     connect_timeout: float,
     read_timeout: float,
     proxy_mapping: dict[str, str] | None,
+    verify_ssl: bool,
 ) -> dict[str, Any]:
     """Transforme l'exception Requests en diagnostic court et vérifiable."""
     chain: list[dict[str, str]] = []
@@ -362,6 +363,7 @@ def _request_error_details(
         "duree_reelle_s": round(elapsed_seconds, 3),
         "timeout_connexion_configure_s": connect_timeout,
         "timeout_reponse_configure_s": read_timeout,
+        "verification_ssl": "active" if verify_ssl else "désactivée",
         "proxy_effectif": {name: mask_proxy_url(value) for name, value in (proxy_mapping or {}).items()},
         "interpretation": interpretation,
         "chaine_exceptions": chain,
@@ -472,6 +474,7 @@ def execute_get(
     read_timeout_seconds: float,
     use_environment_proxy: bool,
     explicit_proxy_url: str,
+    verify_ssl: bool,
 ) -> tuple[str, str, str]:
     """Reconstruit l'URL et exécute un GET sans authentification ni persistance.
 
@@ -518,7 +521,8 @@ def execute_get(
         f"- Paramètres : `{json.dumps(pairs, ensure_ascii=False)}`\n"
         f"- Timeout connexion : `{connect_timeout:g} s`\n"
         f"- Timeout réponse : `{read_timeout:g} s`\n"
-        f"- Mode proxy : `{proxy_mode}`"
+        f"- Mode proxy : `{proxy_mode}`\n"
+        f"- Vérification SSL : `{'active' if verify_ssl else 'DÉSACTIVÉE'}`"
     )
     started = time.perf_counter()
     try:
@@ -529,7 +533,7 @@ def execute_get(
         with requests.Session() as session:
             session.trust_env = bool(use_environment_proxy)
             LOGGER.info(
-                "GET | host=%s | port=%s | path=%s | parametres=%s | connect_timeout=%ss | read_timeout=%ss | proxy=%s",
+                "GET | host=%s | port=%s | path=%s | parametres=%s | connect_timeout=%ss | read_timeout=%ss | proxy=%s | verify_ssl=%s",
                 parsed.hostname,
                 parsed.port or (443 if parsed.scheme == "https" else 80),
                 parsed.path,
@@ -537,16 +541,20 @@ def execute_get(
                 connect_timeout,
                 read_timeout,
                 proxy_mode,
+                verify_ssl,
             )
+            if not verify_ssl:
+                LOGGER.warning("Vérification SSL désactivée depuis le laboratoire Gradio")
             response = session.get(
                 target,
                 params=pairs,
                 timeout=(connect_timeout, read_timeout),
                 proxies=effective_mapping,
+                verify=bool(verify_ssl),
             )
     except requests.RequestException as exc:
         elapsed = time.perf_counter() - started
-        details = _request_error_details(exc, elapsed, connect_timeout, read_timeout, effective_mapping)
+        details = _request_error_details(exc, elapsed, connect_timeout, read_timeout, effective_mapping, verify_ssl)
         LOGGER.exception("GET échoué | diagnostic=%s", json.dumps(details, ensure_ascii=False))
         return (
             preview,
@@ -642,6 +650,11 @@ def build_ui() -> gr.Blocks:
                 placeholder="http://proxy.entreprise.local:8080",
                 info="À recopier depuis Postman si un proxy personnalisé est utilisé. Il remplace les variables proxy.",
             )
+            verify_ssl = gr.Checkbox(
+                label="Vérifier le certificat SSL",
+                value=True,
+                info="Décochez uniquement si le certificat interne est non reconnu. Cela réduit la sécurité de la connexion.",
+            )
             execute_button = gr.Button("Envoyer GET", variant="primary")
         diagnostic_button = gr.Button("Diagnostiquer DNS / TCP", variant="secondary")
         request_preview = gr.Markdown(label="Requête")
@@ -658,7 +671,7 @@ def build_ui() -> gr.Blocks:
         )
         execute_button.click(
             execute_get,
-            inputs=[endpoint, parameters, connect_timeout, read_timeout, use_environment_proxy, explicit_proxy_url],
+            inputs=[endpoint, parameters, connect_timeout, read_timeout, use_environment_proxy, explicit_proxy_url, verify_ssl],
             outputs=[request_preview, response_status, response_body],
             queue=False,
         )
@@ -673,7 +686,8 @@ def build_ui() -> gr.Blocks:
             "- Coller une URL ne déclenche aucune requête : cela remplit seulement le tableau.  \n"
             "- `param=` est une valeur vide envoyée. Décochez **Envoyer** pour omettre réellement le paramètre.  \n"
             "- Les paramètres en double sont conservés, contrairement à une simple structure dictionnaire.  \n"
-            "- Postman peut utiliser un proxy Windows/PAC ; Python Requests utilise ce qu'il détecte ou le proxy explicite ci-dessus. Le rapport indique la différence."
+            "- Postman peut utiliser un proxy Windows/PAC ; Python Requests utilise ce qu'il détecte ou le proxy explicite ci-dessus. Le rapport indique la différence.  \n"
+            "- Le diagnostic TLS conserve une vérification de certificat, même si vous désactivez cette vérification pour le GET."
         )
     return app
 
