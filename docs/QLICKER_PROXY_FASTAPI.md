@@ -64,6 +64,218 @@ netsh winhttp show proxy
 Ne copiez jamais dans un ticket, un commit ou un chat une URL de proxy contenant
 un mot de passe.
 
+## Procédure PowerShell pas à pas : identifier le proxy du poste
+
+Ouvrir **PowerShell** avec le même compte Windows qui ouvre Postman et qui
+lancera Python. Les valeurs sont souvent différentes pour un autre compte.
+
+### Étape 1 — confirmer le compte Windows utilisé
+
+```powershell
+whoami
+```
+
+Sortie attendue, exemple :
+
+```text
+ENTREPRISE\prenom.nom
+```
+
+Si ce compte n'est pas celui qui utilise Postman, arrêter ici et ouvrir une
+session PowerShell avec le bon compte.
+
+### Étape 2 — lire la configuration proxy Windows (WinINET)
+
+Copier ce bloc complet :
+
+```powershell
+$registryPath = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Internet Settings"
+$settings = Get-ItemProperty -Path $registryPath
+
+[PSCustomObject]@{
+  ProxyEnable   = $settings.ProxyEnable
+  ProxyServer   = $settings.ProxyServer
+  ProxyOverride = $settings.ProxyOverride
+  AutoConfigURL = $settings.AutoConfigURL
+  AutoDetect    = $settings.AutoDetect
+} | Format-List
+```
+
+Sorties possibles et leur signification :
+
+```text
+# Cas A : proxy manuel
+ProxyEnable   : 1
+ProxyServer   : proxy.entreprise.local:8080
+ProxyOverride : localhost;*.intra.local
+AutoConfigURL :
+AutoDetect    : 0
+```
+
+Le proxy à utiliser est `http://proxy.entreprise.local:8080`. `ProxyOverride`
+liste les hôtes qui doivent rester en connexion directe.
+
+```text
+# Cas B : script PAC
+ProxyEnable   : 0
+ProxyServer   :
+ProxyOverride :
+AutoConfigURL : https://proxy.entreprise.local/config/proxy.pac
+AutoDetect    : 0
+```
+
+Postman peut évaluer ce script PAC. Le script indique ensuite le proxy selon
+l'URL demandée ; il n'y a donc pas nécessairement une seule adresse proxy.
+
+```text
+# Cas C : détection WPAD
+ProxyEnable   : 0
+ProxyServer   :
+ProxyOverride :
+AutoConfigURL :
+AutoDetect    : 1
+```
+
+Windows cherche automatiquement une configuration proxy. L'adresse finale ne
+peut pas être déduite seulement depuis ce tableau : demander le proxy résolu à
+l'équipe réseau ou obtenir le PAC/WPAD.
+
+```text
+# Cas D : accès direct
+ProxyEnable   : 0
+ProxyServer   :
+ProxyOverride :
+AutoConfigURL :
+AutoDetect    : 0
+```
+
+Il n'y a pas de proxy Windows visible. Si Postman fonctionne, il peut joindre
+Qlicker directement via Cisco Secure Client/VPN ou posséder un proxy personnalisé.
+
+> `ProxyServer` absent ou vide n'est pas une erreur : cela exclut simplement le
+> cas « proxy manuel ».
+
+### Étape 3 — vérifier les variables proxy du processus Python/curl
+
+```powershell
+Get-ChildItem Env: |
+  Where-Object Name -match "^(HTTP_PROXY|HTTPS_PROXY|NO_PROXY|ALL_PROXY)$" |
+  Format-Table Name, Value -AutoSize
+```
+
+Sortie possible :
+
+```text
+Name        Value
+----        -----
+HTTPS_PROXY http://proxy.entreprise.local:8080
+NO_PROXY    localhost,127.0.0.1,.intra.local
+```
+
+Cela signifie que les programmes démarrés depuis cette fenêtre PowerShell
+peuvent utiliser ce proxy. **Aucune sortie** signifie qu'aucune variable proxy
+n'est définie ; ce n'est pas un échec.
+
+### Étape 4 — comparer avec WinHTTP
+
+```powershell
+netsh winhttp show proxy
+```
+
+Sorties possibles :
+
+```text
+Current WinHTTP proxy settings:
+
+    Proxy Server(s) :  proxy.entreprise.local:8080
+    Bypass List     :  localhost;*.intra.local
+```
+
+ou :
+
+```text
+Direct access (no proxy server).
+```
+
+WinHTTP est une autre pile Windows. Une sortie « Direct access » n'annule pas
+un proxy Postman/WinINET configuré à l'étape 2.
+
+### Étape 5 — si un PAC est configuré, afficher ses règles
+
+Exécuter uniquement si `AutoConfigURL` n'est pas vide :
+
+```powershell
+$pacUrl = $settings.AutoConfigURL
+$pacContent = (Invoke-WebRequest -Uri $pacUrl -UseBasicParsing).Content
+$pacContent | Select-String -Pattern "PROXY|SOCKS|DIRECT" -AllMatches
+```
+
+Sortie possible :
+
+```text
+return "PROXY proxy.entreprise.local:8080; DIRECT";
+```
+
+Cette ligne signifie : essayer le proxy, puis la connexion directe si le proxy
+échoue. Un PAC peut toutefois contenir beaucoup de conditions ; son contenu ne
+prouve pas encore quelle règle est choisie pour l'URL Qlicker précise.
+
+### Étape 6 — tester la route directe vers Qlicker
+
+Remplacer `SERVEUR_QCLICKER` par le nom réel, sans ajouter de token :
+
+```powershell
+Test-NetConnection -ComputerName SERVEUR_QCLICKER -Port 443
+```
+
+Sortie utile :
+
+```text
+RemoteAddress    : 10.20.30.40
+RemotePort       : 443
+TcpTestSucceeded : True
+```
+
+`True` confirme que le PC atteint directement le port. `False` signifie que la
+connexion directe échoue ; cela peut être normal si le réseau impose un proxy.
+
+### Étape 7 — comparer curl direct et curl via proxy
+
+Connexion forcée sans proxy :
+
+```powershell
+curl.exe -v --noproxy "*" --connect-timeout 30 --max-time 330 `
+  "https://SERVEUR_QCLICKER/api/GetCustomers?page=1"
+```
+
+Si l'étape 2 a donné un proxy manuel, tester le même appel via ce proxy :
+
+```powershell
+curl.exe -v --proxy "http://proxy.entreprise.local:8080" `
+  --connect-timeout 30 --max-time 330 `
+  "https://SERVEUR_QCLICKER/api/GetCustomers?page=1"
+```
+
+Repères dans la sortie `-v` :
+
+| Ligne curl | Interprétation |
+|---|---|
+| `Trying 10.x.x.x:443` | curl tente une connexion directe au serveur. |
+| `Connected to ...` | TCP est établi. |
+| `CONNECT SERVEUR_QCLICKER:443` | curl passe par un proxy HTTP. |
+| `HTTP/1.1 200 Connection established` | Le proxy a créé le tunnel HTTPS. |
+| `407 Proxy Authentication Required` | Le proxy réclame une authentification. |
+| `SSL certificate problem` | Le réseau est atteint ; le certificat doit être résolu, pas ignoré durablement. |
+
+### Décision finale
+
+| Observation | Configuration à utiliser dans FastAPI/HTTPX |
+|---|---|
+| Direct fonctionne | `use_system_proxy: false` ou aucun proxy configuré. |
+| Seulement le proxy manuel fonctionne | Laisser `use_system_proxy: true` ; la passerelle lit `ProxyServer`. |
+| Un PAC est le seul chemin qui fonctionne | Obtenir auprès du réseau le proxy résolu pour Qlicker et définir `QLICKER_PROXY_URL`. |
+| Postman seul fonctionne encore | Comparer dans Postman l'URL, méthode, query params, headers, cookies, certificat client et proxy personnalisé. |
+
 ## Laboratoire Gradio de diagnostic
 
 Le script [qlicker_url_parser_lab.py](../scripts/qlicker_url_parser_lab.py)
