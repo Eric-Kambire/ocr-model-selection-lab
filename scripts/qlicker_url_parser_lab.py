@@ -11,6 +11,7 @@ Lancement :
 from __future__ import annotations
 
 import json
+import time
 from typing import Any
 from urllib.parse import parse_qsl, urlsplit, urlunsplit
 
@@ -58,28 +59,59 @@ def rows_to_query_pairs(rows: list[list[Any]] | None) -> list[tuple[str, str]]:
     return pairs
 
 
-def execute_get(endpoint: str, rows: list[list[Any]] | None, timeout_seconds: float) -> tuple[str, str, str]:
+def execute_get(
+    endpoint: str,
+    rows: list[list[Any]] | None,
+    connect_timeout_seconds: float,
+    read_timeout_seconds: float,
+    use_system_proxy: bool,
+) -> tuple[str, str, str]:
     """Reconstruit l'URL et exécute un GET sans authentification ni persistance.
 
-    Entrées : endpoint sans query string, tableau éditable, timeout.
+    Entrées : endpoint sans query string, tableau éditable, deux délais et proxy.
     Sorties : aperçu de requête, état HTTP, réponse lisible ou diagnostic.
     """
     target = str(endpoint or "").strip()
     parsed = urlsplit(target)
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
         return "### Requête non envoyée", "### Erreur", "Renseignez une Base URL / endpoint HTTP valide."
-    if float(timeout_seconds or 0) <= 0:
-        return "### Requête non envoyée", "### Erreur", "Le timeout doit être supérieur à zéro."
+    connect_timeout = float(connect_timeout_seconds or 0)
+    read_timeout = float(read_timeout_seconds or 0)
+    if connect_timeout <= 0 or read_timeout <= 0:
+        return "### Requête non envoyée", "### Erreur", "Les deux délais doivent être supérieurs à zéro."
 
     pairs = rows_to_query_pairs(rows)
+    preview = (
+        "### GET prévu\n"
+        f"- Endpoint : `{target}`\n"
+        f"- Paramètres : `{json.dumps(pairs, ensure_ascii=False)}`\n"
+        f"- Timeout connexion : `{connect_timeout:g} s`\n"
+        f"- Timeout réponse : `{read_timeout:g} s`\n"
+        f"- Proxy système : `{'oui' if use_system_proxy else 'non'}`"
+    )
+    started = time.perf_counter()
     try:
-        response = requests.get(target, params=pairs, timeout=float(timeout_seconds))
+        # `trust_env` active/désactive HTTP_PROXY, HTTPS_PROXY et les réglages
+        # proxy Windows exposés à Python. Un proxy non joignable peut lui-même
+        # produire un ConnectTimeout sans que Qlicker ait reçu la requête.
+        with requests.Session() as session:
+            session.trust_env = bool(use_system_proxy)
+            response = session.get(
+                target,
+                params=pairs,
+                timeout=(connect_timeout, read_timeout),
+            )
     except requests.RequestException as exc:
+        elapsed = time.perf_counter() - started
         return (
-            f"### GET prévu\n- Endpoint : `{target}`\n- Paramètres : `{json.dumps(pairs, ensure_ascii=False)}`",
-            "### Erreur réseau",
-            f"{type(exc).__name__}: {exc}",
+            preview,
+            f"### Erreur réseau après `{elapsed:.1f} s`",
+            f"{type(exc).__name__}: {exc}\n\n"
+            "Un `ConnectTimeout` signifie que la connexion TCP/TLS n'a pas été établie. "
+            "Vérifiez l'hôte, le port, le VPN/réseau interne et essayez éventuellement sans proxy système.",
         )
+
+    elapsed = time.perf_counter() - started
 
     content_type = response.headers.get("content-type", "").lower()
     if "json" in content_type:
@@ -101,8 +133,8 @@ def execute_get(endpoint: str, rows: list[list[Any]] | None, timeout_seconds: fl
             indent=2,
         )
     return (
-        f"### Requête réellement envoyée\n- Méthode : `GET`\n- URL : `{response.url}`\n- Paramètres actifs : `{json.dumps(pairs, ensure_ascii=False)}`",
-        f"### Réponse\n- HTTP : `{response.status_code}`\n- Content-Type : `{content_type or 'absent'}`\n- Taille : `{len(response.content):,} octets`",
+        preview + f"\n- URL finale : `{response.url}`",
+        f"### Réponse\n- HTTP : `{response.status_code}`\n- Content-Type : `{content_type or 'absent'}`\n- Taille : `{len(response.content):,} octets\n- Durée réelle : `{elapsed:.2f} s`",
         body,
     )
 
@@ -138,7 +170,25 @@ def build_ui() -> gr.Blocks:
         )
         gr.Markdown("Ajoutez les paramètres absents dans une nouvelle ligne. Décochez **Envoyer** pour exclure une ligne.")
         with gr.Row():
-            timeout_seconds = gr.Number(label="Timeout (secondes)", value=30, precision=0, minimum=1)
+            connect_timeout = gr.Number(
+                label="Timeout connexion (s)",
+                value=30,
+                precision=0,
+                minimum=1,
+                info="Temps maximal pour joindre le serveur et établir HTTPS.",
+            )
+            read_timeout = gr.Number(
+                label="Timeout réponse (s)",
+                value=300,
+                precision=0,
+                minimum=1,
+                info="Temps maximal après connexion, pendant le traitement Qlicker.",
+            )
+            use_system_proxy = gr.Checkbox(
+                label="Utiliser le proxy système",
+                value=True,
+                info="Décochez si Qlicker est interne et qu'un proxy bloque la connexion.",
+            )
             execute_button = gr.Button("Envoyer GET", variant="primary")
         request_preview = gr.Markdown(label="Requête")
         response_status = gr.Markdown(label="Statut")
@@ -152,7 +202,7 @@ def build_ui() -> gr.Blocks:
         )
         execute_button.click(
             execute_get,
-            inputs=[endpoint, parameters, timeout_seconds],
+            inputs=[endpoint, parameters, connect_timeout, read_timeout, use_system_proxy],
             outputs=[request_preview, response_status, response_body],
             queue=False,
         )
