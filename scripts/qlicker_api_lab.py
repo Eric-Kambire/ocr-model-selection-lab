@@ -1,8 +1,8 @@
-"""Laboratoire pédagogique pour comprendre puis connecter les quatre API Qlicker.
+"""Laboratoire pédagogique pour comprendre puis connecter les quatre API QlickEER.
 
 Ce script est volontairement indépendant du benchmark. Il permet de vérifier une
 route à la fois, d'observer la requête réellement envoyée et de télécharger le
-document retourné. Aucune route Qlicker n'est inventée : les quatre modèles
+document retourné. Aucune route QlickEER n'est inventée : les quatre modèles
 d'URL restent modifiables dans l'interface.
 
 Lancement :
@@ -34,7 +34,7 @@ atexit.register(lambda: shutil.rmtree(SESSION_DIR, ignore_errors=True))
 
 @dataclass(frozen=True)
 class ApiSettings:
-    """Configuration réutilisée pour un appel HTTP Qlicker.
+    """Configuration réutilisée pour un appel HTTP QlickEER.
 
     Les routes utilisent des placeholders : `{client_id}` et `{document_id}`.
     Elles sont remplacées et encodées avant l'appel réseau.
@@ -228,20 +228,20 @@ def build_ui() -> gr.Blocks:
     """Construit l'interface pédagogique sans dépendre de l'application principale."""
     # L'interface reste volontairement native et compacte : elle doit servir à
     # lire le protocole HTTP, pas à reproduire l'interface du benchmark.
-    with gr.Blocks(title="Qlicker API Lab", fill_width=True) as app:
+    with gr.Blocks(title="QlickEER API Lab", fill_width=True) as app:
         with gr.Column(elem_classes=["api-lab"]):
             gr.Markdown(
-                "# Qlicker API Lab\n"
+                "# QlickEER API Lab\n"
                 "Un appel à la fois : configure la route, envoie la requête, puis lis la réponse avant de passer à l'étape suivante. "
                 "Le token reste dans la session Gradio et est toujours masqué dans l'aperçu."
             )
             with gr.Accordion("0. Connexion et modèles de routes", open=True):
                 gr.Markdown(
-                    "Les chemins ci-dessous sont des **hypothèses éditables**. Remplace-les par les routes exactes données par Qlicker. "
+                    "Les chemins ci-dessous sont des **hypothèses éditables**. Remplace-les par les routes exactes données par QlickEER. "
                     "`{client_id}` et `{document_id}` seront remplacés automatiquement."
                 )
                 with gr.Row():
-                    base_url = gr.Textbox(label="Base URL", placeholder="https://api.qlicker.example/v1")
+                    base_url = gr.Textbox(label="Base URL", placeholder="https://api.qlickeer.example/v1")
                     token_env = gr.Textbox(label="Variable token", value="QLICKER_API_TOKEN")
                     timeout = gr.Number(label="Timeout (secondes)", value=30, precision=0)
                 with gr.Row():

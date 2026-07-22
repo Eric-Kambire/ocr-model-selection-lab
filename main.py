@@ -1694,7 +1694,7 @@ def build_ui() -> gr.Blocks:
                         with gr.Column(scale=1, elem_id="cni-source"):
                             gr.HTML("<div class='cni-section-title'>01 <span>Source des documents</span></div>")
                             cni_input_mode = gr.Radio(
-                                [("Dossier local", "folder"), ("Archive ZIP", "zip"), ("API Qlicker", "api")],
+                                    [("Dossier local", "folder"), ("Archive ZIP", "zip"), ("API QlickEER", "api")],
                                 value="folder",
                                 label="Source",
                             )
@@ -1707,12 +1707,12 @@ def build_ui() -> gr.Blocks:
                                 cni_import_zip = gr.Button("Importer le ZIP")
                             with gr.Group(visible=False) as cni_api_source:
                                 cni_qlicker_client_ids = gr.Textbox(
-                                    label="Identifiants clients Qlicker",
+                                    label="Identifiants clients QlickEER",
                                     lines=4,
                                     placeholder="Un identifiant par ligne",
                                 )
                                 cni_qlicker_config = gr.Code(
-                                    label="Contrat API Qlicker (JSON)",
+                                    label="Contrat API QlickEER (JSON)",
                                     language="json",
                                     value=json.dumps({
                                         "base_url": "https://api.exemple.tld/v1",
@@ -1722,7 +1722,7 @@ def build_ui() -> gr.Blocks:
                                         "document_url_key": "",
                                     }, ensure_ascii=False, indent=2),
                                 )
-                                cni_import_qlicker = gr.Button("Importer depuis Qlicker", variant="secondary")
+                                cni_import_qlicker = gr.Button("Importer depuis QlickEER", variant="secondary")
                                 gr.Markdown("Le token est lu uniquement depuis la variable d’environnement `QLICKER_API_TOKEN`. Consultez `docs/QLICKER_API_CONTRACT.md` avant le premier import.")
                             cni_scan_status = gr.Markdown("Indiquez un dossier clients, puis scannez-le.")
                             with gr.Accordion("Aperçu d’un document", open=False):
@@ -2339,7 +2339,7 @@ def build_ui() -> gr.Blocks:
                 return gr.update(), gr.update(), f"Import ZIP impossible : {type(exc).__name__}: {exc}"
 
         def import_cni_from_qlicker(client_ids_text, config_text):
-            """Importe Qlicker avec un contrat explicite, sans exposer le token dans l'UI."""
+            """Importe QlickEER avec un contrat explicite, sans exposer le token dans l'UI."""
             identifiers = [line.strip() for line in str(client_ids_text or "").splitlines() if line.strip()]
             if not identifiers:
                 return gr.update(), gr.update(), "Import API impossible : ajoutez au moins un identifiant client."
@@ -2360,15 +2360,15 @@ def build_ui() -> gr.Blocks:
                 report = import_cni_from_remote(identifiers, root, config)
                 imported = sum(item.get("status") == "ready" for item in report)
                 failed = len(report) - imported
-                LOGGER.info("Qlicker import completed | requested=%d | imported=%d | failed=%d", len(identifiers), imported, failed)
+                LOGGER.info("QlickEER import completed | requested=%d | imported=%d | failed=%d", len(identifiers), imported, failed)
                 return (
                     gr.update(value=str(root)),
                     gr.update(value=""),
-                    f"Import Qlicker terminé : {imported} client(s) importé(s), {failed} échec(s). Scannez le dossier pour contrôler les paires.",
+                    f"Import QlickEER terminé : {imported} client(s) importé(s), {failed} échec(s). Scannez le dossier pour contrôler les paires.",
                 )
             except Exception as exc:
-                LOGGER.exception("Qlicker import failed")
-                return gr.update(), gr.update(), f"Import Qlicker impossible : {type(exc).__name__}: {exc}"
+                LOGGER.exception("QlickEER import failed")
+                return gr.update(), gr.update(), f"Import QlickEER impossible : {type(exc).__name__}: {exc}"
 
         def scan_cni_input(clients_root_text, labels_root_text, recto_suffix, verso_suffix):
             """Scanne les dossiers et copie les JSONB valides près des clients."""

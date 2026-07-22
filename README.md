@@ -20,7 +20,7 @@ Services applicatifs
                   ↓
 Domaine benchmark et CNI
                   ↓
-Adaptateurs (Ollama, fichiers, ZIP, Qlicker, Docker)
+Adaptateurs (Ollama, fichiers, ZIP, QlickEER, Docker)
 ```
 
 Les fichiers ont des responsabilités explicites :
@@ -164,7 +164,7 @@ remplacent pas le chiffrement du disque.
 `RUN_RETENTION_DAYS=30` est la valeur par défaut : les dossiers de runs générés
 plus anciens sont supprimés au démarrage de l'interface. Mettez une valeur
 négative pour désactiver la purge temporairement. Les détails de déploiement et
-les limites actuelles (authentification, Qlicker et stockage central) figurent
+les limites actuelles (authentification, QlickEER et stockage central) figurent
 dans `DEPLOYMENT.md` et `docs/ARCHITECTURE_INTERNE.md`.
 
 ## Docker GPU

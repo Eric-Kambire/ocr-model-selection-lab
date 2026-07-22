@@ -1,6 +1,6 @@
-"""Import REST configurable de documents et labels CNI depuis Qlicker.
+"""Import REST configurable de documents et labels CNI depuis QlickEER.
 
-Les routes Qlicker ne sont pas publiées dans ce projet. Ce module ne les
+Les routes QlickEER ne sont pas publiées dans ce projet. Ce module ne les
 invente donc pas : les modèles d'URL et la clé JSON de téléchargement sont
 configurés explicitement avant tout appel réseau.
 """
@@ -20,7 +20,7 @@ import requests
 
 @dataclass(frozen=True)
 class QlickerImportConfig:
-    """Contrat minimal à compléter dès que l'API Qlicker est documentée."""
+    """Contrat minimal à compléter dès que l'API QlickEER est documentée."""
 
     base_url: str
     recto_path_template: str
@@ -113,5 +113,5 @@ def _download_label(http: requests.Session, headers: dict[str, str], config: Qli
     response.raise_for_status()
     payload = response.json()
     if not isinstance(payload, dict):
-        raise ValueError("Le label Qlicker doit être un objet JSON.")
+        raise ValueError("Le label QlickEER doit être un objet JSON.")
     return payload

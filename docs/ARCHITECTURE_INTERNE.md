@@ -14,7 +14,7 @@ Application (cas d'usage)
         ↓ orchestre
 Domaine (contrats BenchmarkCase, InferenceResult, règles de score)
         ↓ utilise
-Adaptateurs / infrastructure (Ollama, fichiers, ZIP, Qlicker, Docker)
+Adaptateurs / infrastructure (Ollama, fichiers, ZIP, QlickEER, Docker)
 ```
 
 ## Répertoires et responsabilités
