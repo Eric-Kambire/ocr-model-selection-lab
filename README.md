@@ -358,12 +358,6 @@ n’est pas comparable aux tokens d’un modèle génératif.
 Les définitions détaillées sont disponibles dans l’onglet
 **Comprendre les métriques**.
 
-## Qlicker : proxy et passerelle interne
-
-Le guide [Qlicker — proxy système et FastAPI](docs/QLICKER_PROXY_FASTAPI.md)
-explique comment récupérer le proxy Windows/Postman, diagnostiquer les appels
-internes, et lancer la passerelle locale FastAPI + HTTPX.
-
 ## Tests
 
 ```bash
