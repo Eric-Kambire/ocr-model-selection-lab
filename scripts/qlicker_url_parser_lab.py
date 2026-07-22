@@ -11,6 +11,7 @@ Lancement :
 from __future__ import annotations
 
 import json
+import socket
 import time
 from typing import Any
 from urllib.parse import parse_qsl, urlsplit, urlunsplit
@@ -59,12 +60,116 @@ def rows_to_query_pairs(rows: list[list[Any]] | None) -> list[tuple[str, str]]:
     return pairs
 
 
+def mask_proxy_url(proxy_url: str) -> str:
+    """Masque un éventuel mot de passe présent dans une URL de proxy.
+
+    Exemple : ``http://alice:secret@proxy.local:8080`` devient
+    ``http://alice:***@proxy.local:8080``. Le journal de l'interface reste
+    donc exploitable sans exposer involontairement un secret.
+    """
+    candidate = str(proxy_url or "").strip()
+    if not candidate:
+        return ""
+    parsed = urlsplit(candidate)
+    if not parsed.scheme or not parsed.netloc:
+        return "(proxy invalide)"
+    if parsed.password is None:
+        return candidate
+    username = parsed.username or ""
+    host = parsed.hostname or ""
+    port = f":{parsed.port}" if parsed.port else ""
+    return f"{parsed.scheme}://{username}:***@{host}{port}"
+
+
+def explicit_proxy_mapping(proxy_url: str) -> dict[str, str] | None:
+    """Valide un proxy explicite et le prépare pour HTTP et HTTPS.
+
+    Requests exige une URL complète, protocole inclus. Le support SOCKS est
+    possible seulement si ``requests[socks]`` est installé ; ce laboratoire
+    privilégie donc les proxys HTTP/HTTPS d'entreprise.
+    """
+    candidate = str(proxy_url or "").strip()
+    if not candidate:
+        return None
+    parsed = urlsplit(candidate)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        raise ValueError("Le proxy explicite doit ressembler à http://proxy.entreprise.local:8080")
+    return {"http": candidate, "https": candidate}
+
+
+def network_diagnostics(
+    endpoint: str,
+    connect_timeout_seconds: float,
+    use_environment_proxy: bool,
+    explicit_proxy_url: str,
+) -> tuple[str, str]:
+    """Diagnostique DNS et TCP sans envoyer la requête API elle-même.
+
+    Le test TCP est volontairement direct : il vérifie si le PC peut joindre
+    l'hôte Qlicker sans proxy. Si Postman passe par un proxy, un échec ici ne
+    prouve pas que l'API est indisponible ; il indique simplement que la route
+    directe n'est pas utilisable.
+    """
+    target = str(endpoint or "").strip()
+    parsed = urlsplit(target)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        return "### Diagnostic non lancé", "Renseignez un endpoint HTTP/HTTPS valide."
+
+    try:
+        explicit_mapping = explicit_proxy_mapping(explicit_proxy_url)
+    except ValueError as exc:
+        return "### Diagnostic non lancé", str(exc)
+
+    port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    # Le diagnostic doit rester rapide, même si l'utilisateur a choisi un long
+    # timeout de production pour les réponses de l'API.
+    timeout = min(max(float(connect_timeout_seconds or 0), 1.0), 10.0)
+    environment_proxies = requests.utils.get_environ_proxies(target)
+    report: dict[str, Any] = {
+        "hote": parsed.hostname,
+        "port": port,
+        "timeout_tcp_direct_s": timeout,
+        "mode_proxy_demande": (
+            f"proxy explicite : {mask_proxy_url(explicit_proxy_url)}"
+            if explicit_mapping
+            else ("variables Python" if use_environment_proxy else "aucun proxy Python")
+        ),
+        "variables_proxy_detectees": {
+            name: mask_proxy_url(value) for name, value in environment_proxies.items()
+        },
+    }
+    try:
+        addresses = socket.getaddrinfo(parsed.hostname, port, type=socket.SOCK_STREAM)
+        report["dns"] = {"statut": "ok", "adresses": sorted({item[4][0] for item in addresses})}
+    except OSError as exc:
+        report["dns"] = {"statut": "erreur", "detail": repr(exc)}
+        return "### Diagnostic réseau", json.dumps(report, ensure_ascii=False, indent=2)
+
+    started = time.perf_counter()
+    try:
+        with socket.create_connection((parsed.hostname, port), timeout=timeout):
+            pass
+        report["tcp_direct"] = {"statut": "ok", "duree_s": round(time.perf_counter() - started, 3)}
+    except OSError as exc:
+        report["tcp_direct"] = {
+            "statut": "erreur",
+            "duree_s": round(time.perf_counter() - started, 3),
+            "detail": repr(exc),
+        }
+    return (
+        "### Diagnostic réseau\n"
+        "DNS puis connexion TCP directe terminés. Ce test ne traverse pas un proxy Windows/PAC.",
+        json.dumps(report, ensure_ascii=False, indent=2),
+    )
+
+
 def execute_get(
     endpoint: str,
     rows: list[list[Any]] | None,
     connect_timeout_seconds: float,
     read_timeout_seconds: float,
-    use_system_proxy: bool,
+    use_environment_proxy: bool,
+    explicit_proxy_url: str,
 ) -> tuple[str, str, str]:
     """Reconstruit l'URL et exécute un GET sans authentification ni persistance.
 
@@ -80,26 +185,37 @@ def execute_get(
     if connect_timeout <= 0 or read_timeout <= 0:
         return "### Requête non envoyée", "### Erreur", "Les deux délais doivent être supérieurs à zéro."
 
+    try:
+        explicit_mapping = explicit_proxy_mapping(explicit_proxy_url)
+    except ValueError as exc:
+        return "### Requête non envoyée", "### Erreur de proxy", str(exc)
+
     pairs = rows_to_query_pairs(rows)
+    proxy_mode = (
+        f"proxy explicite : `{mask_proxy_url(explicit_proxy_url)}`"
+        if explicit_mapping
+        else ("variables proxy Python" if use_environment_proxy else "aucun proxy Python")
+    )
     preview = (
         "### GET prévu\n"
         f"- Endpoint : `{target}`\n"
         f"- Paramètres : `{json.dumps(pairs, ensure_ascii=False)}`\n"
         f"- Timeout connexion : `{connect_timeout:g} s`\n"
         f"- Timeout réponse : `{read_timeout:g} s`\n"
-        f"- Proxy système : `{'oui' if use_system_proxy else 'non'}`"
+        f"- Mode proxy : `{proxy_mode}`"
     )
     started = time.perf_counter()
     try:
-        # `trust_env` active/désactive HTTP_PROXY, HTTPS_PROXY et les réglages
-        # proxy Windows exposés à Python. Un proxy non joignable peut lui-même
-        # produire un ConnectTimeout sans que Qlicker ait reçu la requête.
+        # `trust_env` active/désactive seulement les variables HTTP_PROXY,
+        # HTTPS_PROXY, NO_PROXY… : il ne lit pas un fichier PAC Windows. Le
+        # proxy explicite est transmis à l'appel pour dominer les variables.
         with requests.Session() as session:
-            session.trust_env = bool(use_system_proxy)
+            session.trust_env = bool(use_environment_proxy)
             response = session.get(
                 target,
                 params=pairs,
                 timeout=(connect_timeout, read_timeout),
+                proxies=explicit_mapping,
             )
     except requests.RequestException as exc:
         elapsed = time.perf_counter() - started
@@ -108,7 +224,8 @@ def execute_get(
             f"### Erreur réseau après `{elapsed:.1f} s`",
             f"{type(exc).__name__}: {exc}\n\n"
             "Un `ConnectTimeout` signifie que la connexion TCP/TLS n'a pas été établie. "
-            "Vérifiez l'hôte, le port, le VPN/réseau interne et essayez éventuellement sans proxy système.",
+            "Vérifiez l'hôte, le port, le VPN/réseau interne et le mode proxy. "
+            "Le diagnostic DNS/TCP peut aider à isoler la route en cause.",
         )
 
     elapsed = time.perf_counter() - started
@@ -184,15 +301,24 @@ def build_ui() -> gr.Blocks:
                 minimum=1,
                 info="Temps maximal après connexion, pendant le traitement Qlicker.",
             )
-            use_system_proxy = gr.Checkbox(
-                label="Utiliser le proxy système",
+            use_environment_proxy = gr.Checkbox(
+                label="Utiliser les variables proxy Python",
                 value=True,
-                info="Décochez si Qlicker est interne et qu'un proxy bloque la connexion.",
+                info="Lit HTTP_PROXY / HTTPS_PROXY / NO_PROXY. Ne lit pas automatiquement le proxy Windows ou un PAC.",
+            )
+            explicit_proxy_url = gr.Textbox(
+                label="Proxy explicite (facultatif)",
+                type="password",
+                placeholder="http://proxy.entreprise.local:8080",
+                info="À recopier depuis Postman si un proxy personnalisé est utilisé. Il remplace les variables proxy.",
             )
             execute_button = gr.Button("Envoyer GET", variant="primary")
+        diagnostic_button = gr.Button("Diagnostiquer DNS / TCP", variant="secondary")
         request_preview = gr.Markdown(label="Requête")
         response_status = gr.Markdown(label="Statut")
         response_body = gr.Code(label="Réponse", language="json", lines=18, interactive=False)
+        diagnostic_status = gr.Markdown(label="Diagnostic réseau")
+        diagnostic_report = gr.Code(label="Rapport DNS / TCP", language="json", lines=14, interactive=False)
 
         parse_button.click(
             parse_url_to_rows,
@@ -202,15 +328,22 @@ def build_ui() -> gr.Blocks:
         )
         execute_button.click(
             execute_get,
-            inputs=[endpoint, parameters, connect_timeout, read_timeout, use_system_proxy],
+            inputs=[endpoint, parameters, connect_timeout, read_timeout, use_environment_proxy, explicit_proxy_url],
             outputs=[request_preview, response_status, response_body],
+            queue=False,
+        )
+        diagnostic_button.click(
+            network_diagnostics,
+            inputs=[endpoint, connect_timeout, use_environment_proxy, explicit_proxy_url],
+            outputs=[diagnostic_status, diagnostic_report],
             queue=False,
         )
         gr.Markdown(
             "### Lecture rapide\n"
             "- Coller une URL ne déclenche aucune requête : cela remplit seulement le tableau.  \n"
             "- `param=` est une valeur vide envoyée. Décochez **Envoyer** pour omettre réellement le paramètre.  \n"
-            "- Les paramètres en double sont conservés, contrairement à une simple structure dictionnaire."
+            "- Les paramètres en double sont conservés, contrairement à une simple structure dictionnaire.  \n"
+            "- Postman peut utiliser le proxy Windows/PAC ; Python Requests utilise les variables proxy ou le proxy explicite ci-dessus."
         )
     return app
 
