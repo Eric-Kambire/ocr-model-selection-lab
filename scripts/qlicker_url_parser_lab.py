@@ -12,7 +12,9 @@ from __future__ import annotations
 
 import json
 import socket
+import ssl
 import time
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 from urllib.parse import parse_qsl, urlsplit, urlunsplit
 
@@ -200,6 +202,57 @@ def windows_proxy_summary() -> dict[str, str]:
     }
 
 
+def _tcp_probe(host: str, port: int, timeout_seconds: float) -> dict[str, Any]:
+    """Teste une connexion TCP et retourne toujours un résultat sérialisable."""
+    started = time.perf_counter()
+    try:
+        with socket.create_connection((host, port), timeout=timeout_seconds):
+            pass
+        return {"statut": "ok", "duree_s": round(time.perf_counter() - started, 3)}
+    except OSError as exc:
+        return {
+            "statut": "erreur",
+            "duree_s": round(time.perf_counter() - started, 3),
+            "detail": repr(exc),
+        }
+
+
+def _tls_probe(host: str, port: int, timeout_seconds: float) -> dict[str, Any]:
+    """Vérifie le handshake TLS et la chaîne de certificats, sans HTTP."""
+    started = time.perf_counter()
+    try:
+        context = ssl.create_default_context()
+        with socket.create_connection((host, port), timeout=timeout_seconds) as connection:
+            with context.wrap_socket(connection, server_hostname=host) as secured:
+                certificate = secured.getpeercert()
+                return {
+                    "statut": "ok",
+                    "duree_s": round(time.perf_counter() - started, 3),
+                    "tls": secured.version(),
+                    "cipher": secured.cipher()[0] if secured.cipher() else "inconnue",
+                    "subject": str(certificate.get("subject", "non fourni")),
+                    "issuer": str(certificate.get("issuer", "non fourni")),
+                }
+    except (OSError, ssl.SSLError) as exc:
+        return {
+            "statut": "erreur",
+            "duree_s": round(time.perf_counter() - started, 3),
+            "detail": repr(exc),
+            "interpretation": "Le réseau est peut-être joignable, mais Python ne fait pas confiance au certificat ou le handshake TLS échoue.",
+        }
+
+
+def _proxy_endpoint(mapping: dict[str, str] | None, scheme: str) -> tuple[str, int] | None:
+    """Extrait hôte/port du proxy applicable au protocole demandé."""
+    if not mapping:
+        return None
+    raw_proxy = mapping.get(scheme) or mapping.get("https") or mapping.get("http")
+    parsed = urlsplit(raw_proxy or "")
+    if not parsed.hostname:
+        return None
+    return parsed.hostname, parsed.port or 8080
+
+
 def network_diagnostics(
     endpoint: str,
     connect_timeout_seconds: float,
@@ -232,6 +285,7 @@ def network_diagnostics(
     # PAC reste toutefois un programme JavaScript qui n'est pas exécuté ici.
     environment_proxies = requests.utils.get_environ_proxies(target)
     windows_mapping = windows_manual_proxy_mapping(target) if use_environment_proxy else None
+    effective_mapping = explicit_mapping or windows_mapping or environment_proxies or None
     report: dict[str, Any] = {
         "hote": parsed.hostname,
         "port": port,
@@ -249,25 +303,42 @@ def network_diagnostics(
     }
     try:
         addresses = socket.getaddrinfo(parsed.hostname, port, type=socket.SOCK_STREAM)
-        report["dns"] = {"statut": "ok", "adresses": sorted({item[4][0] for item in addresses})}
+        unique_addresses = sorted({item[4][0] for item in addresses})
+        report["dns"] = {"statut": "ok", "adresses": unique_addresses}
     except OSError as exc:
         report["dns"] = {"statut": "erreur", "detail": repr(exc)}
         return "### Diagnostic réseau", json.dumps(report, ensure_ascii=False, indent=2)
 
-    started = time.perf_counter()
-    try:
-        with socket.create_connection((parsed.hostname, port), timeout=timeout):
-            pass
-        report["tcp_direct"] = {"statut": "ok", "duree_s": round(time.perf_counter() - started, 3)}
-    except OSError as exc:
-        report["tcp_direct"] = {
-            "statut": "erreur",
-            "duree_s": round(time.perf_counter() - started, 3),
-            "detail": repr(exc),
+    # Tester chaque IP explique les cas fréquents où IPv6 échoue alors qu'IPv4
+    # fonctionne (ou l'inverse), un détail que Postman masque souvent.
+    addresses_to_probe = unique_addresses[:8]
+    with ThreadPoolExecutor(max_workers=min(len(addresses_to_probe), 8)) as executor:
+        probes = executor.map(lambda address: _tcp_probe(address, port, timeout), addresses_to_probe)
+        report["tcp_direct_par_ip"] = dict(zip(addresses_to_probe, probes, strict=True))
+    if parsed.scheme == "https":
+        report["tls_direct"] = _tls_probe(parsed.hostname, port, timeout)
+
+    proxy_target = _proxy_endpoint(effective_mapping, parsed.scheme)
+    if proxy_target:
+        proxy_host, proxy_port = proxy_target
+        report["tcp_proxy"] = {
+            "proxy": f"{proxy_host}:{proxy_port}",
+            "resultat": _tcp_probe(proxy_host, proxy_port, timeout),
+            "note": "Ce test joint le proxy ; il ne confirme pas encore le tunnel HTTPS vers Qlicker.",
         }
+    else:
+        report["tcp_proxy"] = {"statut": "non teste", "raison": "aucun proxy utilisable détecté par Python"}
+
+    report["lecture"] = [
+        "DNS en erreur : Python ne trouve pas le nom du serveur ; Internet/Postman peuvent fonctionner pour d'autres noms.",
+        "TCP direct en erreur : port bloqué, VPN/routage absent, mauvais hôte ou accès autorisé seulement via proxy.",
+        "TLS en erreur : certificat interne, inspection TLS d'entreprise ou incompatibilité TLS ; ne désactivez pas verify=False.",
+        "TCP proxy en erreur : Python ne peut pas joindre le proxy configuré par Windows/Postman.",
+        "TCP/TLS OK mais GET en erreur : comparer URL, paramètres, headers, cookies, certificat client et éventuelle authentification proxy dans Postman.",
+    ]
     return (
         "### Diagnostic réseau\n"
-        "DNS puis connexion TCP directe terminés. Ce test ne traverse pas un proxy Windows/PAC.",
+        "Diagnostic terminé : chaque étape indique la couche réseau qui échoue. Le GET reste le test final de l'API.",
         json.dumps(report, ensure_ascii=False, indent=2),
     )
 
@@ -375,6 +446,10 @@ def build_ui() -> gr.Blocks:
             "# Qlicker URL Parser Lab\n"
             "Collez l'URL fournie par Qlicker. Les paramètres deviennent éditables, puis vous lancez un GET sans enregistrer de document."
         )
+        gr.Markdown(
+            "**Pourquoi Postman/navigateur peuvent réussir alors que Python échoue ?**  \n"
+            "Le navigateur et Postman peuvent utiliser le proxy Windows, un PAC, des cookies, un certificat client ou des réglages TLS différents. "
+            "Le bouton de diagnostic sépare donc DNS, TCP, TLS et proxy au lieu d'afficher seulement « timeout ».")
         with gr.Row():
             raw_url = gr.Textbox(
                 label="URL complète à analyser",
