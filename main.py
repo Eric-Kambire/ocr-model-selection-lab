@@ -235,6 +235,21 @@ APP_CSS = """
 #cni-control {
     gap: 8px !important;
 }
+#cni-api-workspace {
+    gap: 10px !important;
+}
+#cni-api-workspace > .form,
+#cni-api-workspace > .block {
+    margin: 0 !important;
+}
+#cni-api-config,
+#cni-api-response {
+    border-color: var(--block-border-color) !important;
+}
+#cni-api-parser,
+#cni-api-guided {
+    padding-top: 2px !important;
+}
 .cni-header {
     display: flex;
     justify-content: space-between;
@@ -1122,121 +1137,67 @@ def build_ui() -> gr.Blocks:
                                 with gr.Group(visible=False) as cni_zip_source:
                                     cni_zip = gr.File(label="Archive ZIP de test", file_types=[".zip"], type="filepath")
                                     cni_import_zip = gr.Button("Importer le ZIP")
-                                with gr.Group(visible=False) as cni_api_source:
-                                    gr.Markdown(
-                                        "**Exploration API QlickEER sans persistance.** Collez d'abord une URL si vous l'avez : "
-                                        "ses paramètres deviennent modifiables avant le GET. Aucun document n'est téléchargé ni injecté dans le benchmark."
+                                with gr.Group(visible=False, elem_id="cni-api-workspace") as cni_api_source:
+                                    gr.Markdown("**API QlickEER · lecture seule** — configurez la connexion, choisissez une méthode d'appel, puis consultez la réponse. Aucun document n'est enregistré.")
+                                    with gr.Accordion("1 · Connexion", open=True, elem_id="cni-api-config"):
+                                        with gr.Row():
+                                            cni_api_base_url = gr.Textbox(label="Base URL commune", placeholder="http://serveur-interne/api", scale=3)
+                                            cni_api_timeout = gr.Number(value=30, minimum=1, precision=0, label="Timeout (s)", scale=1)
+                                            cni_api_proxy = gr.Textbox(label="Proxy explicite", type="password", placeholder="http://proxy.interne.local:8080", info="Optionnel ; utilisé pour tous les tests et jamais enregistré.", scale=3)
+                                            cni_api_verify_ssl = gr.Checkbox(label="Vérifier SSL", value=True, info="Décochez seulement pour un certificat interne connu.", scale=1)
+                                    gr.Markdown("**2 · Construire l'appel**")
+                                    cni_api_call_mode = gr.Radio(
+                                        [("Coller une URL depuis Postman", "parser"), ("Utiliser une route guidée", "guided")],
+                                        value="parser", label="Méthode",
                                     )
-                                    with gr.Row():
-                                        cni_api_base_url = gr.Textbox(
-                                            label="Base URL commune",
-                                            placeholder="http://serveur-interne/api",
-                                            scale=3,
-                                        )
-                                        cni_api_timeout = gr.Number(value=30, minimum=1, precision=0, label="Timeout API (s)", scale=1)
-                                        cni_api_proxy = gr.Textbox(
-                                            label="Proxy explicite",
-                                            type="password",
-                                            placeholder="http://proxy.interne.local:8080",
-                                            info="Optionnel. Il est utilisé pour tous les tests QlickEER et n'est pas enregistré.",
-                                            scale=3,
-                                        )
-                                        cni_api_verify_ssl = gr.Checkbox(
-                                            label="Vérifier SSL",
-                                            value=True,
-                                            info="Décochez seulement pour un certificat interne connu mais non reconnu.",
-                                            scale=1,
-                                        )
-                                    with gr.Group(elem_id="cni-api-parser"):
-                                        gr.Markdown("**Parser une URL QlickEER** · collez l'URL depuis Postman, puis modifiez les lignes avant l'appel.")
+                                    with gr.Group(visible=True, elem_id="cni-api-parser") as cni_api_parser_group:
+                                        gr.Markdown("Collez l’URL, parsez-la, puis modifiez uniquement les paramètres utiles.")
                                         with gr.Row():
-                                            cni_api_raw_url = gr.Textbox(
-                                                label="URL complète à parser",
-                                                placeholder="https://serveur-interne/api/get_signed_documents_list?customerID=123",
-                                                scale=6,
-                                            )
-                                            cni_api_parse_url = gr.Button("Parser l'URL", variant="secondary", scale=1)
+                                            cni_api_raw_url = gr.Textbox(label="URL complète", placeholder="https://serveur-interne/api/get_signed_documents_list?customerID=123", scale=6)
+                                            cni_api_parse_url = gr.Button("Parser", variant="secondary", scale=1)
                                         with gr.Row():
-                                            cni_api_parsed_endpoint = gr.Textbox(
-                                                label="Endpoint analysé",
-                                                placeholder="get_signed_documents_list",
-                                                info="Prérempli par le parser ; modifiable avant le test.",
-                                                scale=2,
-                                            )
-                                            cni_api_test_parsed = gr.Button("Tester l'URL analysée", variant="primary", scale=1)
-                                        cni_api_parsed_params = gr.Dataframe(
-                                            headers=["Paramètre", "Valeur", "Envoyer"],
-                                            datatype=["str", "str", "bool"],
-                                            row_count=(1, "dynamic"),
-                                            column_count=(3, "fixed"),
-                                            type="array",
-                                            interactive=True,
-                                            label="Paramètres modifiables après parsing",
+                                            cni_api_parsed_endpoint = gr.Textbox(label="Endpoint", placeholder="get_signed_documents_list", info="Prérempli par le parser ; modifiable avant le test.", scale=2)
+                                            cni_api_test_parsed = gr.Button("Exécuter le GET", variant="primary", scale=1)
+                                        cni_api_parsed_params = gr.Dataframe(headers=["Paramètre", "Valeur", "Envoyer"], datatype=["str", "str", "bool"], row_count=(1, "dynamic"), column_count=(3, "fixed"), type="array", interactive=True, label="Paramètres")
+                                        gr.Markdown("Décochez **Envoyer** pour omettre un paramètre ; une valeur vide envoie `paramètre=`.")
+                                    with gr.Group(visible=False, elem_id="cni-api-guided") as cni_api_guided_group:
+                                        cni_api_guided_route = gr.Dropdown(
+                                            [("Liste clients", "list"), ("Info client", "info"), ("Liste documents", "documents"), ("Voir fichier", "view")],
+                                            value="list", label="Route guidée",
                                         )
-                                        gr.Markdown(
-                                            "Ajoutez une ligne si nécessaire. Décochez **Envoyer** pour omettre le paramètre ; "
-                                            "une valeur vide envoie `paramètre=`."
-                                        )
-                                    with gr.Tabs():
-                                        with gr.Tab("1. Liste clients"):
-                                            cni_api_list_endpoint = gr.Textbox(
-                                                label="Segment endpoint / fonction",
-                                                placeholder="Ex. GetCustomers",
-                                                info="L'URL finale est Base URL + ce segment. Ce n'est pas forcément une fonction Python : c'est le chemin HTTP fourni par QlickEER.",
-                                            )
+                                        with gr.Group(visible=True) as cni_api_list_group:
+                                            cni_api_list_endpoint = gr.Textbox(label="Segment endpoint / fonction", placeholder="Ex. GetCustomers")
                                             with gr.Row():
                                                 cni_api_from_date = gr.Textbox(label="from_date", placeholder="YYYY-MM-DD")
                                                 cni_api_to_date = gr.Textbox(label="to_date", placeholder="YYYY-MM-DD")
-                                            with gr.Row():
-                                                cni_api_step = gr.Textbox(label="step", placeholder="HH:MM:SS selon le contrat reçu")
+                                                cni_api_step = gr.Textbox(label="step", placeholder="HH:MM:SS")
                                                 cni_api_page = gr.Number(value=1, minimum=1, precision=0, label="page")
                                                 cni_api_page_size = gr.Number(value=20, minimum=1, precision=0, label="pageSize")
-                                            cni_api_list_extra = gr.Textbox(
-                                                label="18 autres paramètres — JSON libre",
-                                                lines=5,
-                                                placeholder='Ex. {"sort": null, "status": "", "autre_parametre": "valeur"}',
-                                                info="`null` omet le paramètre ; `\"\"` envoie paramètre=. Les champs guidés ci-dessus restent prioritaires.",
-                                            )
-                                            cni_api_test_list = gr.Button("Tester GET liste clients", size="sm")
-                                        with gr.Tab("2. Info client"):
+                                            cni_api_list_extra = gr.Textbox(label="Autres paramètres — JSON", lines=3, placeholder='Ex. {"sort": null, "status": ""}')
+                                            cni_api_test_list = gr.Button("Exécuter GET liste clients", variant="primary")
+                                        with gr.Group(visible=False) as cni_api_info_group:
                                             cni_api_info_endpoint = gr.Textbox(label="Segment endpoint / fonction", placeholder="Ex. GetCustomerData")
                                             with gr.Row():
                                                 cni_api_customer_id = gr.Textbox(label="customerID", placeholder="Identifiant client")
-                                                cni_api_load_documents = gr.Radio(
-                                                    [("0 — ne pas charger les documents", 0), ("1 — charger les documents", 1)],
-                                                    value=0,
-                                                    label="loadDocuments",
-                                                )
-                                            cni_api_info_extra = gr.Textbox(label="Autres paramètres — JSON libre", lines=4, placeholder='Ex. {"includeHistory": null}')
-                                            cni_api_test_info = gr.Button("Tester GET info client", size="sm")
-                                        with gr.Tab("3. Liste documents"):
-                                            cni_api_documents_endpoint = gr.Textbox(
-                                                label="Segment endpoint / fonction",
-                                                value="get_signed_documents_list",
-                                                info="Fonction confirmée : customerID est l'unique paramètre connu.",
-                                            )
+                                                cni_api_load_documents = gr.Radio([("0 — sans documents", 0), ("1 — charger les documents", 1)], value=0, label="loadDocuments")
+                                            cni_api_info_extra = gr.Textbox(label="Autres paramètres — JSON", lines=3, placeholder='Ex. {"includeHistory": null}')
+                                            cni_api_test_info = gr.Button("Exécuter GET info client", variant="primary")
+                                        with gr.Group(visible=False) as cni_api_documents_group:
+                                            cni_api_documents_endpoint = gr.Textbox(label="Segment endpoint / fonction", value="get_signed_documents_list")
                                             cni_api_documents_customer_id = gr.Textbox(label="customerID", placeholder="Identifiant client")
-                                            cni_api_documents_extra = gr.Textbox(label="Autres paramètres — JSON libre", lines=4, placeholder='Ex. {"documentType": "CIN"}')
-                                            cni_api_test_documents = gr.Button("Tester GET liste documents", size="sm")
-                                        with gr.Tab("4. Voir fichier"):
-                                            cni_api_view_endpoint = gr.Textbox(
-                                                label="Segment endpoint / fonction",
-                                                value="view_file",
-                                                info="Fonction confirmée. Six paramètres sont attendus au total.",
-                                            )
+                                            cni_api_documents_extra = gr.Textbox(label="Autres paramètres — JSON", lines=3, placeholder='Ex. {"documentType": "CIN"}')
+                                            cni_api_test_documents = gr.Button("Exécuter GET liste documents", variant="primary")
+                                        with gr.Group(visible=False) as cni_api_view_group:
+                                            cni_api_view_endpoint = gr.Textbox(label="Segment endpoint / fonction", value="view_file")
                                             with gr.Row():
                                                 cni_api_view_customer_id = gr.Textbox(label="customerID", placeholder="Identifiant client")
                                                 cni_api_view_page = gr.Number(value=1, minimum=1, precision=0, label="page")
                                                 cni_api_view_file = gr.Textbox(label="file", placeholder="Nom ou identifiant de fichier")
-                                            cni_api_view_extra = gr.Textbox(
-                                                label="3 autres paramètres — JSON libre",
-                                                lines=4,
-                                                placeholder='Ex. {"param4": "", "param5": null, "param6": "valeur"}',
-                                                info="view_file a 6 paramètres : customerID, page, file et trois paramètres à préciser quand le contrat complet sera connu.",
-                                            )
-                                            cni_api_test_view = gr.Button("Tester GET voir fichier", size="sm")
-                                    cni_api_feedback = gr.HTML(_cni_alert_html("ready", "Configurez un endpoint puis lancez un test. Aucune donnée n'est enregistrée."))
-                                    cni_api_trace = gr.Code(label="Requête et réponse API", language="json", lines=16, interactive=False)
+                                            cni_api_view_extra = gr.Textbox(label="3 autres paramètres — JSON", lines=3, placeholder='Ex. {"param4": "", "param5": null, "param6": "valeur"}')
+                                            cni_api_test_view = gr.Button("Exécuter GET voir fichier", variant="primary")
+                                    with gr.Accordion("3 · Réponse du dernier GET", open=False, elem_id="cni-api-response"):
+                                        cni_api_feedback = gr.HTML(_cni_alert_html("ready", "Prêt : configurez une méthode puis exécutez un GET."))
+                                        cni_api_trace = gr.Code(label="Requête et réponse", language="json", lines=12, interactive=False)
                                 cni_scan_status = gr.Markdown("Indiquez un dossier clients, puis scannez-le.")
                                 with gr.Accordion("Aperçu d’un document", open=False):
                                     with gr.Row():
@@ -1779,6 +1740,14 @@ def build_ui() -> gr.Blocks:
                 LOGGER.exception("CNI ZIP import failed")
                 return gr.update(), gr.update(), f"Import ZIP impossible : {type(exc).__name__}: {exc}"
 
+        def qlickeer_call_mode_visibility(mode: str):
+            """N'affiche que la méthode d'appel API actuellement choisie."""
+            return gr.update(visible=mode == "parser"), gr.update(visible=mode == "guided")
+
+        def qlickeer_guided_route_visibility(route: str):
+            """N'affiche que les champs de la route guidée active."""
+            return tuple(gr.update(visible=route == name) for name in ("list", "info", "documents", "view"))
+
         def parse_qlicker_url_for_ui(raw_url):
             """Remplit l'espace de travail éditable à partir d'une URL collée.
 
@@ -2226,6 +2195,18 @@ def build_ui() -> gr.Blocks:
             _cni_source_mode_visibility,
             inputs=[cni_input_mode],
             outputs=[cni_folder_source, cni_zip_source, cni_api_source],
+            queue=False,
+        )
+        cni_api_call_mode.change(
+            qlickeer_call_mode_visibility,
+            inputs=[cni_api_call_mode],
+            outputs=[cni_api_parser_group, cni_api_guided_group],
+            queue=False,
+        )
+        cni_api_guided_route.change(
+            qlickeer_guided_route_visibility,
+            inputs=[cni_api_guided_route],
+            outputs=[cni_api_list_group, cni_api_info_group, cni_api_documents_group, cni_api_view_group],
             queue=False,
         )
         cni_api_parse_url.click(
