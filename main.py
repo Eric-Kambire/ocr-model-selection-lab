@@ -634,6 +634,23 @@ def _cni_field_comparisons(result: dict[str, Any]) -> dict[str, str]:
     return output
 
 
+def _cni_confidence_summary(result: dict[str, Any]) -> str:
+    """Présente la confiance QlickEER par champ à côté du verdict OCR."""
+    label = _read_json_if_available(result.get("label_path"))
+    confidence = label.get("field_confidence", {}) if isinstance(label, dict) else {}
+    if not isinstance(confidence, dict) or not confidence:
+        return ""
+    comparisons = _cni_field_comparisons(result)
+    rows = [
+        f"| `{field}` | {comparisons.get(field, '—')} | {float(value):.1f} % |"
+        for field, value in confidence.items()
+        if isinstance(value, (int, float))
+    ]
+    if not rows:
+        return ""
+    return "\n\n**Confiance du label QlickEER et comparaison OCR**\n\n| Champ | Comparaison | Confiance label |\n|---|---|---|\n" + "\n".join(rows)
+
+
 def _cni_raw_output(path_value: Any) -> str:
     """Expose aussi une réponse reçue après le timeout de l'interface."""
     path = Path(str(path_value)) if path_value else None
@@ -1341,10 +1358,20 @@ def build_ui() -> gr.Blocks:
                         with gr.Row():
                             cni_cpu_threads = gr.Number(value=max(1, min(8, os.cpu_count() or 1)), minimum=1, maximum=max(1, os.cpu_count() or 1), precision=0, label="Threads CPU Ollama")
                             cni_unload = gr.Checkbox(value=True, label="Décharger le modèle après chaque appel")
+                        with gr.Row():
+                            cni_rotation_method = gr.Radio(
+                                [("Aucune rotation automatique", "none"), ("Pillow · recherche par ratio", "pillow"), ("OpenCV · rectangle orienté", "opencv")],
+                                value="none", label="Rotation automatique",
+                                info="Une seule méthode peut être activée. Pillow cherche l'angle, OpenCV utilise minAreaRect.",
+                            )
+                            cni_perspective_correction = gr.Checkbox(
+                                value=False, label="Corriger la perspective (OpenCV)",
+                                info="Redresse la carte seulement si un quadrilatère crédible est détecté.",
+                            )
                         cni_preprocessing = gr.CheckboxGroup(
-                            [("Redresser une légère inclinaison", "deskew"), ("Améliorer le contraste", "contrast"), ("Réduire le bruit", "denoise")],
-                            value=[], label="Prétraitement image (optionnel)",
-                            info="Appliqué après conversion PDF/JPEG/PNG et avant crop. Les opérations sont enregistrées dans preparation.json.",
+                            [("Améliorer le contraste", "contrast"), ("Réduire le bruit", "denoise")],
+                            value=[], label="Améliorations complémentaires",
+                            info="Appliquées après rotation puis avant crop. Chaque opération est enregistrée dans preparation.json.",
                         )
                         with gr.Row():
                             cni_recto_suffix = gr.Textbox(value=DEFAULT_RECTO_SUFFIX, label="Suffixe recto", info="Texte avant l’extension, par exemple _CIN_Recto. PDF/JPEG/PNG acceptés.")
@@ -2015,6 +2042,7 @@ def build_ui() -> gr.Blocks:
                 f"**Tokens/s :** {token_speed_text}\n\n"
                 f"**CIN recto/verso cohérent :** {_cni_boolean(result.get('cin_coherent'))} · "
                 f"**Label :** `{result.get('label_status') or 'absent'}`"
+                + _cni_confidence_summary(result)
             )
 
         def show_cni_detail(index, results, offset=0):
@@ -2065,7 +2093,7 @@ def build_ui() -> gr.Blocks:
             """Passe à la paire CNI suivante."""
             return show_cni_detail(index, results, 1)
 
-        def on_cni_run(model_specs, client_records, strategy, dpi, timeout, threads, unload, preprocessing, system_prompt, prompt_instructions, continue_without_label):
+        def on_cni_run(model_specs, client_records, strategy, dpi, timeout, threads, unload, rotation_method, perspective_correction, preprocessing, system_prompt, prompt_instructions, continue_without_label):
             """Valide le lancement puis diffuse l'avancement CNI document par document."""
             empty = empty_figure()
             results: list[dict[str, Any]] = []
@@ -2136,7 +2164,12 @@ def build_ui() -> gr.Blocks:
                     strategy=str(strategy), dpi=int(dpi), timeout_seconds=float(timeout or 0),
                     cpu_threads=int(threads or 1), unload_after_task=bool(unload),
                     fields=fields, prompt_instructions=prompt_instructions, system_prompt=system_prompt,
-                    preprocessing={str(value): True for value in (preprocessing or [])},
+                    preprocessing={
+                        **{str(value): True for value in (preprocessing or [])},
+                        "rotation_pillow": rotation_method == "pillow",
+                        "rotation_opencv": rotation_method == "opencv",
+                        "perspective": bool(perspective_correction),
+                    },
                 ):
                     total, completed = int(event.get("total", total_pairs)), int(event.get("completed", 0))
                     progress = completed / total * 100 if total else 0
@@ -2403,7 +2436,7 @@ def build_ui() -> gr.Blocks:
         )
         cni_event = cni_launch.click(
             on_cni_run,
-            inputs=[cni_models, cni_clients_state, cni_strategy, cni_dpi, cni_timeout, cni_cpu_threads, cni_unload, cni_preprocessing, cni_system_prompt, cni_prompt_instructions, cni_continue_without_label],
+            inputs=[cni_models, cni_clients_state, cni_strategy, cni_dpi, cni_timeout, cni_cpu_threads, cni_unload, cni_rotation_method, cni_perspective_correction, cni_preprocessing, cni_system_prompt, cni_prompt_instructions, cni_continue_without_label],
             outputs=[
                 cni_launch_feedback,
                 cni_launch, cni_stop,

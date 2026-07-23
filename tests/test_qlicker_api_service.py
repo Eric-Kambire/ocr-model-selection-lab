@@ -9,6 +9,8 @@ from ocr_benchmark.application.qlicker_api_service import (
     parse_qlicker_url,
     parse_extra_query_params,
     system_proxy_mapping,
+    extract_customer_cni_label,
+    find_cni_documents,
 )
 
 
@@ -68,4 +70,37 @@ def test_system_proxy_keeps_only_http_schemes(monkeypatch):
     assert system_proxy_mapping() == {
         "http": "http://proxy:8080",
         "https": "http://proxy:8080",
+    }
+
+
+def test_customer_data_becomes_cni_label_with_confidence():
+    """Les champs métier QlickEER deviennent le contrat CNI attendu par l'évaluateur."""
+    payload = {"response": {"body": {"response_data": {"customer": {
+        "id": "customer-1",
+        "customer_data": {
+            "cin_id": "A0000000", "cin_id_confidence": 100,
+            "first_name": "PRENOM", "first_name_confidence": 95,
+            "last_name": "NOM", "birth_date": "01/01/1990",
+            "birth_place": "RABAT", "validity_date": "01/01/2030",
+            "address": "ADRESSE",
+        },
+    }}}}}
+
+    label = extract_customer_cni_label(payload)
+
+    assert label["cin"] == "A0000000"
+    assert label["date_naissance"] == "1990-01-01"
+    assert label["date_validite"] == "2030-01-01"
+    assert label["field_confidence"]["cin"] == 100
+
+
+def test_document_list_detects_cni_pair_only():
+    """Les conventions et autres pièces ne sont jamais prises pour une CNI."""
+    assert find_cni_documents([
+        "Qlickeer_A0000000_Convention_compte.pdf",
+        "Qlickeer_A0000000_CIN_recto.pdf",
+        "Qlickeer_A0000000_CIN_verso.pdf",
+    ]) == {
+        "recto": "Qlickeer_A0000000_CIN_recto.pdf",
+        "verso": "Qlickeer_A0000000_CIN_verso.pdf",
     }

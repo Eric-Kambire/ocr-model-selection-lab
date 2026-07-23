@@ -9,6 +9,7 @@ retourne un diagnostic prêt à afficher dans Gradio.
 from __future__ import annotations
 
 import json
+from datetime import datetime
 from collections.abc import Mapping, Sequence
 from typing import Any
 from urllib.parse import parse_qsl, urljoin, urlsplit, urlunsplit
@@ -124,6 +125,66 @@ def system_proxy_mapping() -> dict[str, str]:
         for scheme, value in detected.items()
         if scheme in {"http", "https"} and str(value).strip()
     }
+
+
+def extract_customer_cni_label(payload: Mapping[str, Any]) -> dict[str, Any]:
+    """Transforme ``get_customer_data`` en label compatible avec le benchmark CNI.
+
+    Les données d'origine restent dans la réponse API. Le label normalisé ne
+    retient que les champs CNI comparables et leurs confiances fournisseur ; il
+    peut donc être écrit dans ``<client_id>.json`` sans embarquer les données de
+    compte, produit ou contact qui ne concernent pas l'OCR.
+    """
+    body = payload.get("response", {}).get("body", {}) if isinstance(payload, Mapping) else {}
+    response_data = body.get("response_data", {}) if isinstance(body, Mapping) else {}
+    customer = response_data.get("customer", {}) if isinstance(response_data, Mapping) else {}
+    fields = customer.get("customer_data", {}) if isinstance(customer, Mapping) else {}
+    if not isinstance(fields, Mapping):
+        raise ValueError("get_customer_data : customer_data est absent ou invalide.")
+    field_map = {
+        "cin": "cin_id", "prenom": "first_name", "nom": "last_name",
+        "date_naissance": "birth_date", "ville_naissance": "birth_place",
+        "date_validite": "validity_date", "adresse": "address",
+    }
+    label = {target: _normalise_qlickeer_date(fields.get(source)) if "date_" in target else _clean_label_value(fields.get(source)) for target, source in field_map.items()}
+    confidence = {
+        target: fields.get(f"{source}_confidence")
+        for target, source in field_map.items()
+        if fields.get(f"{source}_confidence") is not None
+    }
+    return {
+        **label,
+        "field_confidence": confidence,
+        "label_source": "qlickeer_get_customer_data.customer_data",
+        "customer_id": customer.get("id"),
+    }
+
+
+def find_cni_documents(documents: Sequence[Any]) -> dict[str, str | None]:
+    """Repère les noms recto/verso CNI dans ``get_signed_documents_list``."""
+    names = [str(item) for item in documents if isinstance(item, str)]
+    def find(side: str) -> str | None:
+        marker = f"cin_{side}"
+        return next((name for name in names if marker in name.casefold().replace("-", "_").replace(" ", "_")), None)
+    return {"recto": find("recto"), "verso": find("verso")}
+
+
+def _clean_label_value(value: Any) -> str | None:
+    text = str(value or "").strip()
+    return text or None
+
+
+def _normalise_qlickeer_date(value: Any) -> str | None:
+    """Normalise les dates QlickEER connues vers YYYY-MM-DD pour la comparaison."""
+    text = _clean_label_value(value)
+    if text is None:
+        return None
+    for pattern in ("%d/%m/%Y", "%Y-%m-%d"):
+        try:
+            return datetime.strptime(text[:10], pattern).date().isoformat()
+        except ValueError:
+            continue
+    return text
 
 
 def execute_qlicker_get(
