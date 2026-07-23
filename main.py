@@ -1172,7 +1172,9 @@ def build_ui() -> gr.Blocks:
                                 with gr.Group(visible=False) as cni_zip_source:
                                     cni_zip = gr.File(label="Archive ZIP de test", file_types=[".zip"], type="filepath")
                                     cni_import_zip = gr.Button("Importer le ZIP")
-                                with gr.Group(visible=False, elem_id="cni-api-workspace") as cni_api_source:
+                                # Ancienne zone technique conservée temporairement hors écran : les
+                                # composants seront retirés après migration complète des routes API.
+                                with gr.Group(visible=False, elem_id="cni-api-legacy") as cni_api_legacy_config:
                                     gr.Markdown("**API QlickEER · lecture seule** — configurez la connexion, choisissez une méthode d'appel, puis consultez la réponse. Aucun document n'est enregistré.")
                                     with gr.Accordion("1 · Connexion", open=True, elem_id="cni-api-config"):
                                         with gr.Row():
@@ -1248,6 +1250,29 @@ def build_ui() -> gr.Blocks:
                                     with gr.Accordion("3 · Réponse du dernier GET", open=False, elem_id="cni-api-response"):
                                         cni_api_feedback = gr.HTML(_cni_alert_html("ready", "Prêt : configurez une méthode puis exécutez un GET."))
                                         cni_api_trace = gr.Code(label="Requête et réponse", language="json", lines=12, interactive=False)
+                                with gr.Group(visible=False, elem_id="cni-api-source") as cni_api_source:
+                                    gr.Markdown("**API QlickEER** · la connexion et les routes se configurent dans `4. Paramètres → API QlickEER`.")
+                                    cni_api_connection_status = gr.Markdown("Configuration requise : renseignez d'abord la route **Clients** dans les paramètres.")
+                                    with gr.Row():
+                                        cni_api_source_from_date = gr.Textbox(label="from_date", placeholder="YYYY-MM-DD")
+                                        cni_api_source_to_date = gr.Textbox(label="to_date", placeholder="YYYY-MM-DD")
+                                        cni_api_source_step = gr.Textbox(label="step", placeholder="HH:MM:SS")
+                                        cni_api_source_page = gr.Number(value=1, minimum=1, precision=0, label="page")
+                                        cni_api_source_page_size = gr.Number(value=20, minimum=1, precision=0, label="pageSize")
+                                    cni_api_load_customers = gr.Button("Rechercher les clients", variant="primary")
+                                    with gr.Row():
+                                        cni_api_source_select_all = gr.Button("Tout sélectionner", size="sm")
+                                        cni_api_source_clear_selection = gr.Button("Tout désélectionner", size="sm")
+                                        cni_api_source_selected_summary = gr.Markdown("Aucun client chargé.")
+                                    cni_api_source_customers_state = gr.State([])
+                                    cni_api_source_customers_table = gr.Dataframe(
+                                        headers=["Sélectionner", "ID client", "Nom", "Prénom", "Agence", "Statut", "Création", "Document"],
+                                        datatype=["bool", "str", "str", "str", "str", "str", "str", "str"],
+                                        interactive=True, label="Clients trouvés", max_height=300,
+                                    )
+                                    with gr.Accordion("Diagnostic de la dernière requête", open=False):
+                                        cni_api_source_feedback = gr.HTML(_cni_alert_html("ready", "Prêt : configurez la route Clients puis recherchez."))
+                                        cni_api_source_trace = gr.Code(label="Réponse technique", language="json", lines=10, interactive=False)
                                 cni_scan_status = gr.Markdown("Indiquez un dossier clients, puis scannez-le.")
                                 with gr.Accordion("Aperçu d’un document", open=False):
                                     with gr.Row():
@@ -1395,6 +1420,37 @@ def build_ui() -> gr.Blocks:
                             interactive=False,
                         )
                         cni_refresh_prompt = gr.Button("Actualiser l’aperçu du prompt")
+                        with gr.Tabs():
+                            with gr.Tab("API QlickEER"):
+                                gr.Markdown("Configurez chaque route une fois avec son URL Postman complète. Les paramètres parsés sont conservés pour la session ; aucun proxy explicite n'est sauvegardé.")
+                                with gr.Tabs():
+                                    with gr.Tab("Connexion"):
+                                        with gr.Row():
+                                            cni_api_settings_base_url = gr.Textbox(label="Base URL commune", placeholder="https://serveur-interne")
+                                            cni_api_settings_timeout = gr.Number(value=30, minimum=1, precision=0, label="Timeout (s)")
+                                            cni_api_settings_use_system_proxy = gr.Checkbox(value=False, label="Utiliser le proxy système")
+                                            cni_api_settings_verify_ssl = gr.Checkbox(value=True, label="Vérifier SSL")
+                                        cni_api_settings_proxy = gr.Textbox(label="Proxy explicite", type="password", placeholder="http://ncproxy:8080", info="À renseigner seulement si le proxy système est désactivé.")
+                                    with gr.Tab("Clients"):
+                                        cni_api_list_raw_url = gr.Textbox(label="URL Postman · liste clients", placeholder="https://serveur/api/get_customer?...", lines=2)
+                                        cni_api_list_parse = gr.Button("Parser et enregistrer la route Clients")
+                                        cni_api_list_endpoint_setting = gr.Textbox(label="Endpoint", interactive=False)
+                                        cni_api_list_params_setting = gr.Dataframe(headers=["Paramètre", "Valeur", "Envoyer"], datatype=["str", "str", "bool"], type="array", interactive=True, label="Paramètres parsés")
+                                    with gr.Tab("Détail client"):
+                                        cni_api_info_raw_url = gr.Textbox(label="URL Postman · get_customer_data", lines=2)
+                                        cni_api_info_parse = gr.Button("Parser et enregistrer la route Détail client")
+                                        cni_api_info_endpoint_setting = gr.Textbox(label="Endpoint", interactive=False)
+                                        cni_api_info_params_setting = gr.Dataframe(headers=["Paramètre", "Valeur", "Envoyer"], datatype=["str", "str", "bool"], type="array", interactive=True, label="Paramètres parsés")
+                                    with gr.Tab("Documents"):
+                                        cni_api_documents_raw_url = gr.Textbox(label="URL Postman · get_signed_documents_list", lines=2)
+                                        cni_api_documents_parse = gr.Button("Parser et enregistrer la route Documents")
+                                        cni_api_documents_endpoint_setting = gr.Textbox(label="Endpoint", interactive=False)
+                                        cni_api_documents_params_setting = gr.Dataframe(headers=["Paramètre", "Valeur", "Envoyer"], datatype=["str", "str", "bool"], type="array", interactive=True, label="Paramètres parsés")
+                                    with gr.Tab("Fichier"):
+                                        cni_api_view_raw_url = gr.Textbox(label="URL Postman · view_file", lines=2)
+                                        cni_api_view_parse = gr.Button("Parser et enregistrer la route Fichier")
+                                        cni_api_view_endpoint_setting = gr.Textbox(label="Endpoint", interactive=False)
+                                        cni_api_view_params_setting = gr.Dataframe(headers=["Paramètre", "Valeur", "Envoyer"], datatype=["str", "str", "bool"], type="array", interactive=True, label="Paramètres parsés")
 
         def on_prepare(
             model_specs,
@@ -1807,6 +1863,24 @@ def build_ui() -> gr.Blocks:
         def qlickeer_guided_route_visibility(route: str):
             """N'affiche que les champs de la route guidée active."""
             return tuple(gr.update(visible=route == name) for name in ("list", "info", "documents", "view"))
+
+        def parse_qlickeer_route(raw_url: str):
+            """Transforme une URL Postman complète en base, endpoint et paramètres éditables."""
+            try:
+                base_url, endpoint, rows = parse_qlicker_url(raw_url)
+                return base_url, endpoint, rows
+            except ValueError as exc:
+                LOGGER.warning("QlickEER route parse rejected | error=%s", exc)
+                return gr.update(), gr.update(), []
+
+        def load_configured_customers(base_url, endpoint, route_rows, from_date, to_date, step, page, page_size, timeout, proxy_url, use_system_proxy, verify_ssl):
+            """Exécute la route Clients configurée et surcharge ses paramètres variables."""
+            static = dict(editable_rows_to_query_pairs(route_rows))
+            return test_qlicker_list(
+                base_url, endpoint, from_date, to_date, step, page, page_size,
+                json.dumps(static, ensure_ascii=False), timeout, proxy_url,
+                use_system_proxy, verify_ssl,
+            )
 
         def parse_qlicker_url_for_ui(raw_url):
             """Remplit l'espace de travail éditable à partir d'une URL collée.
@@ -2331,6 +2405,48 @@ def build_ui() -> gr.Blocks:
             inputs=[cni_api_guided_route],
             outputs=[cni_api_list_group, cni_api_info_group, cni_api_documents_group, cni_api_view_group],
             queue=False,
+        )
+        cni_api_list_parse.click(
+            parse_qlickeer_route, inputs=[cni_api_list_raw_url],
+            outputs=[cni_api_settings_base_url, cni_api_list_endpoint_setting, cni_api_list_params_setting], queue=False,
+        )
+        cni_api_info_parse.click(
+            parse_qlickeer_route, inputs=[cni_api_info_raw_url],
+            outputs=[cni_api_settings_base_url, cni_api_info_endpoint_setting, cni_api_info_params_setting], queue=False,
+        )
+        cni_api_documents_parse.click(
+            parse_qlickeer_route, inputs=[cni_api_documents_raw_url],
+            outputs=[cni_api_settings_base_url, cni_api_documents_endpoint_setting, cni_api_documents_params_setting], queue=False,
+        )
+        cni_api_view_parse.click(
+            parse_qlickeer_route, inputs=[cni_api_view_raw_url],
+            outputs=[cni_api_settings_base_url, cni_api_view_endpoint_setting, cni_api_view_params_setting], queue=False,
+        )
+        cni_api_load_customers.click(
+            load_configured_customers,
+            inputs=[
+                cni_api_settings_base_url, cni_api_list_endpoint_setting, cni_api_list_params_setting,
+                cni_api_source_from_date, cni_api_source_to_date, cni_api_source_step,
+                cni_api_source_page, cni_api_source_page_size, cni_api_settings_timeout,
+                cni_api_settings_proxy, cni_api_settings_use_system_proxy, cni_api_settings_verify_ssl,
+            ],
+            outputs=[
+                cni_api_source_feedback, cni_api_source_trace, cni_api_source_customers_table,
+                cni_api_source_customers_state, cni_api_source_selected_summary,
+            ], queue=False,
+        )
+        cni_api_source_select_all.click(
+            select_all_customers, inputs=[cni_api_source_customers_state],
+            outputs=[cni_api_source_customers_table, cni_api_source_selected_summary], queue=False,
+        )
+        cni_api_source_clear_selection.click(
+            clear_customer_selection, inputs=[cni_api_source_customers_state],
+            outputs=[cni_api_source_customers_table, cni_api_source_selected_summary], queue=False,
+        )
+        cni_api_source_customers_table.change(
+            _customer_selection_summary,
+            inputs=[cni_api_source_customers_table, cni_api_source_customers_state],
+            outputs=[cni_api_source_selected_summary], queue=False,
         )
         cni_api_parse_url.click(
             parse_qlicker_url_for_ui,
