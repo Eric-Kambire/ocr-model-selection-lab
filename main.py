@@ -1365,12 +1365,11 @@ def build_ui() -> gr.Blocks:
                                             cni_recto_raw = gr.Code(label="Recto : retour brut conservé", language=None, lines=7, interactive=False)
                                             cni_verso_raw = gr.Code(label="Verso : retour brut conservé", language=None, lines=7, interactive=False)
                     with gr.Tab("4. Paramètres", render_children=True):
-                        gr.Markdown(
-                            "### Paramètres CNI\n\n"
-                            "Les réglages sont appliqués au prochain lancement. Le prompt complet est affiché avant l'appel modèle."
-                        )
-                        with gr.Row():
-                            cni_strategy = gr.Radio(
+                        gr.Markdown("### Paramètres CNI\n\nLes réglages sont appliqués au prochain lancement.")
+                        with gr.Tabs(elem_id="cni-settings-tabs"):
+                            with gr.Tab("Exécution"):
+                                with gr.Row():
+                                    cni_strategy = gr.Radio(
                                 [
                                     ("Deux appels : recto puis verso — recommandé", "separate_calls"),
                                     ("Une image : recto en haut, verso en bas", "combined_vertical"),
@@ -1378,49 +1377,50 @@ def build_ui() -> gr.Blocks:
                                 value="separate_calls",
                                 label="Stratégie d'envoi au modèle",
                             )
-                            cni_dpi = gr.Slider(150, 450, value=300, step=25, label="Résolution PDF (DPI)")
-                            cni_timeout = gr.Number(value=300, minimum=1, maximum=7200, precision=0, label="Temps maximum par appel (s)")
-                        with gr.Row():
-                            cni_cpu_threads = gr.Number(value=max(1, min(8, os.cpu_count() or 1)), minimum=1, maximum=max(1, os.cpu_count() or 1), precision=0, label="Threads CPU Ollama")
-                            cni_unload = gr.Checkbox(value=True, label="Décharger le modèle après chaque appel")
-                        with gr.Row():
-                            cni_rotation_method = gr.Radio(
+                                    cni_dpi = gr.Slider(150, 450, value=300, step=25, label="Résolution PDF (DPI)")
+                                    cni_timeout = gr.Number(value=300, minimum=1, maximum=7200, precision=0, label="Temps maximum par appel (s)")
+                                with gr.Row():
+                                    cni_cpu_threads = gr.Number(value=max(1, min(8, os.cpu_count() or 1)), minimum=1, maximum=max(1, os.cpu_count() or 1), precision=0, label="Threads CPU Ollama")
+                                    cni_unload = gr.Checkbox(value=True, label="Décharger le modèle après chaque appel")
+                                with gr.Row():
+                                    cni_recto_suffix = gr.Textbox(value=DEFAULT_RECTO_SUFFIX, label="Suffixe recto")
+                                    cni_verso_suffix = gr.Textbox(value=DEFAULT_VERSO_SUFFIX, label="Suffixe verso")
+                            with gr.Tab("Prétraitement"):
+                                with gr.Row():
+                                    cni_rotation_method = gr.Radio(
                                 [("Aucune rotation automatique", "none"), ("Pillow · recherche par ratio", "pillow"), ("OpenCV · rectangle orienté", "opencv")],
                                 value="none", label="Rotation automatique",
                                 info="Une seule méthode peut être activée. Pillow cherche l'angle, OpenCV utilise minAreaRect.",
                             )
-                            cni_perspective_correction = gr.Checkbox(
+                                    cni_perspective_correction = gr.Checkbox(
                                 value=False, label="Corriger la perspective (OpenCV)",
                                 info="Redresse la carte seulement si un quadrilatère crédible est détecté.",
                             )
-                        cni_preprocessing = gr.CheckboxGroup(
+                                cni_preprocessing = gr.CheckboxGroup(
                             [("Améliorer le contraste", "contrast"), ("Réduire le bruit", "denoise")],
                             value=[], label="Améliorations complémentaires",
                             info="Appliquées après rotation puis avant crop. Chaque opération est enregistrée dans preparation.json.",
                         )
-                        with gr.Row():
-                            cni_recto_suffix = gr.Textbox(value=DEFAULT_RECTO_SUFFIX, label="Suffixe recto", info="Texte avant l’extension, par exemple _CIN_Recto. PDF/JPEG/PNG acceptés.")
-                            cni_verso_suffix = gr.Textbox(value=DEFAULT_VERSO_SUFFIX, label="Suffixe verso", info="Texte avant l’extension, par exemple _CIN_Verso. PDF/JPEG/PNG acceptés.")
-                        cni_system_prompt = gr.Textbox(
+                            with gr.Tab("Prompt et champs"):
+                                cni_system_prompt = gr.Textbox(
                             value=DEFAULT_CNI_SYSTEM_PROMPT,
                             label="Prompt système",
                             lines=5,
                             info="Règle de plus haute priorité. Trop long ou contradictoire réduit la stabilité des réponses.",
                         )
-                        cni_prompt_instructions = gr.Textbox(
+                                cni_prompt_instructions = gr.Textbox(
                             value=DEFAULT_CNI_USER_INSTRUCTIONS,
                             label="Prompt utilisateur / consignes d'extraction",
                             lines=4,
                             info="Demande appliquée à chaque image. Les clés JSON doivent rester stables pour comparer les modèles.",
                         )
-                        cni_prompt_preview = gr.Code(
+                                cni_prompt_preview = gr.Code(
                             value=_cni_prompt_preview("separate_calls", DEFAULT_CNI_SYSTEM_PROMPT, DEFAULT_CNI_USER_INSTRUCTIONS),
                             label="Prompts réellement envoyés (système + utilisateur)",
                             lines=18,
                             interactive=False,
                         )
-                        cni_refresh_prompt = gr.Button("Actualiser l’aperçu du prompt")
-                        with gr.Tabs():
+                                cni_refresh_prompt = gr.Button("Actualiser l’aperçu du prompt")
                             with gr.Tab("API QlickEER"):
                                 gr.Markdown("Configurez chaque route une fois avec son URL Postman complète. Les paramètres parsés sont conservés pour la session ; aucun proxy explicite n'est sauvegardé.")
                                 with gr.Tabs():
