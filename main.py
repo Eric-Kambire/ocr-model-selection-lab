@@ -449,17 +449,51 @@ def _live_result_table(results: list[dict[str, Any]]) -> pd.DataFrame:
 
 
 def _cni_scan_table(records: list[dict[str, Any]]) -> pd.DataFrame:
-    """Build the non-sensitive readiness table for CNI input folders."""
+    """Projette des dossiers locaux dans l'inventaire unique des candidats CNI."""
     return pd.DataFrame([
         {
-            "Client dossier": item.get("folder_client_id"),
+            "Retenir": True,
+            "Client": item.get("folder_client_id"),
+            "Identité": "—",
+            "Origine": "Dossier local",
             "Recto": "OK" if item.get("recto_pdf") else "Manquant",
             "Verso": "OK" if item.get("verso_pdf") else "Manquant",
             "Label": item.get("label_status", "—"),
-            "Statut": item.get("status", "—"),
-            "Alertes": ", ".join(item.get("issues") or []) or "—",
+            "État": item.get("status", "—"),
+            "Détail": ", ".join(item.get("issues") or []) or "—",
         }
         for item in records
+    ])
+
+
+def _cni_api_table(records: list[dict[str, Any]], select_all: bool = False) -> pd.DataFrame:
+    """Projette GetCustomers dans le même inventaire que les dossiers locaux.
+
+    Une liste clients ne contient pas encore les fichiers CNI : les colonnes
+    recto/verso/label restent donc explicitement à ``À récupérer``. Elles
+    seront remplacées par les états réels lorsqu'une future étape téléchargera
+    puis matérialisera les documents sélectionnés.
+    """
+    return pd.DataFrame([
+        {
+            "Retenir": select_all,
+            "Client": str(customer.get("id") or ""),
+            "Identité": " ".join(
+                part for part in (str(customer.get("last_name") or "").strip(), str(customer.get("first_name") or "").strip()) if part
+            ) or "—",
+            "Origine": "API QlickEER",
+            "Recto": "À récupérer",
+            "Verso": "À récupérer",
+            "Label": "À récupérer",
+            "État": str(customer.get("status") or "découvert"),
+            "Détail": " · ".join(
+                part for part in (
+                    str(customer.get("agency_name") or customer.get("agency_code") or "").strip(),
+                    str(customer.get("document_id") or "").strip(),
+                ) if part
+            ) or "—",
+        }
+        for customer in records
     ])
 
 
@@ -494,15 +528,14 @@ def _preview_cni_source(path_value: str | None) -> tuple[Any, str]:
     return gr.update(value=str(preview_path), visible=True), f"**Aperçu :** `{source.name}` · PDF rendu à 150 DPI"
 
 
-def _cni_source_mode_visibility(mode: str) -> tuple[Any, Any, Any, Any, Any]:
+def _cni_source_mode_visibility(mode: str) -> tuple[Any, Any, Any, Any]:
     """Affiche la source active et le diagnostic utile à cette source."""
     return (
         gr.update(visible=mode == "folder"),
         gr.update(visible=mode == "zip"),
         gr.update(visible=mode == "api"),
-        # Un scan local ou un ZIP produit un rapport de dossiers ; l'API
-        # produit à la place une liste de clients à examiner/sélectionner.
-        gr.update(visible=mode != "api"),
+        # Les actions de sélection globale ne concernent que la liste issue
+        # de l'API ; les dossiers locaux sont tous cochés après le scan.
         gr.update(visible=mode == "api"),
     )
 
@@ -874,6 +907,9 @@ def build_ui() -> gr.Blocks:
         detail_index = gr.State(0)
         cni_detail_index = gr.State(0)
         result_model = gr.Dropdown([], visible=False)
+        # La liste complète permet de recalculer une sélection locale sans
+        # perdre les dossiers écartés temporairement dans l'interface.
+        cni_all_clients_state = gr.State([])
         cni_clients_state = gr.State([])
         cni_results_state = gr.State([])
 
@@ -1292,8 +1328,9 @@ def build_ui() -> gr.Blocks:
                                 # Le bouton est rendu dans la barre du sélecteur : il ne prend donc
                                 # pas une ligne entière pour une action ponctuelle d'actualisation.
                                 cni_refresh_models = gr.Button(
-                                    value="",
-                                    icon=ROOT_DIR / "assets" / "icons" / "refresh.svg",
+                                    # Le caractère hérite naturellement de la couleur du thème,
+                                    # contrairement à une icône SVG avec une couleur figée.
+                                    value="↻",
                                     size="sm",
                                     elem_id="cni-refresh-models",
                                     render=False,
@@ -1309,25 +1346,23 @@ def build_ui() -> gr.Blocks:
                                     elem_id="cni-model-selector",
                                 )
                                 with gr.Accordion("Diagnostic de la source", open=False):
-                                    gr.Markdown("Dossiers/ZIP : rapport de scan. API QlickEER : clients trouvés, sélection et détail technique du dernier appel.")
-                                    with gr.Group(visible=True) as cni_folder_diagnostics:
-                                        cni_scan_report = gr.Dataframe(
-                                            headers=["Client dossier", "Recto", "Verso", "Label", "Statut", "Alertes"],
-                                            label="Rapport de scan CNI", interactive=False,
-                                        )
-                                    with gr.Group(visible=False) as cni_api_diagnostics:
+                                    gr.Markdown("Un seul inventaire pour tous les candidats. L’origine indique si la paire vient d’un dossier local, d’un ZIP ou de l’API.")
+                                    with gr.Group(visible=False) as cni_api_inventory_actions:
                                         with gr.Row():
                                             cni_api_source_select_all = gr.Button("Tout sélectionner", size="sm")
                                             cni_api_source_clear_selection = gr.Button("Tout désélectionner", size="sm")
-                                            cni_api_source_selected_summary = gr.Markdown("Aucun client chargé.")
-                                        cni_api_source_customers_table = gr.Dataframe(
-                                            headers=["Sélectionner", "ID client", "Nom", "Prénom", "Agence", "Statut", "Création", "Document"],
-                                            datatype=["bool", "str", "str", "str", "str", "str", "str", "str"],
-                                            interactive=True, label="Clients trouvés", max_height=300,
-                                        )
-                                        with gr.Accordion("Détail du dernier appel API", open=False):
-                                            cni_api_source_feedback = gr.HTML(_cni_alert_html("ready", "Prêt : configurez la route Clients puis recherchez."))
-                                            cni_api_source_trace = gr.Code(label="Réponse technique", language="json", lines=10, interactive=False)
+                                    with gr.Row():
+                                        cni_source_selection_summary = gr.Markdown("Aucune source chargée.")
+                                    cni_source_inventory_table = gr.Dataframe(
+                                        headers=["Retenir", "Client", "Identité", "Origine", "Recto", "Verso", "Label", "État", "Détail"],
+                                        datatype=["bool", "str", "str", "str", "str", "str", "str", "str", "str"],
+                                        interactive=True,
+                                        label="Candidats et diagnostic CNI",
+                                        max_height=340,
+                                    )
+                                    with gr.Accordion("Détail du dernier appel API", open=False):
+                                        cni_api_source_feedback = gr.HTML(_cni_alert_html("ready", "Prêt : configurez la route Clients puis recherchez."))
+                                        cni_api_source_trace = gr.Code(label="Réponse technique", language="json", lines=10, interactive=False)
                         with gr.Row(elem_id="cni-runbar"):
                             gr.Markdown("**03 · Lancement**\n\nLe suivi détaillé apparaît dans la vue suivante.")
                             cni_continue_without_label = gr.Checkbox(
@@ -1904,13 +1939,19 @@ def build_ui() -> gr.Blocks:
                 return gr.update(), gr.update(), []
 
         def load_configured_customers(base_url, endpoint, route_rows, from_date, to_date, step, page, page_size, timeout, proxy_url, use_system_proxy, verify_ssl):
-            """Exécute la route Clients configurée et surcharge ses paramètres variables."""
+            """Charge les clients API dans l'inventaire commun de la source.
+
+            La requête reste identique à celle du laboratoire API historique,
+            mais son rendu est converti dans le tableau unique utilisé aussi
+            par un scan de dossiers locaux.
+            """
             static = dict(editable_rows_to_query_pairs(route_rows))
-            return test_qlicker_list(
+            feedback, trace, _legacy_table, records, summary = test_qlicker_list(
                 base_url, endpoint, from_date, to_date, step, page, page_size,
                 json.dumps(static, ensure_ascii=False), timeout, proxy_url,
                 use_system_proxy, verify_ssl,
             )
+            return feedback, trace, _cni_api_table(records), records, summary
 
         def parse_qlicker_url_for_ui(raw_url):
             """Remplit l'espace de travail éditable à partir d'une URL collée.
@@ -2024,6 +2065,32 @@ def build_ui() -> gr.Blocks:
             table = _customer_table(records or [], select_all=False)
             return table, _customer_selection_summary(table, len(records or []))
 
+        def select_all_api_source(records: list[dict[str, Any]]):
+            """Coche tous les candidats provenant de la dernière liste API."""
+            table = _cni_api_table(records or [], select_all=True)
+            return table, _customer_selection_summary(table, len(records or []))
+
+        def clear_api_source_selection(records: list[dict[str, Any]]):
+            """Décoche les candidats API sans effacer la réponse de l'appel."""
+            table = _cni_api_table(records or [], select_all=False)
+            return table, _customer_selection_summary(table, len(records or []))
+
+        def update_cni_source_selection(mode: str, table: Any, local_records: list[dict[str, Any]], api_records: list[dict[str, Any]]):
+            """Met à jour la sélection locale ou compte celle de la liste API.
+
+            Les clients API ne sont pas encore des paires prêtes : le tableau
+            conserve donc leur sélection pour l'étape de récupération future,
+            sans les injecter prématurément dans le runner CNI local.
+            """
+            rows = table.values.tolist() if isinstance(table, pd.DataFrame) else (table or [])
+            if mode == "api":
+                return gr.update(), _customer_selection_summary(rows, api_records or [])
+            selected_records = [
+                record for index, record in enumerate(local_records or [])
+                if index < len(rows) and rows[index] and bool(rows[index][0])
+            ]
+            return selected_records, f"**{len(selected_records)} dossier(s) retenu(s) sur {len(local_records or [])}.**"
+
         def test_qlicker_info(base_url, endpoint, customer_id, load_documents, extra_json, timeout, proxy_url, use_system_proxy, verify_ssl):
             """Teste l'endpoint d'information client sans supposer sa réponse JSON."""
             return _qlicker_test_result(
@@ -2070,13 +2137,13 @@ def build_ui() -> gr.Blocks:
         def scan_cni_input(clients_root_text, labels_root_text, recto_suffix, verso_suffix):
             """Scanne les dossiers et met à jour l'état CNI et les aperçus."""
             if not clients_root_text or not str(clients_root_text).strip():
-                return [], pd.DataFrame(), "Scan impossible : indiquez le dossier clients.", gr.update(choices=_cni_source_choices([]), value=None)
+                return [], [], pd.DataFrame(), "Scan impossible : indiquez le dossier clients.", gr.update(choices=_cni_source_choices([]), value=None), "Aucune source chargée."
             try:
                 clients_root = Path(str(clients_root_text).strip()).expanduser()
                 labels_root = Path(str(labels_root_text).strip()).expanduser() if labels_root_text and str(labels_root_text).strip() else None
                 if labels_root is not None and not labels_root.is_dir():
                     LOGGER.warning("CNI scan rejected | labels_root_not_found=%s", labels_root)
-                    return [], pd.DataFrame(), f"Dossier labels introuvable : `{labels_root}`", gr.update(choices=_cni_source_choices([]), value=None)
+                    return [], [], pd.DataFrame(), f"Dossier labels introuvable : `{labels_root}`", gr.update(choices=_cni_source_choices([]), value=None), "Aucune source chargée."
                 # L'état retourné est l'unique source clients d'un run. La liste
                 # d'aperçu est donc elle aussi limitée aux PDF détectés au scan.
                 records = scan_cni_documents(
@@ -2091,16 +2158,18 @@ def build_ui() -> gr.Blocks:
                 LOGGER.info("CNI scan completed | clients=%d | ready=%d | labels=%d | unlabeled=%d", len(records), ready, labels, unlabeled)
                 return (
                     records,
+                    records,
                     _cni_scan_table(records),
                     (
                         f"Scan terminé : {len(records)} client(s) détecté(s), {ready} prêt(s), {labels} label(s) converti(s)."
                         + (" Cochez **Continuer sans labels** pour lancer les PDF non notés." if unlabeled else "")
                     ),
                     gr.update(choices=_cni_source_choices(records), value=None),
+                    f"**{len(records)} dossier(s) retenu(s) sur {len(records)}.**",
                 )
             except Exception as exc:
                 LOGGER.exception("CNI scan failed")
-                return [], pd.DataFrame(), f"Scan CNI impossible : {type(exc).__name__}: {exc}", gr.update(choices=_cni_source_choices([]), value=None)
+                return [], [], pd.DataFrame(), f"Scan CNI impossible : {type(exc).__name__}: {exc}", gr.update(choices=_cni_source_choices([]), value=None), "Aucune source chargée."
 
         def refresh_cni_models(selected_models):
             """Actualise les modèles Ollama en conservant les choix encore valides."""
@@ -2425,8 +2494,7 @@ def build_ui() -> gr.Blocks:
                 cni_folder_source,
                 cni_zip_source,
                 cni_api_source,
-                cni_folder_diagnostics,
-                cni_api_diagnostics,
+                cni_api_inventory_actions,
             ],
             queue=False,
         )
@@ -2467,22 +2535,22 @@ def build_ui() -> gr.Blocks:
                 cni_api_settings_proxy, cni_api_settings_use_system_proxy, cni_api_settings_verify_ssl,
             ],
             outputs=[
-                cni_api_source_feedback, cni_api_source_trace, cni_api_source_customers_table,
-                cni_api_source_customers_state, cni_api_source_selected_summary,
+                cni_api_source_feedback, cni_api_source_trace, cni_source_inventory_table,
+                cni_api_source_customers_state, cni_source_selection_summary,
             ], queue=False,
         )
         cni_api_source_select_all.click(
-            select_all_customers, inputs=[cni_api_source_customers_state],
-            outputs=[cni_api_source_customers_table, cni_api_source_selected_summary], queue=False,
+            select_all_api_source, inputs=[cni_api_source_customers_state],
+            outputs=[cni_source_inventory_table, cni_source_selection_summary], queue=False,
         )
         cni_api_source_clear_selection.click(
-            clear_customer_selection, inputs=[cni_api_source_customers_state],
-            outputs=[cni_api_source_customers_table, cni_api_source_selected_summary], queue=False,
+            clear_api_source_selection, inputs=[cni_api_source_customers_state],
+            outputs=[cni_source_inventory_table, cni_source_selection_summary], queue=False,
         )
-        cni_api_source_customers_table.change(
-            _customer_selection_summary,
-            inputs=[cni_api_source_customers_table, cni_api_source_customers_state],
-            outputs=[cni_api_source_selected_summary], queue=False,
+        cni_source_inventory_table.change(
+            update_cni_source_selection,
+            inputs=[cni_input_mode, cni_source_inventory_table, cni_all_clients_state, cni_api_source_customers_state],
+            outputs=[cni_clients_state, cni_source_selection_summary], queue=False,
         )
         cni_api_parse_url.click(
             parse_qlicker_url_for_ui,
@@ -2564,7 +2632,14 @@ def build_ui() -> gr.Blocks:
         cni_scan.click(
             scan_cni_input,
             inputs=[cni_clients_root, cni_labels_root, cni_recto_suffix, cni_verso_suffix],
-            outputs=[cni_clients_state, cni_scan_report, cni_scan_status, cni_source_selector],
+            outputs=[
+                cni_all_clients_state,
+                cni_clients_state,
+                cni_source_inventory_table,
+                cni_scan_status,
+                cni_source_selector,
+                cni_source_selection_summary,
+            ],
             queue=False,
         )
         cni_source_selector.change(
