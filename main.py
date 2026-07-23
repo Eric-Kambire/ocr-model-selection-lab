@@ -634,8 +634,19 @@ def run_benchmark(
     selected_category: str = "All",
     mock_noise: float = 0.05,
     eval_mode: str = "Standard",
+    cpu_threads: int | None = None,
+    unload_after_task: bool = True,
 ) -> tuple[pd.DataFrame, list[dict[str, Any]], str]:
-    """Façade CLI vers le cas d'usage benchmark réutilisable."""
+    """Façade CLI vers le cas d'usage benchmark réutilisable.
+
+    Args:
+        selected_models: Identifiants des adaptateurs à exécuter.
+        selected_category: Catégorie du dataset ou ``All``.
+        mock_noise: Bruit réservé aux modèles simulés.
+        eval_mode: Méthode de score du benchmark.
+        cpu_threads: Limite CPU transmise aux adaptateurs compatibles.
+        unload_after_task: Libère le modèle entre deux tâches si possible.
+    """
     dataset = select_dataset_category(load_dataset(), selected_category)
     return execute_benchmark(
         selected_models,
