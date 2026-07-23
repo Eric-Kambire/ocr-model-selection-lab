@@ -129,19 +129,89 @@ chaîne de détection de fraude sans réécrire la logique dans Gradio.
 
 ## CNI et QlickEER
 
-Dans **Benchmark CNI** :
+La partie API vit uniquement dans **8. Benchmark CNI**. Son objectif est de
+ramener des dossiers clients depuis QlickEER vers un lot local contrôlé, puis de
+faire l'OCR sans redemander les mêmes documents au serveur.
 
-1. Configurez les routes QlickEER dans `4. Paramètres → API QlickEER`.
-   Collez une URL Postman : le parseur sépare l'endpoint et les paramètres, qui
-   restent ensuite modifiables.
-2. Choisissez proxy explicite ou proxy système, le timeout et la vérification
-   SSL. La vérification SSL ne doit être désactivée que sur un réseau interne
-   de confiance avec une justification opérationnelle.
-3. Dans `1. Préparer`, recherchez et sélectionnez plusieurs clients. La
-   préparation récupère les listes de documents, télécharge seulement les
-   recto/verso retenus, normalise le label et construit l'inventaire local.
-4. Lancez l'analyse depuis `2. Suivi en direct`, puis explorez les sorties dans
-   `3. Résultats`.
+### 1. Configurer une fois les routes
+
+Ouvrez `8. Benchmark CNI → 4. Paramètres → API QlickEER`. Dans l'onglet
+**Connexion**, indiquez :
+
+- la **Base URL** commune, par exemple `https://serveur-interne` ;
+- le **timeout HTTP** en secondes ;
+- soit **Utiliser le proxy système**, soit un **proxy explicite** ;
+- **Vérifier SSL**. Ne le désactivez que pour une API interne dont le certificat
+  est connu et approuvé par votre organisation.
+
+Les quatre onglets suivants correspondent aux quatre appels disponibles. Collez
+dans chacun l'URL complète testée dans Postman, puis cliquez sur **Parser et
+enregistrer**.
+
+| Onglet | Fonction QlickEER | Entrées injectées par l'application | Résultat utilisé |
+|---|---|---|---|
+| Clients | `get_customer` | filtres, dates, `step`, `page`, `pageSize` et autres paramètres | liste paginée des clients trouvés |
+| Détail client | `get_customer_data` | `customerID`, `loadDocuments` et paramètres restants | données client et `customer_data` utilisé comme label candidat |
+| Documents | `get_signed_documents_list` | `customerID` | noms des fichiers disponibles, dont les CNI recto/verso |
+| Fichier | `view_file` | `customerID`, `page`, `file` | octets du PDF ou de l'image |
+
+Le parseur sépare une URL en **endpoint** et en tableau de paramètres. Après le
+parsing, vous pouvez modifier la valeur de chaque paramètre, décider s'il doit
+être envoyé, ou ajouter une ligne. Il n'exécute aucune requête tant que vous ne
+lancez pas une action de l'interface.
+
+### 2. Rechercher et sélectionner plusieurs clients
+
+Retournez dans `8. Benchmark CNI → 1. Préparer`, choisissez la source
+**API QlickEER**, puis lancez la recherche. La réponse `get_customer` est
+affichée dans le diagnostic sous forme de candidats. Chaque ligne est
+sélectionnable ; **Tout sélectionner** est seulement un raccourci. Le compteur
+résume total trouvé, sélection, prêts, en attente et erreurs.
+
+Cliquez sur **Préparer la sélection**. Cette action ne lance pas l'OCR : elle
+traite les clients sélectionnés un par un, afin de limiter mémoire et charge
+réseau.
+
+```text
+client découvert
+  → liste des documents
+  → recto/verso CNI détectés
+  → fichiers téléchargés localement
+  → get_customer_data normalisé comme label
+  → prêt (ou prêt sans label / erreur explicite)
+```
+
+Le diagnostic affiche l'état de chaque client. Un client sans label peut être
+analysé en cochant **Continuer sans labels** ; il produira des métriques de
+vitesse, mais pas d'accuracy de comparaison.
+
+### 3. Où sont écrits les fichiers et quand l'API est rappelée
+
+Chaque préparation crée un lot :
+
+```text
+cni_imports/qlickeer_api/batch-AAAAmmJJ-HHMMSS-<id>/
+  <client-id>/
+    <client-id>_CIN_Recto.pdf | .jpg | .png
+    <client-id>_CIN_Verso.pdf | .jpg | .png
+    <client-id>.json
+```
+
+Une fois le lot prêt, les vues `2. Suivi en direct` et `3. Résultats` lisent
+ces fichiers locaux et les artefacts du run : elles ne rappellent pas
+QlickEER. Un nouveau clic sur **Préparer la sélection** crée en revanche un
+nouveau lot et rappelle l'API. Après un rechargement de page, rescanner le
+dossier de lot permet de reprendre la préparation locale ; l'état visuel de la
+session n'est pas une base de données.
+
+### 4. Lancer et interpréter l'analyse
+
+Dans `4. Paramètres`, choisissez les modèles Ollama, le prompt, la stratégie
+recto/verso et les options de prétraitement. Le lancement effectue ensuite
+l'extraction **séquentiellement**, un client/modèle à la fois. `2. Suivi en
+direct` montre l'image et le résultat courant ; `3. Résultats` contient les
+filtres, graphiques, JSON attendu, JSON extrait et retour brut conservé en cas
+d'erreur ou de timeout.
 
 `view_file` peut répondre avec des octets binaires. Le téléchargement préserve
 le format retourné : `application/pdf` devient `.pdf`, `image/jpeg` devient
