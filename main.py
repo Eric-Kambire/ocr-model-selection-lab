@@ -169,6 +169,15 @@ APP_CSS = """
     overflow-y: auto !important;
     scrollbar-width: thin;
 }
+#cni-model-selector .wrap {
+    min-height: 46px !important;
+}
+#cni-model-selector button {
+    min-width: 34px !important;
+}
+#cni-model-selector [data-testid="block-info"] {
+    margin-top: 4px !important;
+}
 #summary-panel {
     min-height: 0 !important;
 }
@@ -1287,12 +1296,25 @@ def build_ui() -> gr.Blocks:
                                             cni_source_preview = gr.Image(label="Aperçu", type="filepath", height=220, visible=False)
                             with gr.Column(scale=2, elem_id="cni-control"):
                                 gr.HTML("<div class='cni-section-title'>02 <span>Contrôle avant lancement</span></div>")
-                                cni_models = gr.CheckboxGroup(
-                                    [choice for choice in model_choices if choice.startswith("ollama:")],
-                                    label="Modèles Ollama",
-                                    info="Les modèles sont exécutés strictement un par un.",
+                                # Le bouton est rendu dans la barre du sélecteur : il ne prend donc
+                                # pas une ligne entière pour une action ponctuelle d'actualisation.
+                                cni_refresh_models = gr.Button(
+                                    value="",
+                                    icon=ROOT_DIR / "assets" / "icons" / "refresh.svg",
+                                    size="sm",
+                                    elem_id="cni-refresh-models",
+                                    render=False,
                                 )
-                                cni_refresh_models = gr.Button("Actualiser les modèles", size="sm")
+                                cni_models = gr.Dropdown(
+                                    [choice for choice in model_choices if choice.startswith("ollama:")],
+                                    value=[],
+                                    multiselect=True,
+                                    filterable=True,
+                                    label="Modèles Ollama",
+                                    info="Recherchez un modèle puis sélectionnez-en un ou plusieurs. Les tags sont supprimables avec × ; l’exécution reste strictement séquentielle.",
+                                    buttons=[cni_refresh_models],
+                                    elem_id="cni-model-selector",
+                                )
                                 with gr.Accordion("Diagnostic des dossiers", open=False):
                                     cni_scan_report = gr.Dataframe(
                                         headers=["Client dossier", "Recto", "Verso", "Label", "Statut", "Alertes"],
