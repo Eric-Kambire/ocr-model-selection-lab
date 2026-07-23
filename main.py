@@ -494,11 +494,15 @@ def _preview_cni_source(path_value: str | None) -> tuple[Any, str]:
     return gr.update(value=str(preview_path), visible=True), f"**Aperçu :** `{source.name}` · PDF rendu à 150 DPI"
 
 
-def _cni_source_mode_visibility(mode: str) -> tuple[Any, Any, Any]:
-    """Sépare visuellement les sources locale, ZIP et API QlickEER."""
+def _cni_source_mode_visibility(mode: str) -> tuple[Any, Any, Any, Any, Any]:
+    """Affiche la source active et le diagnostic utile à cette source."""
     return (
         gr.update(visible=mode == "folder"),
         gr.update(visible=mode == "zip"),
+        gr.update(visible=mode == "api"),
+        # Un scan local ou un ZIP produit un rapport de dossiers ; l'API
+        # produit à la place une liste de clients à examiner/sélectionner.
+        gr.update(visible=mode != "api"),
         gr.update(visible=mode == "api"),
     )
 
@@ -1269,19 +1273,8 @@ def build_ui() -> gr.Blocks:
                                         cni_api_source_page = gr.Number(value=1, minimum=1, precision=0, label="page")
                                         cni_api_source_page_size = gr.Number(value=20, minimum=1, precision=0, label="pageSize")
                                     cni_api_load_customers = gr.Button("Rechercher les clients", variant="primary")
-                                    with gr.Row():
-                                        cni_api_source_select_all = gr.Button("Tout sélectionner", size="sm")
-                                        cni_api_source_clear_selection = gr.Button("Tout désélectionner", size="sm")
-                                        cni_api_source_selected_summary = gr.Markdown("Aucun client chargé.")
                                     cni_api_source_customers_state = gr.State([])
-                                    cni_api_source_customers_table = gr.Dataframe(
-                                        headers=["Sélectionner", "ID client", "Nom", "Prénom", "Agence", "Statut", "Création", "Document"],
-                                        datatype=["bool", "str", "str", "str", "str", "str", "str", "str"],
-                                        interactive=True, label="Clients trouvés", max_height=300,
-                                    )
-                                    with gr.Accordion("Diagnostic de la dernière requête", open=False):
-                                        cni_api_source_feedback = gr.HTML(_cni_alert_html("ready", "Prêt : configurez la route Clients puis recherchez."))
-                                        cni_api_source_trace = gr.Code(label="Réponse technique", language="json", lines=10, interactive=False)
+                                    gr.Markdown("Les résultats de recherche apparaissent dans **Diagnostic de la source**.")
                                 cni_scan_status = gr.Markdown("Indiquez un dossier clients, puis scannez-le.")
                                 with gr.Accordion("Aperçu d’un document", open=False):
                                     with gr.Row():
@@ -1315,11 +1308,26 @@ def build_ui() -> gr.Blocks:
                                     buttons=[cni_refresh_models],
                                     elem_id="cni-model-selector",
                                 )
-                                with gr.Accordion("Diagnostic des dossiers", open=False):
-                                    cni_scan_report = gr.Dataframe(
-                                        headers=["Client dossier", "Recto", "Verso", "Label", "Statut", "Alertes"],
-                                        label="Rapport de scan CNI", interactive=False,
-                                    )
+                                with gr.Accordion("Diagnostic de la source", open=False):
+                                    gr.Markdown("Dossiers/ZIP : rapport de scan. API QlickEER : clients trouvés, sélection et détail technique du dernier appel.")
+                                    with gr.Group(visible=True) as cni_folder_diagnostics:
+                                        cni_scan_report = gr.Dataframe(
+                                            headers=["Client dossier", "Recto", "Verso", "Label", "Statut", "Alertes"],
+                                            label="Rapport de scan CNI", interactive=False,
+                                        )
+                                    with gr.Group(visible=False) as cni_api_diagnostics:
+                                        with gr.Row():
+                                            cni_api_source_select_all = gr.Button("Tout sélectionner", size="sm")
+                                            cni_api_source_clear_selection = gr.Button("Tout désélectionner", size="sm")
+                                            cni_api_source_selected_summary = gr.Markdown("Aucun client chargé.")
+                                        cni_api_source_customers_table = gr.Dataframe(
+                                            headers=["Sélectionner", "ID client", "Nom", "Prénom", "Agence", "Statut", "Création", "Document"],
+                                            datatype=["bool", "str", "str", "str", "str", "str", "str", "str"],
+                                            interactive=True, label="Clients trouvés", max_height=300,
+                                        )
+                                        with gr.Accordion("Détail du dernier appel API", open=False):
+                                            cni_api_source_feedback = gr.HTML(_cni_alert_html("ready", "Prêt : configurez la route Clients puis recherchez."))
+                                            cni_api_source_trace = gr.Code(label="Réponse technique", language="json", lines=10, interactive=False)
                         with gr.Row(elem_id="cni-runbar"):
                             gr.Markdown("**03 · Lancement**\n\nLe suivi détaillé apparaît dans la vue suivante.")
                             cni_continue_without_label = gr.Checkbox(
@@ -2413,7 +2421,13 @@ def build_ui() -> gr.Blocks:
         cni_input_mode.change(
             _cni_source_mode_visibility,
             inputs=[cni_input_mode],
-            outputs=[cni_folder_source, cni_zip_source, cni_api_source],
+            outputs=[
+                cni_folder_source,
+                cni_zip_source,
+                cni_api_source,
+                cni_folder_diagnostics,
+                cni_api_diagnostics,
+            ],
             queue=False,
         )
         cni_api_call_mode.change(
