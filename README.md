@@ -1,296 +1,200 @@
-# OCR Model Selection Lab
+# OCR Model Selection Lab — exécution locale
 
-Plateforme extensible pour comparer des modèles OCR sur la qualité, la vitesse et
-la fiabilité. Elle fonctionne en interface Gradio ou en CLI, sur CPU local, dans
-Docker, et sur CPU/GPU dans Google Colab.
+Application locale pour comparer des modèles OCR et analyser des CNI marocaines.
+Cette branche contient uniquement le code d'exécution local : **ni Docker, ni
+notebook Colab, ni workflow de publication de conteneur**.
 
-## Architecture locale
+L'interface Gradio sert à choisir les documents, les modèles Ollama, les
+paramètres d'exécution et à explorer les résultats. Le traitement est
+séquentiel : un modèle et une tâche à la fois, afin de limiter la mémoire CPU ou
+GPU.
 
-Le projet est un **monolithe modulaire avec une architecture hexagonale légère** :
-Gradio, le CLI et une future API sont les interfaces ; les services applicatifs
-portent les cas d'usage ; le domaine calcule et évalue ; les adaptateurs parlent
-à Ollama, au disque, aux ZIP ou à une API externe. Ainsi, la logique n'est pas
-liée à Gradio et peut être réutilisée plus tard dans un outil de détection de
-fraude ou un worker serveur.
+## Démarrage rapide
 
-```text
-Interface (Gradio / CLI / future API)
-                  ↓
-Services applicatifs
-                  ↓
-Domaine benchmark et CNI
-                  ↓
-Adaptateurs (Ollama, fichiers, ZIP, QlickEER, Docker)
-```
+Prérequis : Python 3.10 à 3.14 et `pip`. Installez Ollama séparément seulement
+si vous voulez tester ses modèles.
 
-Les fichiers ont des responsabilités explicites :
-
-```text
-main.py                         # démarrage Gradio ou CLI, configuration et flux UI
-ocr_benchmark/application/benchmark_service.py # cas d'usage benchmark classique
-ocr_benchmark/application/cni_service.py       # scan/import/exécution CNI
-ocr_benchmark/application/run_service.py       # restauration et rétention des runs
-ocr_benchmark/domain.py         # objets métier : cas, inférence, résultat, statuts
-ocr_benchmark/runner.py         # orchestration séquentielle, timeout et progression
-ocr_benchmark/registry.py       # frontière entre un nom de modèle et son adaptateur
-ocr_benchmark/dataset_repository.py # lecture/écriture contrôlée du catalogue
-ocr_benchmark/reporting.py      # exports JSON/CSV/Markdown et traces JSONL
-models/                         # adaptateurs EasyOCR, Ollama et Mock
-dataset/                        # catalogue et images, jamais de secret
-runs/<run_id>/                  # artefacts d'une exécution, ignorés par Git
-```
-
-### Sous-système CNI marocaines
-
-Le flux CNI n’est pas concentré dans un seul gros fichier :
-
-```text
-ocr_benchmark/cni_ingestion.py  # scan client, import ZIP, JSONB externe → JSON local
-ocr_benchmark/cni_images.py     # rendu PDF/image et opérations d'image réutilisables
-ocr_benchmark/cni_preprocessing.py # source unique : rotation, contour et crop CNI
-ocr_benchmark/cni_schema.py     # champs configurables, prompt, parsing et fusion JSON
-ocr_benchmark/cni_runner.py     # exécution séquentielle, live events, artefacts de run
-ocr_benchmark/cni.py            # façade d'import compatible pour le reste de l'application
-config/cni_fields.json          # champs d'extraction modifiables sans changer le code
-docs/CNI_BENCHMARK_IMPLEMENTATION_PLAN.md # contrat de données et décisions métier
-```
-
-Chaque module a une seule responsabilité. La préparation CNI n'est notamment
-implémentée qu'une fois dans `cni_preprocessing.py`; `cni_images.py` l'utilise
-au lieu de dupliquer la logique. Un problème de fichier, crop, réponse JSON ou
-exécution peut donc être retrouvé dans le bon module, sans modifier l'interface.
-
-La description détaillée des frontières, de la réutilisation future et des
-choix de stockage est disponible dans `docs/ARCHITECTURE_INTERNE.md`.
-
-Le flux d'une image est : `dataset → registry → adapter → runner → evaluator →
-reporting/UI`. Le runner charge un seul modèle à la fois, traite les documents,
-appelle `close()` dans un bloc `finally`, puis passe au modèle suivant. Cette
-contrainte est volontaire : elle évite de garder plusieurs modèles en mémoire
-sur un poste CPU ou une petite carte GPU.
-
-## Timeout et sorties tardives
-
-Le timeout du runner protège l'interface, mais Python ne peut pas tuer sans risque
-un thread fournisseur déjà engagé. L'appel est donc marqué `timeout` au moment
-limite et exclu des scores. Si le fournisseur finit plus tard, sa réponse brute
-est enregistrée dans `traces.jsonl` avec `timing: "late_after_timeout"`; elle ne
-réapparaît jamais comme un succès. Pour Ollama, configurez aussi le timeout HTTP
-dans les paramètres afin d'arrêter la requête réseau réelle.
-
-## Débogage local
-
-Activez les logs détaillés avant de démarrer :
+### Windows — PowerShell
 
 ```powershell
-$env:LOG_LEVEL = "DEBUG"
-python main.py
-```
-
-Les événements importants sont écrits dans le terminal : création du modèle,
-début/fin de chaque inférence, statut, latence, tokens, timeout et libération de
-la mémoire. Pour une exécution reproductible, utilisez le CLI :
-
-```powershell
-python main.py --cli --models mock:MockOCR-V1 --category cheques
-```
-
-Si une image échoue, vérifiez d'abord `runs/<run_id>/traces.jsonl`, puis
-`details.csv`. Une erreur d'adaptateur est isolée au document concerné et ne doit
-pas empêcher les autres modèles de produire leurs résultats.
-
-## Démarrage local CPU
-
-```powershell
+git clone <URL_DU_REPO>
+cd Benchmark
+git switch --track origin/codex/clean-runtime
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
-pip install -r requirements-ocr.txt
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
 python main.py
 ```
 
-L’interface est disponible sur `http://127.0.0.1:7860`.
+Si PowerShell refuse l'activation :
 
-Pour utiliser Ollama, lancez Ollama localement et installez au moins un modèle
-vision. Les modèles détectés apparaissent automatiquement dans l’interface.
-
-## Utiliser l’interface
-
-Dans **Benchmark**, choisissez les modèles puis la quantité de documents :
-
-- tout le dataset ;
-- une quantité globale, répartie entre les catégories ;
-- une quantité différente pour chaque catégorie.
-
-Cliquez sur **Préparer le benchmark** pour vérifier le plan, puis sur
-**Confirmer et lancer**. Pendant l’exécution, l’image courante, le résultat OCR,
-la qualité, CER, WER, latence, compteurs, progression et ETA sont actualisés.
-**Annuler** interrompt la file et conserve les résultats déjà produits.
-
-Dans **Résultats détaillés**, la liste permet d’ouvrir directement une
-évaluation ou de naviguer avec **Précédent/Suivant**. Le temps, la qualité et
-les compteurs de tokens sont affichés au-dessus du comparatif. La sortie peut
-être consultée comme transcription, réponse fournisseur brute, Markdown rendu
-ou source HTML non exécutée.
-
-L’onglet **Paramètres** permet notamment de fixer le temps maximal par image,
-le nombre maximal d’erreurs, la seed de sélection, le mélange des documents et
-la sauvegarde après chaque résultat. Il expose aussi le prompt envoyé aux
-modèles génératifs compatibles. Un appel fournisseur qui dépasse le timeout
-peut finir en arrière-plan, mais son résultat est ignoré par le benchmark.
-
-## Docker CPU
-
-```bash
-docker compose up --build
+```powershell
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+.\.venv\Scripts\Activate.ps1
 ```
 
-Ouvrez `http://localhost:7860`. Le conteneur contacte Ollama sur la machine hôte
-via `host.docker.internal:11434`. Les résultats sont conservés dans le volume
-Docker `benchmark-runs`. Le service `init-storage` initialise les volumes
-`benchmark-runs` et `benchmark-dataset` avec les permissions du compte applicatif
-non-root. Les données CNI, imports et logs sont exclus du contexte de build via
-`.dockerignore`.
-
-Le Dockerfile ne contient aucun secret. Copiez `.env.example` vers `.env`
-uniquement si une configuration locale est nécessaire.
-
-## Données sensibles, volumes et rétention
-
-Les scans CNI, labels, sorties brutes et runs ne doivent pas être committés ni
-placés dans l'image Docker. Montez des volumes dédiés et protégez le disque de
-l'hôte (BitLocker sous Windows, LUKS sous Linux) ; les permissions Docker ne
-remplacent pas le chiffrement du disque.
-
-`RUN_RETENTION_DAYS=30` est la valeur par défaut : les dossiers de runs générés
-plus anciens sont supprimés au démarrage de l'interface. Mettez une valeur
-négative pour désactiver la purge temporairement. Les détails de déploiement et
-les limites actuelles (authentification, QlickEER et stockage central) figurent
-dans `DEPLOYMENT.md` et `docs/ARCHITECTURE_INTERNE.md`.
-
-## Docker GPU
-
-Prérequis : GPU NVIDIA, pilote compatible, NVIDIA Container Toolkit et support
-Compose de `gpus: all`.
+### macOS / Linux — Terminal
 
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.gpu.yml up --build
+git clone <URL_DU_REPO>
+cd Benchmark
+git switch --track origin/codex/clean-runtime
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
+python main.py
 ```
 
-EasyOCR détecte CUDA automatiquement. Sur une machine CPU, utilisez uniquement
-le fichier Compose principal.
-
-## Google Colab
-
-Ouvrez `benchmark_colab.ipynb`, choisissez `CPU` ou `T4 GPU` dans
-**Runtime > Change runtime type**, puis exécutez les cellules dans l’ordre.
-
-Le notebook Colab est autonome : il ne clone pas le repo et ne dépend pas du
-code local pour exécuter le benchmark. La logique minimale nécessaire est écrite
-directement dans les cellules : dataset, adaptateurs, métriques, graphiques,
-exports et interface Gradio légère.
-
-Le notebook utilise par défaut un mini dataset synthétique. Pour tester vos
-propres documents dans Colab, activez `IMPORT_CUSTOM_DATASET_ZIP = True` puis
-uploadez un ZIP contenant soit `labels.csv`, soit `dataset.json`.
-
-Format CSV minimal :
-
-```csv
-image_path,ground_truth,category,description
-images/cheque_001.png,"texte attendu exact",bank,"chèque manuscrit"
-images/form_001.jpg,"texte attendu exact",handwritten_form,"formulaire rempli"
-```
-
-Les chemins `image_path` sont relatifs au ZIP. Les images sont copiées dans
-le workspace temporaire Colab et ajoutées au dataset de la session.
-
-Le notebook contient aussi des cellules prêtes pour préparer plusieurs familles
-de modèles : EasyOCR, PaddleOCR, Qwen OCR 0.8B, MiniCPM-V 4.6, Chandra OCR,
-LightOnOCR, dots.ocr, PaddleOCR-VL, LocateAnything et Unlimited OCR. Certains
-modèles sont téléchargés seulement : ils nécessitent un adaptateur Python
-spécifique avant d’être comparables.
-
-## CLI
+Ouvrez ensuite <http://127.0.0.1:7860>. Pour un autre port :
 
 ```bash
+python main.py --port 7861
+```
+
+## Dépendances optionnelles
+
+```bash
+# EasyOCR local
+python -m pip install -r requirements-ocr.txt
+
+# Laboratoire FastAPI QlickEER (le serveur Gradio n'en a pas besoin)
+python -m pip install -r requirements-gateway.txt
+
+# Scripts d'import Kaggle
+python -m pip install -r requirements-data.txt
+
+# Tests et contrôle de style
+python -m pip install -r requirements-dev.txt
+python -m pytest -q
+python -m ruff check .
+```
+
+`requirements.txt` ne mélange pas les dépendances du serveur FastAPI avec
+l'application. Les versions restent volontairement compatibles avec les Python
+récents ; les anciens correctifs Colab `numpy<2` ne s'appliquent pas à cette
+branche locale.
+
+## Utiliser Ollama
+
+Ollama est une application séparée qui expose par défaut
+`http://127.0.0.1:11434`. Après l'avoir installé et démarré :
+
+```bash
+ollama pull <modele-vision>
+ollama list
+```
+
+Dans l'interface, utilisez la liste multi-sélection **Modèles Ollama**, puis le
+bouton `↻` pour rafraîchir les modèles disponibles. L'application appelle
+l'API locale Ollama ; elle ne télécharge pas automatiquement de poids.
+
+## Architecture
+
+Le projet est un **monolithe modulaire à architecture hexagonale légère** :
+
+```text
+Gradio / CLI
+      │
+      ▼
+services applicatifs ── benchmark, CNI, QlickEER, runs, rétention
+      │
+      ▼
+domaine et orchestration ── évaluation, statut, métriques, séquence
+      │
+      ▼
+adaptateurs ── Ollama, fichiers, PDF/images, ZIP, API HTTP
+```
+
+```text
+main.py                                      # composition Gradio / CLI
+ocr_benchmark/application/benchmark_service.py # orchestration benchmark classique
+ocr_benchmark/application/cni_service.py       # scan et préparation CNI
+ocr_benchmark/application/qlicker_api_service.py # HTTP, proxy, SSL, fichiers binaires
+ocr_benchmark/application/qlicker_cni_import_service.py # import API multi-clients
+ocr_benchmark/application/retention_service.py # anonymisation et nettoyage sûr
+ocr_benchmark/cni_ingestion.py                # dossiers, PDF/images, labels JSONB
+ocr_benchmark/cni_preprocessing.py            # rotation, crop, perspective
+ocr_benchmark/cni_runner.py                   # analyse CNI séquentielle et artefacts
+ocr_benchmark/cni_schema.py                   # champs, prompts et fusion JSON
+models/                                       # adaptateurs OCR
+config/cni_fields.json                        # champs CNI modifiables sans code
+scripts/                                      # outils indépendants et laboratoires
+tests/                                        # tests automatisés
+```
+
+La séparation permet de réutiliser le traitement documentaire dans une future
+chaîne de détection de fraude sans réécrire la logique dans Gradio.
+
+## CNI et QlickEER
+
+Dans **Benchmark CNI** :
+
+1. Configurez les routes QlickEER dans `4. Paramètres → API QlickEER`.
+   Collez une URL Postman : le parseur sépare l'endpoint et les paramètres, qui
+   restent ensuite modifiables.
+2. Choisissez proxy explicite ou proxy système, le timeout et la vérification
+   SSL. La vérification SSL ne doit être désactivée que sur un réseau interne
+   de confiance avec une justification opérationnelle.
+3. Dans `1. Préparer`, recherchez et sélectionnez plusieurs clients. La
+   préparation récupère les listes de documents, télécharge seulement les
+   recto/verso retenus, normalise le label et construit l'inventaire local.
+4. Lancez l'analyse depuis `2. Suivi en direct`, puis explorez les sorties dans
+   `3. Résultats`.
+
+`view_file` peut répondre avec des octets binaires. Le téléchargement préserve
+le format retourné : `application/pdf` devient `.pdf`, `image/jpeg` devient
+`.jpg` et `image/png` devient `.png`. Il n'y a **pas de conversion HTTP**. Lors
+du prétraitement OCR, un PDF est rendu en image PNG à la résolution choisie ;
+une image JPEG/PNG est ouverte directement. Cette image de travail est ensuite
+éventuellement tournée, redressée, recadrée et envoyée au modèle.
+
+## Données, archive anonymisée et nettoyage
+
+Les résultats détaillés contiennent potentiellement des images CNI, du texte
+OCR, des JSON, des chemins et des identifiants. Ils sont écrits localement sous
+`runs/cni-.../`. Les lots téléchargés via QlickEER sont placés sous
+`cni_imports/qlickeer_api/batch-.../`. Ces répertoires sont ignorés par Git.
+
+Après une analyse terminée, ouvrez `4. Paramètres → Nettoyage` :
+
+- **archive anonymisée** : conserve seulement le modèle, le statut, les
+  scores, les temps, tokens et un alias temporaire `case-001` ; aucune table
+  de correspondance avec le client réel n'est écrite ;
+- **suppression du run détaillé** : enlève les images, les PDF rendus, les
+  JSON, les sorties brutes et les mesures identifiantes ;
+- **suppression des imports QlickEER** : enlève seulement les lots
+  `cni_imports/qlickeer_api/batch-*`, jamais un dossier local saisi par
+  l'utilisateur ;
+- **aperçus temporaires** : efface `runs/cni_source_previews/`.
+
+La suppression d'un run détaillé est refusée si l'archive anonymisée n'est pas
+créée. Une analyse active ne peut pas être nettoyée. Les archives sont stockées
+dans `analysis_archive/` et peuvent être rechargées dans `3. Résultats` pour
+consulter graphiques et métriques, sans pouvoir afficher un document ou une
+identité.
+
+Pour un usage interne, protégez le disque de l'hôte (BitLocker, FileVault ou
+LUKS), limitez les permissions du dossier de travail au groupe applicatif, et
+définissez une durée de rétention adaptée à votre politique.
+
+## Commandes utiles
+
+```bash
+# Interface Gradio
+python main.py
+
+# Benchmark classique sans interface
 python main.py --cli --models mock:MockOCR-V1 --category tables
-python main.py --cli --models ollama:llama3.2-vision --eval-mode Bankmark
+
+# Logs détaillés
+# PowerShell
+$env:LOG_LEVEL = "DEBUG"; python main.py
+# macOS / Linux
+LOG_LEVEL=DEBUG python main.py
 ```
 
-Chaque exécution produit un répertoire `runs/<run_id>/` contenant :
-
-- `results.json` : résultats complets et typés ;
-- `summary.csv` : comparaison par modèle ;
-- `details.csv` : résultat par document ;
-- `traces.jsonl` : sorties fournisseur brutes, texte et raisonnement exposé, y
-  compris les réponses arrivées après un timeout ;
-- `report.md` : synthèse et définitions.
-
-Une réponse reçue après le timeout reste exclue des scores et conserve le statut
-`timeout`. Elle est néanmoins ajoutée à `traces.jsonl` avec
-`timing: "late_after_timeout"` afin de permettre l’audit et un nettoyage
-ultérieur.
-
-## Ajouter des données
-
-L’onglet **Ajouter des données** accepte une image JPG, JPEG, PNG ou WEBP de
-15 Mio maximum, un label obligatoire, une catégorie et une description.
-
-Le label doit être la transcription exacte du document. Conservez les retours à
-la ligne, utilisez un tableau Markdown lorsque nécessaire et n’ajoutez aucun
-texte absent de l’image. Les ajouts sont copiés dans `dataset/user_uploads/` et
-le catalogue est remplacé atomiquement.
-
-## Import Kaggle reproductible
-
-Les 30 formulaires FUNSD annotés présents dans `dataset/kaggle_forms/` peuvent
-être réimportés avec :
-
-```bash
-pip install -r requirements-data.txt
-python scripts/import_kaggle_forms.py --count 30
-```
-
-Source : `senju14/ocr-dataset-of-multi-type-documents`, licence MIT déclarée
-sur Kaggle. Le script apparie images et annotations par identifiant, car certains
-couples sont répartis dans des dossiers de split différents.
-
-## Ajouter un modèle
-
-Un adaptateur doit exposer `model_name` et `perform_ocr(image_path)`. Enregistrez
-ensuite une factory :
-
-```python
-from ocr_benchmark.registry import build_default_registry
-
-registry = build_default_registry()
-registry.register(
-    "my_provider",
-    lambda model_name, **options: MyOCRAdapter(model_name),
-)
-```
-
-Le modèle devient adressable sous la forme `my_provider:model-name`. Le résultat
-standard contient `text`, `latency`, `status`, `error`, `device` et, lorsque le
-fournisseur les expose, `input_tokens`, `output_tokens`, `tokens_per_second`.
-
-Ne fabriquez pas une mesure de tokens pour les moteurs OCR classiques : elle
-n’est pas comparable aux tokens d’un modèle génératif.
-
-## Protocole de sélection
-
-1. Vérifier le taux de réussite technique.
-2. Fixer un seuil de qualité par catégorie.
-3. Comparer médiane et P95, pas uniquement la moyenne.
-4. Examiner les métriques critiques du métier, comme les IBAN et les montants.
-5. Valider le finaliste sur un corpus réel tenu à l’écart du développement.
-
-Les définitions détaillées sont disponibles dans l’onglet
-**Comprendre les métriques**.
-
-## Tests
-
-```bash
-pip install -r requirements-dev.txt
-pytest -q
-```
+Les logs terminal donnent les étapes d'import, d'inférence et de nettoyage. Les
+résultats techniques détaillés ne doivent pas être copiés dans un ticket ou un
+canal de discussion sans anonymisation préalable.

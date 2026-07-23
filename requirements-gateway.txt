@@ -1,0 +1,5 @@
+# Dépendances optionnelles du laboratoire FastAPI QlickEER.
+# Elles ne sont pas nécessaires pour démarrer l'interface Gradio.
+-r requirements.txt
+fastapi>=0.115,<1
+uvicorn>=0.30,<1

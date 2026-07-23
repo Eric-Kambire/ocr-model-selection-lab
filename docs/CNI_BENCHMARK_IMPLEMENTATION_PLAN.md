@@ -202,12 +202,12 @@ de produire un score artificiel.
 Deux entrées sont prévues :
 
 1. **Chemin local** pour les essais sur le poste qui exécute Gradio.
-2. **Archive ZIP** pour une importation portable ou Docker.
+2. **Archive ZIP** pour une importation portable sur le poste local.
 
 L’import ZIP rejette les chemins sortant du dossier cible, ne modifie jamais le
 repo Git et extrait les fichiers dans un espace de données ignoré par Git. Les
 CNI, labels, crops et résultats bruts ne doivent être ni commités ni publiés
-sur GitHub ou Docker Hub.
+sur GitHub ou tout dépôt partagé.
 
 ## Déploiement sur les branches
 

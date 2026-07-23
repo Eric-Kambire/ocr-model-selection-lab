@@ -2,7 +2,7 @@
 
 ## But
 
-L'application reste un seul déploiement Docker et un seul dépôt. Elle n'est pas
+L'application reste une seule application locale et un seul dépôt. Elle n'est pas
 découpée en microservices. En revanche, chaque responsabilité a une frontière
 explicite afin qu'un futur composant fraude ou un autre type de document puisse
 être ajouté sans modifier l'interface Gradio ni les adaptateurs existants.
@@ -14,7 +14,7 @@ Application (cas d'usage)
         ↓ orchestre
 Domaine (contrats BenchmarkCase, InferenceResult, règles de score)
         ↓ utilise
-Adaptateurs / infrastructure (Ollama, fichiers, ZIP, QlickEER, Docker)
+Adaptateurs / infrastructure (Ollama, fichiers, ZIP, QlickEER)
 ```
 
 ## Répertoires et responsabilités
@@ -25,6 +25,7 @@ Adaptateurs / infrastructure (Ollama, fichiers, ZIP, QlickEER, Docker)
 | `ocr_benchmark/application/benchmark_service.py` | Catalogue, exécution générique, événements de benchmark. | Composants Gradio. |
 | `ocr_benchmark/application/cni_service.py` | Cas d'usage CNI : scan, import, extraction. | HTML ou état de navigateur. |
 | `ocr_benchmark/application/run_service.py` | Consultation et rétention des runs locaux. | Règles OCR/CNI. |
+| `ocr_benchmark/application/retention_service.py` | Archive anonymisée et nettoyage des artefacts CNI. | Interface Gradio, contenu OCR en archive. |
 | `ocr_benchmark/domain.py` | Contrats stables d'entrée/sortie. | Chemins Gradio, appels Ollama. |
 | `ocr_benchmark/runner.py` | Orchestration modèle par modèle. | Détails de layout CNI. |
 | `ocr_benchmark/cni_*.py` | Composants CNI spécialisés. | Code de navigation UI. |
@@ -69,8 +70,8 @@ modifier le moteur OCR.
   `RUN_RETENTION_DAYS` (30 jours par défaut, valeur négative = désactivé).
 - Les artefacts doivent être téléchargés avant expiration si une conservation
   longue est nécessaire.
-- Les imports CNI, labels et uploads ne doivent jamais entrer dans le contexte
-  de construction Docker. Ils sont exclus par `.dockerignore`.
+- Les imports CNI, labels et uploads sont ignorés par Git et restent sur le
+  poste local qui les traite.
 - Le chiffrement est une responsabilité du serveur : BitLocker sur Windows ou
-  LUKS sur Linux, plus ACL du volume Docker. Le code Python ne peut pas rendre
+  LUKS sur Linux, plus ACL du dossier applicatif. Le code Python ne peut pas rendre
   sûr un disque non chiffré.

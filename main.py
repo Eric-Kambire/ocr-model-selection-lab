@@ -39,6 +39,11 @@ from ocr_benchmark.application.qlicker_cni_import_service import (
     build_qlicker_cni_routes,
     iter_prepare_qlicker_cni_clients,
 )
+from ocr_benchmark.application.retention_service import (
+    cleanup_cni_run,
+    list_anonymized_cni_archives,
+    load_anonymized_cni_archive,
+)
 from ocr_benchmark.application.run_service import list_run_ids, load_run_results, purge_expired_runs
 from ocr_benchmark.cni import (
     DEFAULT_RECTO_SUFFIX,
@@ -66,6 +71,7 @@ DATASET_DIR = ROOT_DIR / "dataset"
 CATALOG_PATH = DATASET_DIR / "dataset.json"
 RUNS_DIR = ROOT_DIR / "runs"
 CNI_IMPORTS_DIR = ROOT_DIR / "cni_imports"
+ANONYMIZED_ANALYSIS_DIR = ROOT_DIR / "analysis_archive"
 
 
 def _read_retention_days() -> int | None:
@@ -690,10 +696,14 @@ def _cni_result_table(results: list[dict[str, Any]]) -> pd.DataFrame:
             "Statut": item.get("status"),
             "Accuracy": "Non noté" if item.get("accuracy") is None else f"{float(item['accuracy']) * 100:.2f}%",
             "Label": item.get("label_status", "—"),
-            "CIN recto": item.get("cin_recto") or "—",
-            "CIN verso": item.get("cin_verso") or "—",
+            "CIN recto": "Non conservé" if item.get("archive_anonymized") else item.get("cin_recto") or "—",
+            "CIN verso": "Non conservé" if item.get("archive_anonymized") else item.get("cin_verso") or "—",
             "CIN cohérent": "Oui" if item.get("cin_coherent") is True else "Non" if item.get("cin_coherent") is False else "—",
-            "Champs à revoir": ", ".join(key for key, state in _cni_field_comparisons(item).items() if state == "different") or "—",
+            "Champs à revoir": (
+                "Non conservés (archive anonymisée)"
+                if item.get("archive_anonymized")
+                else ", ".join(key for key, state in _cni_field_comparisons(item).items() if state == "different") or "—"
+            ),
             "Latence (s)": round(float(item.get("latency") or 0), 3),
         }
         for item in results
@@ -724,6 +734,8 @@ def _read_json_if_available(path_value: Any) -> Any:
 
 def _cni_field_comparisons(result: dict[str, Any]) -> dict[str, str]:
     """Compare les champs canoniques au label, quand celui-ci existe."""
+    if result.get("archive_anonymized"):
+        return {}
     label = _read_json_if_available(result.get("label_path"))
     extracted = _read_json_if_available(result.get("global_json_path"))
     fields = ("cin", "prenom", "nom", "date_naissance", "ville_naissance", "date_validite", "adresse")
@@ -1457,6 +1469,20 @@ def build_ui() -> gr.Blocks:
                         # Même hiérarchie que « 4. Résultats détaillés » :
                         # filtres, liste, navigation, puis inspection complète.
                         gr.Markdown("### Résultats détaillés CNI\n\nFiltrez les évaluations puis inspectez une paire recto/verso.")
+                        with gr.Accordion("Archives anonymisées", open=False):
+                            gr.Markdown(
+                                "Une archive anonymisée conserve uniquement les métriques agrégables par cas "
+                                "(`case-001`) : aucun nom, identifiant CNI, document, image, texte OCR, chemin ni message d'erreur."
+                            )
+                            with gr.Row():
+                                cni_archive_selector = gr.Dropdown(
+                                    choices=list_anonymized_cni_archives(ANONYMIZED_ANALYSIS_DIR),
+                                    label="Archive de métriques",
+                                    scale=4,
+                                )
+                                cni_archive_refresh = gr.Button("Actualiser", size="sm")
+                                cni_archive_load = gr.Button("Charger", size="sm")
+                            cni_archive_status = gr.Markdown("Aucune archive anonymisée chargée.")
                         with gr.Row(elem_id="cni-results-filterbar"):
                             cni_accuracy_min = gr.Slider(0, 100, value=0, step=1, label="Accuracy minimale (%)")
                             cni_accuracy_max = gr.Slider(0, 100, value=100, step=1, label="Accuracy maximale (%)")
@@ -1552,6 +1578,35 @@ def build_ui() -> gr.Blocks:
                             interactive=False,
                         )
                                 cni_refresh_prompt = gr.Button("Actualiser l’aperçu du prompt")
+                            with gr.Tab("Nettoyage"):
+                                gr.Markdown(
+                                    "### Rétention locale\n\n"
+                                    "Après la fin d'un benchmark, créez d'abord une archive de métriques anonymisées. "
+                                    "Vous pouvez ensuite supprimer le run détaillé et les fichiers récupérés depuis QlickEER. "
+                                    "Le nettoyage est refusé pendant une analyse active et il ne supprime jamais vos dossiers locaux externes."
+                                )
+                                cni_cleanup_keep_archive = gr.Checkbox(
+                                    value=True,
+                                    label="Créer / conserver l'archive de métriques anonymisées",
+                                    info="Conserve seulement les statuts, temps, tokens, scores et un alias case-XXX.",
+                                )
+                                cni_cleanup_delete_run = gr.Checkbox(
+                                    value=True,
+                                    label="Supprimer le run détaillé après l'archivage",
+                                    info="Supprime images, PDF rendus, JSON d'extraction, sorties brutes et résultats détaillés du dernier run.",
+                                )
+                                cni_cleanup_delete_sources = gr.Checkbox(
+                                    value=False,
+                                    label="Supprimer aussi les lots QlickEER téléchargés",
+                                    info="Supprime uniquement cni_imports/qlickeer_api/batch-*. Vos dossiers choisis manuellement ne sont jamais touchés.",
+                                )
+                                cni_cleanup_preview_cache = gr.Checkbox(
+                                    value=True,
+                                    label="Effacer les aperçus temporaires",
+                                    info="Supprime runs/cni_source_previews, qui peut contenir des copies d'images CNI.",
+                                )
+                                cni_cleanup_button = gr.Button("Anonymiser et nettoyer le dernier résultat CNI", variant="stop")
+                                cni_cleanup_status = gr.HTML(_cni_alert_html("ready", "Aucun nettoyage effectué."))
                             with gr.Tab("API QlickEER"):
                                 gr.Markdown("Configurez chaque route une fois avec son URL Postman complète. Les paramètres parsés sont conservés pour la session ; aucun proxy explicite n'est sauvegardé.")
                                 with gr.Tabs():
@@ -2425,6 +2480,77 @@ def build_ui() -> gr.Blocks:
                 selected.append(result)
             return _cni_result_table(selected)
 
+        def refresh_anonymized_cni_archives():
+            """Rafraîchit la liste sans charger les contenus d'archives."""
+            choices = list_anonymized_cni_archives(ANONYMIZED_ANALYSIS_DIR)
+            message = (
+                f"{len(choices)} archive(s) anonymisée(s) disponible(s)."
+                if choices else "Aucune archive anonymisée disponible."
+            )
+            return gr.update(choices=choices, value=(choices[0][1] if choices else None)), message
+
+        def load_anonymized_cni_results(archive_path):
+            """Charge des métriques anonymes dans les graphiques, sans artefact OCR."""
+            if not archive_path:
+                return [], pd.DataFrame(), gr.update(choices=[], value=None), cni_accuracy_chart([]), cni_latency_chart([]), _cni_alert_html("warning", "Sélectionnez une archive anonymisée."), "Aucune archive chargée."
+            try:
+                results = load_anonymized_cni_archive(archive_path, ANONYMIZED_ANALYSIS_DIR)
+                message = f"Archive anonymisée chargée : {len(results)} évaluation(s), sans document ni donnée personnelle."
+                return (
+                    results,
+                    _cni_result_table(results),
+                    gr.update(choices=cni_choices(results), value=(0 if results else None)),
+                    cni_accuracy_chart(results),
+                    cni_latency_chart(results),
+                    _cni_alert_html("success", message),
+                    message,
+                )
+            except Exception as exc:
+                LOGGER.exception("CNI anonymized archive load failed")
+                message = f"Chargement de l'archive impossible : {type(exc).__name__}: {exc}"
+                return [], pd.DataFrame(), gr.update(choices=[], value=None), cni_accuracy_chart([]), cni_latency_chart([]), _cni_alert_html("error", message), message
+
+        def cleanup_current_cni_results(results, clients, keep_archive, delete_run, delete_sources, clear_preview_cache, run_status):
+            """Applique une rétention prudente une fois le générateur CNI terminé."""
+            active_markers = ("initialisation", "analyse en cours", "annulation demandée")
+            if any(marker in str(run_status or "").casefold() for marker in active_markers):
+                message = "Nettoyage refusé : l'analyse CNI est encore active ou en cours d'annulation."
+                return _cni_alert_html("warning", message), *refresh_anonymized_cni_archives(), gr.skip(), gr.skip(), gr.skip(), gr.skip(), gr.skip()
+            try:
+                report = cleanup_cni_run(
+                    results or [], clients or [],
+                    runs_root=RUNS_DIR,
+                    archive_root=ANONYMIZED_ANALYSIS_DIR,
+                    imports_root=CNI_IMPORTS_DIR,
+                    keep_anonymized_archive=bool(keep_archive),
+                    delete_detailed_run=bool(delete_run),
+                    delete_imported_sources=bool(delete_sources),
+                    clear_preview_cache=bool(clear_preview_cache),
+                )
+                archive_update, archive_message = refresh_anonymized_cni_archives()
+                chunks = []
+                if report.get("archive_path"):
+                    chunks.append("archive anonymisée créée")
+                if report.get("detailed_run_deleted"):
+                    chunks.append("run détaillé supprimé")
+                if report.get("deleted_import_batches"):
+                    chunks.append(f"{len(report['deleted_import_batches'])} lot(s) QlickEER supprimé(s)")
+                if report.get("preview_cache_deleted"):
+                    chunks.append("aperçus temporaires effacés")
+                message = "Nettoyage terminé : " + (", ".join(chunks) or "aucun élément sélectionné") + "."
+                LOGGER.info("CNI cleanup completed | run=%s | %s", report["run_id"], message)
+                if report.get("detailed_run_deleted"):
+                    return (
+                        _cni_alert_html("success", message), archive_update, archive_message,
+                        [], pd.DataFrame(), gr.update(choices=[], value=None),
+                        cni_accuracy_chart([]), cni_latency_chart([]),
+                    )
+                return _cni_alert_html("success", message), archive_update, archive_message, gr.skip(), gr.skip(), gr.skip(), gr.skip(), gr.skip()
+            except Exception as exc:
+                LOGGER.exception("CNI cleanup failed")
+                message = f"Nettoyage impossible : {type(exc).__name__}: {exc}"
+                return _cni_alert_html("error", message), *refresh_anonymized_cni_archives(), gr.skip(), gr.skip(), gr.skip(), gr.skip(), gr.skip()
+
         def cni_detail_metric_summary(result):
             """Présente les mesures CNI dans le même format que l'explorateur général."""
             input_tokens = result.get("input_tokens")
@@ -2948,6 +3074,36 @@ def build_ui() -> gr.Blocks:
             filter_cni_results,
             inputs=[cni_results_state, cni_accuracy_min, cni_accuracy_max, cni_include_unscored, cni_field_filter, cni_field_state_filter],
             outputs=[cni_results_table], queue=False,
+        )
+        cni_archive_refresh.click(
+            refresh_anonymized_cni_archives,
+            outputs=[cni_archive_selector, cni_archive_status],
+            queue=False,
+        )
+        cni_archive_load.click(
+            load_anonymized_cni_results,
+            inputs=[cni_archive_selector],
+            outputs=[
+                cni_results_state, cni_results_table, cni_result_selector,
+                cni_accuracy_plot, cni_latency_plot,
+                cni_cleanup_status, cni_archive_status,
+            ],
+            queue=False,
+        )
+        cni_cleanup_button.click(
+            cleanup_current_cni_results,
+            inputs=[
+                cni_results_state, cni_all_clients_state,
+                cni_cleanup_keep_archive, cni_cleanup_delete_run,
+                cni_cleanup_delete_sources, cni_cleanup_preview_cache,
+                cni_run_status,
+            ],
+            outputs=[
+                cni_cleanup_status, cni_archive_selector, cni_archive_status,
+                cni_results_state, cni_results_table, cni_result_selector,
+                cni_accuracy_plot, cni_latency_plot,
+            ],
+            queue=False,
         )
         # L'exploration détaillée reste indépendante du générateur : les
         # boutons restent réactifs pendant l'arrivée des nouveaux résultats.
