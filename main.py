@@ -7,6 +7,7 @@ import logging
 import os
 import random
 import time
+from uuid import uuid4
 from pathlib import Path
 from typing import Any
 
@@ -33,6 +34,10 @@ from ocr_benchmark.application.qlicker_api_service import (
     merge_query_params,
     parse_qlicker_url,
     parse_extra_query_params,
+)
+from ocr_benchmark.application.qlicker_cni_import_service import (
+    build_qlicker_cni_routes,
+    iter_prepare_qlicker_cni_clients,
 )
 from ocr_benchmark.application.run_service import list_run_ids, load_run_results, purge_expired_runs
 from ocr_benchmark.cni import (
@@ -466,7 +471,40 @@ def _cni_scan_table(records: list[dict[str, Any]]) -> pd.DataFrame:
     ])
 
 
-def _cni_api_table(records: list[dict[str, Any]], select_all: bool = False) -> pd.DataFrame:
+def _qlicker_cni_candidates(customers: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Crée une file d'import indépendante de la réponse API brute."""
+    return [
+        {
+            "customer": dict(customer),
+            "client_id": str(customer.get("id") or ""),
+            "status": "discovered",
+            "message": "Client découvert ; documents non récupérés.",
+            "issues": [],
+        }
+        for customer in customers
+        if customer.get("id")
+    ]
+
+
+def _cni_api_status_label(status: Any) -> str:
+    """Traduit les états internes de la file API pour l'opérateur."""
+    labels = {
+        "discovered": "Découvert",
+        "documents_detected": "Documents détectés",
+        "downloaded": "Téléchargé",
+        "label_normalized": "Label normalisé",
+        "ready": "Prêt",
+        "ready_without_label": "Prêt sans label",
+        "failed": "Erreur",
+    }
+    return labels.get(str(status or ""), str(status or "—"))
+
+
+def _cni_api_table(
+    records: list[dict[str, Any]],
+    select_all: bool = False,
+    selected_client_ids: set[str] | None = None,
+) -> pd.DataFrame:
     """Projette GetCustomers dans le même inventaire que les dossiers locaux.
 
     Une liste clients ne contient pas encore les fichiers CNI : les colonnes
@@ -476,24 +514,26 @@ def _cni_api_table(records: list[dict[str, Any]], select_all: bool = False) -> p
     """
     return pd.DataFrame([
         {
-            "Retenir": select_all,
-            "Client": str(customer.get("id") or ""),
+            "Retenir": select_all or str(item.get("client_id") or customer.get("id") or "") in (selected_client_ids or set()),
+            "Client": str(item.get("client_id") or customer.get("id") or ""),
             "Identité": " ".join(
                 part for part in (str(customer.get("last_name") or "").strip(), str(customer.get("first_name") or "").strip()) if part
             ) or "—",
             "Origine": "API QlickEER",
-            "Recto": "À récupérer",
-            "Verso": "À récupérer",
-            "Label": "À récupérer",
-            "État": str(customer.get("status") or "découvert"),
+            "Recto": "OK" if item.get("recto_source") else "À récupérer",
+            "Verso": "OK" if item.get("verso_source") else "À récupérer",
+            "Label": "OK" if item.get("label_path") else "À récupérer",
+            "État": _cni_api_status_label(item.get("status") or "discovered"),
             "Détail": " · ".join(
                 part for part in (
                     str(customer.get("agency_name") or customer.get("agency_code") or "").strip(),
-                    str(customer.get("document_id") or "").strip(),
+                    str(item.get("message") or customer.get("document_id") or "").strip(),
+                    "; ".join(str(issue) for issue in item.get("issues", []) if issue),
                 ) if part
             ) or "—",
         }
-        for customer in records
+        for item in records
+        for customer in [item.get("customer") if isinstance(item.get("customer"), dict) else item]
     ])
 
 
@@ -1310,7 +1350,7 @@ def build_ui() -> gr.Blocks:
                                         cni_api_source_page_size = gr.Number(value=20, minimum=1, precision=0, label="pageSize")
                                     cni_api_load_customers = gr.Button("Rechercher les clients", variant="primary")
                                     cni_api_source_customers_state = gr.State([])
-                                    gr.Markdown("Les résultats de recherche apparaissent dans **Diagnostic de la source**.")
+                                    gr.Markdown("Les résultats de recherche apparaissent dans **Diagnostic de la source**. Sélectionnez ensuite les clients à préparer.")
                                 cni_scan_status = gr.Markdown("Indiquez un dossier clients, puis scannez-le.")
                                 with gr.Accordion("Aperçu d’un document", open=False):
                                     with gr.Row():
@@ -1351,6 +1391,8 @@ def build_ui() -> gr.Blocks:
                                         with gr.Row():
                                             cni_api_source_select_all = gr.Button("Tout sélectionner", size="sm")
                                             cni_api_source_clear_selection = gr.Button("Tout désélectionner", size="sm")
+                                            cni_api_prepare_selected = gr.Button("Préparer la sélection", variant="primary", size="sm")
+                                        cni_api_import_progress = gr.Markdown("Aucun client API en préparation.")
                                     with gr.Row():
                                         cni_source_selection_summary = gr.Markdown("Aucune source chargée.")
                                     cni_source_inventory_table = gr.Dataframe(
@@ -1496,6 +1538,11 @@ def build_ui() -> gr.Blocks:
                                             cni_api_settings_use_system_proxy = gr.Checkbox(value=False, label="Utiliser le proxy système")
                                             cni_api_settings_verify_ssl = gr.Checkbox(value=True, label="Vérifier SSL")
                                         cni_api_settings_proxy = gr.Textbox(label="Proxy explicite", type="password", placeholder="http://ncproxy:8080", info="À renseigner seulement si le proxy système est désactivé.")
+                                        cni_api_import_root = gr.Textbox(
+                                            value=str(CNI_IMPORTS_DIR / "qlickeer_api"),
+                                            label="Dossier d'import API",
+                                            info="Un sous-dossier horodaté est créé par préparation de lot.",
+                                        )
                                     with gr.Tab("Clients"):
                                         cni_api_list_raw_url = gr.Textbox(label="URL Postman · liste clients", placeholder="https://serveur/api/get_customer?...", lines=2)
                                         cni_api_list_parse = gr.Button("Parser et enregistrer la route Clients")
@@ -1946,12 +1993,19 @@ def build_ui() -> gr.Blocks:
             par un scan de dossiers locaux.
             """
             static = dict(editable_rows_to_query_pairs(route_rows))
-            feedback, trace, _legacy_table, records, summary = test_qlicker_list(
+            feedback, trace, _legacy_table, records, _summary = test_qlicker_list(
                 base_url, endpoint, from_date, to_date, step, page, page_size,
                 json.dumps(static, ensure_ascii=False), timeout, proxy_url,
                 use_system_proxy, verify_ssl,
             )
-            return feedback, trace, _cni_api_table(records), records, summary
+            candidates = _qlicker_cni_candidates(records)
+            return (
+                feedback,
+                trace,
+                _cni_api_table(candidates),
+                candidates,
+                _customer_selection_summary([], len(candidates)),
+            )
 
         def parse_qlicker_url_for_ui(raw_url):
             """Remplit l'espace de travail éditable à partir d'une URL collée.
@@ -2090,6 +2144,133 @@ def build_ui() -> gr.Blocks:
                 if index < len(rows) and rows[index] and bool(rows[index][0])
             ]
             return selected_records, f"**{len(selected_records)} dossier(s) retenu(s) sur {len(local_records or [])}.**"
+
+        def prepare_selected_qlicker_clients(
+            table: Any,
+            candidates: list[dict[str, Any]],
+            import_root_text: str,
+            base_url: str,
+            customer_endpoint: str,
+            customer_rows: Any,
+            documents_endpoint: str,
+            documents_rows: Any,
+            file_endpoint: str,
+            file_rows: Any,
+            timeout: float,
+            proxy_url: str,
+            use_system_proxy: bool,
+            verify_ssl: bool,
+            recto_suffix: str,
+            verso_suffix: str,
+        ):
+            """Prépare séquentiellement les clients API cochés dans l'inventaire.
+
+            Chaque ``yield`` met à jour une seule ligne logique dans la file.
+            Les fichiers et labels sont ensuite rescannés avec le même contrat
+            que les dossiers locaux, afin que le runner CNI n'ait aucun cas API
+            spécial à connaître.
+            """
+            rows = table.values.tolist() if isinstance(table, pd.DataFrame) else (table or [])
+            selected = [
+                candidate for index, candidate in enumerate(candidates or [])
+                if index < len(rows) and rows[index] and bool(rows[index][0])
+            ]
+            if not selected:
+                yield (
+                    gr.update(), gr.update(), "**Aucun client API sélectionné.**",
+                    "Aucune préparation lancée.", gr.update(), gr.update(), gr.update(),
+                    _cni_alert_html("warning", "Sélectionnez au moins un client API."),
+                )
+                return
+            try:
+                routes = build_qlicker_cni_routes(
+                    customer_endpoint, customer_rows,
+                    documents_endpoint, documents_rows,
+                    file_endpoint, file_rows,
+                )
+                raw_root = str(import_root_text or "").strip()
+                if not raw_root:
+                    raise ValueError("Le dossier d'import API est obligatoire.")
+                base_root = Path(raw_root).expanduser()
+                # L'horodatage rend le dossier lisible ; le suffixe évite toute
+                # collision si deux lots sont lancés dans la même seconde.
+                batch_root = base_root / f"batch-{time.strftime('%Y%m%d-%H%M%S')}-{uuid4().hex[:8]}"
+                batch_root.mkdir(parents=True, exist_ok=False)
+            except Exception as exc:
+                message = f"Configuration API incomplète : {type(exc).__name__}: {exc}"
+                yield (
+                    gr.update(), gr.update(), f"**{message}**", message,
+                    gr.update(), gr.update(), gr.update(), _cni_alert_html("error", message),
+                )
+                return
+
+            working = [dict(candidate) for candidate in (candidates or [])]
+            selected_client_ids = {
+                str(candidate.get("client_id") or candidate.get("customer", {}).get("id") or "")
+                for candidate in selected
+            }
+            completed = 0
+            final_statuses = {"ready", "ready_without_label", "failed"}
+            try:
+                for event in iter_prepare_qlicker_cni_clients(
+                    selected,
+                    batch_root,
+                    base_url=base_url,
+                    routes=routes,
+                    timeout_seconds=float(timeout or 30),
+                    proxy_url=proxy_url,
+                    use_system_proxy=bool(use_system_proxy),
+                    verify_ssl=bool(verify_ssl),
+                    recto_suffix=str(recto_suffix or DEFAULT_RECTO_SUFFIX),
+                    verso_suffix=str(verso_suffix or DEFAULT_VERSO_SUFFIX),
+                ):
+                    client_id = str(event.get("client_id") or "")
+                    for position, candidate in enumerate(working):
+                        if str(candidate.get("client_id") or candidate.get("customer", {}).get("id") or "") == client_id:
+                            working[position] = {**candidate, **event}
+                            break
+                    if event.get("status") in final_statuses:
+                        completed += 1
+                    progress = (
+                        f"**Préparation API :** {completed} / {len(selected)} terminé(s) · "
+                        f"client `{client_id}` : `{event.get('status')}`."
+                    )
+                    yield (
+                        _cni_api_table(working, selected_client_ids=selected_client_ids), working, progress,
+                        _customer_selection_summary(rows, len(working)),
+                        gr.update(), gr.update(), gr.update(),
+                        _cni_alert_html("ready", str(event.get("message") or "Préparation API en cours.")),
+                    )
+            except Exception as exc:
+                LOGGER.exception("QlickEER batch preparation failed")
+                message = f"Préparation API interrompue : {type(exc).__name__}: {exc}"
+                yield (
+                    _cni_api_table(working, selected_client_ids=selected_client_ids), working, f"**{message}**",
+                    _customer_selection_summary(rows, len(working)), gr.update(), gr.update(), gr.update(),
+                    _cni_alert_html("error", message),
+                )
+                return
+
+            # Le scanner local est réutilisé : les documents importés deviennent
+            # des entrées CNI ordinaires et le benchmark reste découplé de l'API.
+            records = scan_cni_documents(
+                batch_root,
+                None,
+                recto_suffix=str(recto_suffix or DEFAULT_RECTO_SUFFIX),
+                verso_suffix=str(verso_suffix or DEFAULT_VERSO_SUFFIX),
+            )
+            ready = sum(record.get("status") == "ready" for record in records)
+            labels = sum(record.get("label_status") == "label_materialized" for record in records)
+            summary = (
+                f"**Lot API terminé :** {len(records)} client(s) matérialisé(s), "
+                f"{ready} paire(s) prête(s), {labels} label(s) normalisé(s)."
+            )
+            yield (
+                _cni_api_table(working, selected_client_ids=selected_client_ids), working, summary,
+                _customer_selection_summary(rows, len(working)), records, records,
+                gr.update(choices=_cni_source_choices(records), value=None),
+                _cni_alert_html("success", f"{summary} Dossier : `{batch_root}`."),
+            )
 
         def test_qlicker_info(base_url, endpoint, customer_id, load_documents, extra_json, timeout, proxy_url, use_system_proxy, verify_ssl):
             """Teste l'endpoint d'information client sans supposer sa réponse JSON."""
@@ -2546,6 +2727,39 @@ def build_ui() -> gr.Blocks:
         cni_api_source_clear_selection.click(
             clear_api_source_selection, inputs=[cni_api_source_customers_state],
             outputs=[cni_source_inventory_table, cni_source_selection_summary], queue=False,
+        )
+        cni_api_prepare_selected.click(
+            prepare_selected_qlicker_clients,
+            inputs=[
+                cni_source_inventory_table,
+                cni_api_source_customers_state,
+                cni_api_import_root,
+                cni_api_settings_base_url,
+                cni_api_info_endpoint_setting,
+                cni_api_info_params_setting,
+                cni_api_documents_endpoint_setting,
+                cni_api_documents_params_setting,
+                cni_api_view_endpoint_setting,
+                cni_api_view_params_setting,
+                cni_api_settings_timeout,
+                cni_api_settings_proxy,
+                cni_api_settings_use_system_proxy,
+                cni_api_settings_verify_ssl,
+                cni_recto_suffix,
+                cni_verso_suffix,
+            ],
+            outputs=[
+                cni_source_inventory_table,
+                cni_api_source_customers_state,
+                cni_api_import_progress,
+                cni_source_selection_summary,
+                cni_all_clients_state,
+                cni_clients_state,
+                cni_source_selector,
+                cni_api_source_feedback,
+            ],
+            concurrency_limit=1,
+            concurrency_id="qlickeer-cni-import",
         )
         cni_source_inventory_table.change(
             update_cni_source_selection,

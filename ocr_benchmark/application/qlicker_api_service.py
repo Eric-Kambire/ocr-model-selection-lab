@@ -11,11 +11,15 @@ from __future__ import annotations
 import json
 from datetime import datetime
 from collections.abc import Mapping, Sequence
+from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qsl, urljoin, urlsplit, urlunsplit
 from urllib.request import getproxies
 
 import requests
+
+
+MAX_QLICKEER_DOWNLOAD_BYTES = 50 * 1024 * 1024
 
 
 def parse_extra_query_params(raw_value: str | None) -> dict[str, Any]:
@@ -257,4 +261,90 @@ def execute_qlicker_get(
             "bytes": len(response.content),
             "body": body,
         },
+    }
+
+
+def download_qlicker_file(
+    base_url: str,
+    endpoint: str,
+    query_params: Mapping[str, Any] | Sequence[tuple[str, Any]],
+    output_stem: Path,
+    *,
+    timeout_seconds: float = 30.0,
+    proxy_url: str | None = None,
+    use_system_proxy: bool = False,
+    verify_ssl: bool = True,
+    max_bytes: int = MAX_QLICKEER_DOWNLOAD_BYTES,
+) -> dict[str, Any]:
+    """Télécharge un PDF/JPEG/PNG QlickEER de manière bornée et atomique.
+
+    Cette fonction est volontairement différente de ``execute_qlicker_get`` :
+    elle est réservée au flux métier qui doit réellement persister le fichier.
+    Le test d'une route API, lui, reste sans écriture locale.
+    """
+    timeout = float(timeout_seconds)
+    if timeout <= 0:
+        raise ValueError("Le timeout doit être supérieur à zéro.")
+    if max_bytes <= 0:
+        raise ValueError("La taille maximale de téléchargement doit être positive.")
+
+    url = build_qlicker_url(base_url, endpoint)
+    explicit_proxy = _proxy_mapping(proxy_url)
+    proxy_mapping = explicit_proxy or (system_proxy_mapping() if use_system_proxy else {})
+    proxy_source = "explicite" if explicit_proxy else "système" if proxy_mapping else "direct"
+    session = requests.Session()
+    session.trust_env = False
+    response = session.get(
+        url,
+        params=query_params,
+        timeout=timeout,
+        proxies=proxy_mapping,
+        verify=bool(verify_ssl),
+        stream=True,
+    )
+    response.raise_for_status()
+
+    content_type = response.headers.get("content-type", "").lower()
+    extension = (
+        ".pdf" if "pdf" in content_type else
+        ".jpg" if "jpeg" in content_type else
+        ".png" if "png" in content_type else
+        None
+    )
+    if extension is None:
+        response.close()
+        raise ValueError(f"Format QlickEER non pris en charge : {content_type or 'Content-Type absent'}")
+
+    declared_size = response.headers.get("content-length")
+    if declared_size and declared_size.isdigit() and int(declared_size) > max_bytes:
+        response.close()
+        raise ValueError(f"Fichier refusé : {int(declared_size)} octets, limite {max_bytes} octets.")
+
+    output_path = output_stem.with_suffix(extension)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    temporary_path = output_path.with_suffix(output_path.suffix + ".part")
+    total = 0
+    try:
+        with temporary_path.open("wb") as stream:
+            for chunk in response.iter_content(chunk_size=64 * 1024):
+                if not chunk:
+                    continue
+                total += len(chunk)
+                if total > max_bytes:
+                    raise ValueError(f"Fichier refusé : limite {max_bytes} octets dépassée.")
+                stream.write(chunk)
+        temporary_path.replace(output_path)
+    except Exception:
+        temporary_path.unlink(missing_ok=True)
+        raise
+    finally:
+        response.close()
+
+    return {
+        "path": str(output_path),
+        "bytes": total,
+        "content_type": content_type,
+        "request_url": response.url,
+        "proxy_source": proxy_source,
+        "verification_ssl": "active" if verify_ssl else "désactivée",
     }
