@@ -8,6 +8,7 @@ from ocr_benchmark.application.qlicker_api_service import (
     merge_query_params,
     parse_qlicker_url,
     parse_extra_query_params,
+    system_proxy_mapping,
 )
 
 
@@ -55,3 +56,16 @@ def test_url_parser_preserves_blank_and_duplicate_parameters_for_editing():
     assert editable_rows_to_query_pairs(rows + [["disabled", "x", False]]) == [
         ("customerID", "42"), ("filter", ""), ("tag", "a"), ("tag", "b"),
     ]
+
+
+def test_system_proxy_keeps_only_http_schemes(monkeypatch):
+    """Le mode proxy système ne transmet pas de réglage non HTTP à requests."""
+    monkeypatch.setattr(
+        "ocr_benchmark.application.qlicker_api_service.getproxies",
+        lambda: {"http": "http://proxy:8080", "https": "http://proxy:8080", "ftp": "ftp://ignore"},
+    )
+
+    assert system_proxy_mapping() == {
+        "http": "http://proxy:8080",
+        "https": "http://proxy:8080",
+    }

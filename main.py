@@ -501,6 +501,7 @@ def _qlicker_test_result(
     extra_params_json: str,
     timeout_seconds: float,
     proxy_url: str,
+    use_system_proxy: bool,
     verify_ssl: bool,
 ) -> tuple[str, str]:
     """Teste un GET QlickEER sans téléchargement ni écriture locale.
@@ -516,6 +517,7 @@ def _qlicker_test_result(
             merge_query_params(explicit_params, extra),
             timeout_seconds=float(timeout_seconds or 30),
             proxy_url=proxy_url,
+            use_system_proxy=bool(use_system_proxy),
             verify_ssl=bool(verify_ssl),
         )
         code = int(payload["response"]["status_code"])
@@ -1144,6 +1146,7 @@ def build_ui() -> gr.Blocks:
                                             cni_api_base_url = gr.Textbox(label="Base URL commune", placeholder="http://serveur-interne/api", scale=3)
                                             cni_api_timeout = gr.Number(value=30, minimum=1, precision=0, label="Timeout (s)", scale=1)
                                             cni_api_proxy = gr.Textbox(label="Proxy explicite", type="password", placeholder="http://proxy.interne.local:8080", info="Optionnel ; utilisé pour tous les tests et jamais enregistré.", scale=3)
+                                            cni_api_use_system_proxy = gr.Checkbox(label="Utiliser le proxy système", value=False, info="Lit le proxy configuré sur ce poste Windows si aucun proxy explicite n'est saisi.", scale=1)
                                             cni_api_verify_ssl = gr.Checkbox(label="Vérifier SSL", value=True, info="Décochez seulement pour un certificat interne connu.", scale=1)
                                     gr.Markdown("**2 · Construire l'appel**")
                                     cni_api_call_mode = gr.Radio(
@@ -1175,6 +1178,20 @@ def build_ui() -> gr.Blocks:
                                                 cni_api_page_size = gr.Number(value=20, minimum=1, precision=0, label="pageSize")
                                             cni_api_list_extra = gr.Textbox(label="Autres paramètres — JSON", lines=3, placeholder='Ex. {"sort": null, "status": ""}')
                                             cni_api_test_list = gr.Button("Exécuter GET liste clients", variant="primary")
+                                            cni_api_customers_state = gr.State([])
+                                            gr.Markdown("**3 · Sélection des clients**")
+                                            with gr.Row():
+                                                cni_api_select_all = gr.Button("Tout sélectionner", size="sm")
+                                                cni_api_clear_selection = gr.Button("Tout désélectionner", size="sm")
+                                                cni_api_selected_summary = gr.Markdown("Aucun client chargé.")
+                                            cni_api_customers_table = gr.Dataframe(
+                                                headers=["Sélectionner", "ID client", "Nom", "Prénom", "Agence", "Statut", "Création", "Document"],
+                                                datatype=["bool", "str", "str", "str", "str", "str", "str", "str"],
+                                                interactive=True,
+                                                label="Clients trouvés",
+                                                max_height=300,
+                                            )
+                                            gr.Markdown("Les documents seront ajoutés directement au diagnostic CNI après validation du contrat `get_signed_documents_list`.")
                                         with gr.Group(visible=False) as cni_api_info_group:
                                             cni_api_info_endpoint = gr.Textbox(label="Segment endpoint / fonction", placeholder="Ex. GetCustomerData")
                                             with gr.Row():
@@ -1765,7 +1782,7 @@ def build_ui() -> gr.Blocks:
             except ValueError as exc:
                 return gr.update(), gr.update(), [], _cni_alert_html("error", str(exc))
 
-        def test_qlicker_parsed(base_url, endpoint, rows, timeout, proxy_url, verify_ssl):
+        def test_qlicker_parsed(base_url, endpoint, rows, timeout, proxy_url, use_system_proxy, verify_ssl):
             """Teste les paramètres issus du parser, dans leur ordre édité."""
             try:
                 pairs = editable_rows_to_query_pairs(rows)
@@ -1775,6 +1792,7 @@ def build_ui() -> gr.Blocks:
                     pairs,
                     timeout_seconds=float(timeout or 30),
                     proxy_url=proxy_url,
+                    use_system_proxy=bool(use_system_proxy),
                     verify_ssl=bool(verify_ssl),
                 )
                 code = int(payload["response"]["status_code"])
@@ -1788,25 +1806,78 @@ def build_ui() -> gr.Blocks:
                 LOGGER.exception("QlickEER parsed URL test failed")
                 return _cni_alert_html("error", f"Test API impossible : {type(exc).__name__}: {exc}"), ""
 
-        def test_qlicker_list(base_url, endpoint, from_date, to_date, step, page, page_size, extra_json, timeout, proxy_url, verify_ssl):
-            """Teste l'endpoint paginé, avec les cinq paramètres actuellement connus."""
-            return _qlicker_test_result(
-                base_url,
-                endpoint,
+        def _customer_table(records: list[dict[str, Any]], select_all: bool = False) -> pd.DataFrame:
+            """Projette la réponse GetCustomers vers les seules colonnes utiles à l'opérateur."""
+            return pd.DataFrame([
                 {
-                    "from_date": str(from_date or "").strip() or None,
-                    "to_date": str(to_date or "").strip() or None,
-                    "step": str(step or "").strip() or None,
-                    "page": int(page or 1),
-                    "pageSize": int(page_size or 20),
-                },
-                extra_json,
-                float(timeout or 30),
-                proxy_url,
-                bool(verify_ssl),
-            )
+                    "Sélectionner": select_all,
+                    "ID client": str(customer.get("id") or ""),
+                    "Nom": str(customer.get("last_name") or ""),
+                    "Prénom": str(customer.get("first_name") or ""),
+                    "Agence": str(customer.get("agency_name") or customer.get("agency_code") or ""),
+                    "Statut": str(customer.get("status") or ""),
+                    "Création": str(customer.get("creation_date") or ""),
+                    "Document": str(customer.get("document_id") or ""),
+                }
+                for customer in records
+            ])
 
-        def test_qlicker_info(base_url, endpoint, customer_id, load_documents, extra_json, timeout, proxy_url, verify_ssl):
+        def _customer_selection_summary(table: Any, total: int | list[dict[str, Any]]) -> str:
+            """Compte les lignes cochées sans exposer le JSON complet des clients."""
+            rows = table.values.tolist() if isinstance(table, pd.DataFrame) else (table or [])
+            selected = sum(1 for row in rows if row and bool(row[0]))
+            total_count = len(total) if isinstance(total, list) else total
+            return f"**{selected} client(s) sélectionné(s) sur {total_count}.**"
+
+        def test_qlicker_list(base_url, endpoint, from_date, to_date, step, page, page_size, extra_json, timeout, proxy_url, use_system_proxy, verify_ssl):
+            """Charge les clients et rend leur sélection possible, sans importer de document."""
+            try:
+                params = merge_query_params(
+                    {
+                        "from_date": str(from_date or "").strip() or None,
+                        "to_date": str(to_date or "").strip() or None,
+                        "step": str(step or "").strip() or None,
+                        "page": int(page or 1),
+                        "pageSize": int(page_size or 20),
+                    },
+                    parse_extra_query_params(extra_json),
+                )
+                payload = execute_qlicker_get(
+                    base_url, endpoint, params,
+                    timeout_seconds=float(timeout or 30), proxy_url=proxy_url,
+                    use_system_proxy=bool(use_system_proxy), verify_ssl=bool(verify_ssl),
+                )
+                body = payload.get("response", {}).get("body", {})
+                response_data = body.get("response_data", {}) if isinstance(body, dict) else {}
+                customers = response_data.get("customers_found", []) if isinstance(response_data, dict) else []
+                if not isinstance(customers, list):
+                    customers = []
+                records = [item for item in customers if isinstance(item, dict) and item.get("id")]
+                code = int(payload["response"]["status_code"])
+                level = "success" if 200 <= code < 300 else "warning"
+                declared_total = response_data.get("total_customer", len(records)) if isinstance(response_data, dict) else len(records)
+                message = f"Liste reçue : HTTP {code} · {len(records)} client(s) affiché(s) · total API : {declared_total}."
+                return (
+                    _cni_alert_html(level, message), json.dumps(payload, ensure_ascii=False, indent=2),
+                    _customer_table(records), records,
+                    _customer_selection_summary([], len(records)),
+                )
+            except Exception as exc:
+                LOGGER.exception("QlickEER customer list failed")
+                return (
+                    _cni_alert_html("error", f"Liste clients impossible : {type(exc).__name__}: {exc}"), "",
+                    pd.DataFrame(), [], "Aucun client chargé.",
+                )
+
+        def select_all_customers(records: list[dict[str, Any]]):
+            table = _customer_table(records or [], select_all=True)
+            return table, _customer_selection_summary(table, len(records or []))
+
+        def clear_customer_selection(records: list[dict[str, Any]]):
+            table = _customer_table(records or [], select_all=False)
+            return table, _customer_selection_summary(table, len(records or []))
+
+        def test_qlicker_info(base_url, endpoint, customer_id, load_documents, extra_json, timeout, proxy_url, use_system_proxy, verify_ssl):
             """Teste l'endpoint d'information client sans supposer sa réponse JSON."""
             return _qlicker_test_result(
                 base_url,
@@ -1815,10 +1886,11 @@ def build_ui() -> gr.Blocks:
                 extra_json,
                 float(timeout or 30),
                 proxy_url,
+                bool(use_system_proxy),
                 bool(verify_ssl),
             )
 
-        def test_qlicker_documents(base_url, endpoint, customer_id, extra_json, timeout, proxy_url, verify_ssl):
+        def test_qlicker_documents(base_url, endpoint, customer_id, extra_json, timeout, proxy_url, use_system_proxy, verify_ssl):
             """Teste la liste distante des documents signés d'un client."""
             return _qlicker_test_result(
                 base_url,
@@ -1827,10 +1899,11 @@ def build_ui() -> gr.Blocks:
                 extra_json,
                 float(timeout or 30),
                 proxy_url,
+                bool(use_system_proxy),
                 bool(verify_ssl),
             )
 
-        def test_qlicker_view(base_url, endpoint, customer_id, page, file_name, extra_json, timeout, proxy_url, verify_ssl):
+        def test_qlicker_view(base_url, endpoint, customer_id, page, file_name, extra_json, timeout, proxy_url, use_system_proxy, verify_ssl):
             """Teste le retour d'un fichier sans le persister dans le benchmark."""
             return _qlicker_test_result(
                 base_url,
@@ -1843,6 +1916,7 @@ def build_ui() -> gr.Blocks:
                 extra_json,
                 float(timeout or 30),
                 proxy_url,
+                bool(use_system_proxy),
                 bool(verify_ssl),
             )
 
@@ -2219,7 +2293,7 @@ def build_ui() -> gr.Blocks:
             test_qlicker_parsed,
             inputs=[
                 cni_api_base_url, cni_api_parsed_endpoint, cni_api_parsed_params,
-                cni_api_timeout, cni_api_proxy, cni_api_verify_ssl,
+                cni_api_timeout, cni_api_proxy, cni_api_use_system_proxy, cni_api_verify_ssl,
             ],
             outputs=[cni_api_feedback, cni_api_trace],
             queue=False,
@@ -2230,9 +2304,30 @@ def build_ui() -> gr.Blocks:
                 cni_api_base_url, cni_api_list_endpoint,
                 cni_api_from_date, cni_api_to_date, cni_api_step,
                 cni_api_page, cni_api_page_size, cni_api_list_extra, cni_api_timeout,
-                cni_api_proxy, cni_api_verify_ssl,
+                cni_api_proxy, cni_api_use_system_proxy, cni_api_verify_ssl,
             ],
-            outputs=[cni_api_feedback, cni_api_trace],
+            outputs=[
+                cni_api_feedback, cni_api_trace, cni_api_customers_table,
+                cni_api_customers_state, cni_api_selected_summary,
+            ],
+            queue=False,
+        )
+        cni_api_select_all.click(
+            select_all_customers,
+            inputs=[cni_api_customers_state],
+            outputs=[cni_api_customers_table, cni_api_selected_summary],
+            queue=False,
+        )
+        cni_api_clear_selection.click(
+            clear_customer_selection,
+            inputs=[cni_api_customers_state],
+            outputs=[cni_api_customers_table, cni_api_selected_summary],
+            queue=False,
+        )
+        cni_api_customers_table.change(
+            _customer_selection_summary,
+            inputs=[cni_api_customers_table, cni_api_customers_state],
+            outputs=[cni_api_selected_summary],
             queue=False,
         )
         cni_api_test_info.click(
@@ -2240,7 +2335,7 @@ def build_ui() -> gr.Blocks:
             inputs=[
                 cni_api_base_url, cni_api_info_endpoint, cni_api_customer_id,
                 cni_api_load_documents, cni_api_info_extra, cni_api_timeout,
-                cni_api_proxy, cni_api_verify_ssl,
+                cni_api_proxy, cni_api_use_system_proxy, cni_api_verify_ssl,
             ],
             outputs=[cni_api_feedback, cni_api_trace],
             queue=False,
@@ -2250,7 +2345,7 @@ def build_ui() -> gr.Blocks:
             inputs=[
                 cni_api_base_url, cni_api_documents_endpoint, cni_api_documents_customer_id,
                 cni_api_documents_extra, cni_api_timeout,
-                cni_api_proxy, cni_api_verify_ssl,
+                cni_api_proxy, cni_api_use_system_proxy, cni_api_verify_ssl,
             ],
             outputs=[cni_api_feedback, cni_api_trace],
             queue=False,
@@ -2260,7 +2355,7 @@ def build_ui() -> gr.Blocks:
             inputs=[
                 cni_api_base_url, cni_api_view_endpoint, cni_api_view_customer_id,
                 cni_api_view_page, cni_api_view_file, cni_api_view_extra, cni_api_timeout,
-                cni_api_proxy, cni_api_verify_ssl,
+                cni_api_proxy, cni_api_use_system_proxy, cni_api_verify_ssl,
             ],
             outputs=[cni_api_feedback, cni_api_trace],
             queue=False,

@@ -12,6 +12,7 @@ import json
 from collections.abc import Mapping, Sequence
 from typing import Any
 from urllib.parse import parse_qsl, urljoin, urlsplit, urlunsplit
+from urllib.request import getproxies
 
 import requests
 
@@ -111,6 +112,20 @@ def _masked_proxy(proxy_url: str | None) -> str:
     return f"{parsed.scheme}://{username}:***@{parsed.hostname}{port}"
 
 
+def system_proxy_mapping() -> dict[str, str]:
+    """Lit les proxies du poste, dont les réglages Windows quand disponibles.
+
+    La configuration explicite reste prioritaire dans l'interface. Cette
+    fonction ne renvoie que les schémas HTTP(S) utiles à ``requests``.
+    """
+    detected = getproxies()
+    return {
+        scheme: str(value)
+        for scheme, value in detected.items()
+        if scheme in {"http", "https"} and str(value).strip()
+    }
+
+
 def execute_qlicker_get(
     base_url: str,
     endpoint: str,
@@ -118,20 +133,27 @@ def execute_qlicker_get(
     *,
     timeout_seconds: float = 30.0,
     proxy_url: str | None = None,
+    use_system_proxy: bool = False,
     verify_ssl: bool = True,
 ) -> dict[str, Any]:
     """Envoie un GET interne et retourne la requête/réponse sans écrire sur disque.
 
-    ``proxy_url`` et ``verify_ssl`` viennent de la configuration UI ; aucun
-    secret n'est enregistré. La vérification SSL est active par défaut et ne
-    doit être désactivée que pour un certificat interne connu.
+    ``proxy_url`` est prioritaire. Sinon, ``use_system_proxy`` peut demander la
+    lecture des réglages proxy du poste. Aucun secret n'est enregistré. La
+    vérification SSL reste active par défaut.
     """
     timeout = float(timeout_seconds)
     if timeout <= 0:
         raise ValueError("Le timeout doit être supérieur à zéro.")
     url = build_qlicker_url(base_url, endpoint)
-    proxy_mapping = _proxy_mapping(proxy_url)
-    response = requests.get(
+    explicit_proxy = _proxy_mapping(proxy_url)
+    proxy_mapping = explicit_proxy or (system_proxy_mapping() if use_system_proxy else {})
+    proxy_source = "explicite" if explicit_proxy else "système" if proxy_mapping else "direct"
+    session = requests.Session()
+    # Nous choisissons explicitement le chemin réseau : les variables
+    # d'environnement ne doivent pas contourner l'option UI « direct ».
+    session.trust_env = False
+    response = session.get(
         url,
         params=query_params,
         timeout=timeout,
@@ -164,7 +186,8 @@ def execute_qlicker_get(
                 if isinstance(query_params, Mapping)
                 else []
             ),
-            "proxy": _masked_proxy(proxy_url),
+            "proxy": _masked_proxy(proxy_url) if explicit_proxy else "proxy système" if proxy_mapping else "connexion directe",
+            "source_proxy": proxy_source,
             "verification_ssl": "active" if verify_ssl else "désactivée",
         },
         "response": {
