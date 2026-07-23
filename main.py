@@ -500,6 +500,30 @@ def _cni_api_status_label(status: Any) -> str:
     return labels.get(str(status or ""), str(status or "—"))
 
 
+def _cni_api_document_label(item: dict[str, Any], side: str) -> str:
+    """Explique l'avancement d'une face sans le vague « à récupérer »."""
+    if item.get(f"{side}_source"):
+        return "Téléchargé"
+    status = str(item.get("status") or "")
+    if status == "documents_detected":
+        return "Détecté"
+    if status == "failed":
+        return "Non disponible"
+    return "À vérifier"
+
+
+def _cni_api_label_label(item: dict[str, Any]) -> str:
+    """Distingue un label non demandé, normalisé ou indisponible."""
+    if item.get("label_path"):
+        return "Normalisé"
+    status = str(item.get("status") or "")
+    if status == "ready_without_label":
+        return "Indisponible"
+    if status == "failed":
+        return "Non atteint"
+    return "À demander"
+
+
 def _cni_api_table(
     records: list[dict[str, Any]],
     select_all: bool = False,
@@ -520,9 +544,9 @@ def _cni_api_table(
                 part for part in (str(customer.get("last_name") or "").strip(), str(customer.get("first_name") or "").strip()) if part
             ) or "—",
             "Origine": "API QlickEER",
-            "Recto": "OK" if item.get("recto_source") else "À récupérer",
-            "Verso": "OK" if item.get("verso_source") else "À récupérer",
-            "Label": "OK" if item.get("label_path") else "À récupérer",
+            "Recto": _cni_api_document_label(item, "recto"),
+            "Verso": _cni_api_document_label(item, "verso"),
+            "Label": _cni_api_label_label(item),
             "État": _cni_api_status_label(item.get("status") or "discovered"),
             "Détail": " · ".join(
                 part for part in (
@@ -1999,12 +2023,13 @@ def build_ui() -> gr.Blocks:
                 use_system_proxy, verify_ssl,
             )
             candidates = _qlicker_cni_candidates(records)
+            table = _cni_api_table(candidates)
             return (
                 feedback,
                 trace,
-                _cni_api_table(candidates),
+                table,
                 candidates,
-                _customer_selection_summary([], len(candidates)),
+                api_inventory_summary(table, candidates),
             )
 
         def parse_qlicker_url_for_ui(raw_url):
@@ -2071,6 +2096,26 @@ def build_ui() -> gr.Blocks:
             total_count = len(total) if isinstance(total, list) else total
             return f"**{selected} client(s) sélectionné(s) sur {total_count}.**"
 
+        def api_inventory_summary(table: Any, candidates: list[dict[str, Any]]) -> str:
+            """Affiche les volumes utiles de la file de préparation API."""
+            rows = table.values.tolist() if isinstance(table, pd.DataFrame) else (table or [])
+            selected = sum(1 for row in rows if row and bool(row[0]))
+            counts: dict[str, int] = {}
+            for candidate in candidates or []:
+                status = str(candidate.get("status") or "discovered")
+                counts[status] = counts.get(status, 0) + 1
+            ready = counts.get("ready", 0) + counts.get("ready_without_label", 0)
+            waiting = sum(
+                counts.get(status, 0)
+                for status in ("discovered", "documents_detected", "downloaded", "label_normalized")
+            )
+            return (
+                f"**Total API :** {len(candidates or [])} · "
+                f"**Sélection :** {selected} · "
+                f"**Prêts :** {ready} · **En attente :** {waiting} · "
+                f"**Erreurs :** {counts.get('failed', 0)}"
+            )
+
         def test_qlicker_list(base_url, endpoint, from_date, to_date, step, page, page_size, extra_json, timeout, proxy_url, use_system_proxy, verify_ssl):
             """Charge les clients et rend leur sélection possible, sans importer de document."""
             try:
@@ -2122,12 +2167,12 @@ def build_ui() -> gr.Blocks:
         def select_all_api_source(records: list[dict[str, Any]]):
             """Coche tous les candidats provenant de la dernière liste API."""
             table = _cni_api_table(records or [], select_all=True)
-            return table, _customer_selection_summary(table, len(records or []))
+            return table, api_inventory_summary(table, records or [])
 
         def clear_api_source_selection(records: list[dict[str, Any]]):
             """Décoche les candidats API sans effacer la réponse de l'appel."""
             table = _cni_api_table(records or [], select_all=False)
-            return table, _customer_selection_summary(table, len(records or []))
+            return table, api_inventory_summary(table, records or [])
 
         def update_cni_source_selection(mode: str, table: Any, local_records: list[dict[str, Any]], api_records: list[dict[str, Any]]):
             """Met à jour la sélection locale ou compte celle de la liste API.
@@ -2138,7 +2183,7 @@ def build_ui() -> gr.Blocks:
             """
             rows = table.values.tolist() if isinstance(table, pd.DataFrame) else (table or [])
             if mode == "api":
-                return gr.update(), _customer_selection_summary(rows, api_records or [])
+                return gr.update(), api_inventory_summary(rows, api_records or [])
             selected_records = [
                 record for index, record in enumerate(local_records or [])
                 if index < len(rows) and rows[index] and bool(rows[index][0])
@@ -2237,7 +2282,7 @@ def build_ui() -> gr.Blocks:
                     )
                     yield (
                         _cni_api_table(working, selected_client_ids=selected_client_ids), working, progress,
-                        _customer_selection_summary(rows, len(working)),
+                        api_inventory_summary(_cni_api_table(working, selected_client_ids=selected_client_ids), working),
                         gr.update(), gr.update(), gr.update(),
                         _cni_alert_html("ready", str(event.get("message") or "Préparation API en cours.")),
                     )
@@ -2246,7 +2291,7 @@ def build_ui() -> gr.Blocks:
                 message = f"Préparation API interrompue : {type(exc).__name__}: {exc}"
                 yield (
                     _cni_api_table(working, selected_client_ids=selected_client_ids), working, f"**{message}**",
-                    _customer_selection_summary(rows, len(working)), gr.update(), gr.update(), gr.update(),
+                    api_inventory_summary(_cni_api_table(working, selected_client_ids=selected_client_ids), working), gr.update(), gr.update(), gr.update(),
                     _cni_alert_html("error", message),
                 )
                 return
@@ -2267,7 +2312,7 @@ def build_ui() -> gr.Blocks:
             )
             yield (
                 _cni_api_table(working, selected_client_ids=selected_client_ids), working, summary,
-                _customer_selection_summary(rows, len(working)), records, records,
+                api_inventory_summary(_cni_api_table(working, selected_client_ids=selected_client_ids), working), records, records,
                 gr.update(choices=_cni_source_choices(records), value=None),
                 _cni_alert_html("success", f"{summary} Dossier : `{batch_root}`."),
             )
