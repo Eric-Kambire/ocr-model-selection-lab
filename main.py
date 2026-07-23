@@ -524,10 +524,26 @@ def _qlicker_test_result(
         level = "success" if 200 <= code < 300 else "warning"
         tls = "SSL vérifié" if verify_ssl else "SSL non vérifié"
         message = f"GET terminé : HTTP {code} · {tls}. Aucun document n'a été enregistré localement."
-        return _cni_alert_html(level, message), json.dumps(payload, ensure_ascii=False, indent=2)
+        return _cni_alert_html(level, message), _qlicker_trace_preview(payload)
     except Exception as exc:
         LOGGER.exception("QlickEER API test failed")
         return _cni_alert_html("error", f"Test API impossible : {type(exc).__name__}: {exc}"), ""
+
+
+def _qlicker_trace_preview(payload: dict[str, Any], limit: int = 50_000) -> str:
+    """Protège le navigateur contre l'affichage d'une réponse API trop volumineuse.
+
+    L'appelant conserve ``payload`` complet pour ses traitements métier ; seul
+    le panneau de diagnostic Gradio est tronqué de manière explicite.
+    """
+    rendered = json.dumps(payload, ensure_ascii=False, indent=2, default=str)
+    if len(rendered) <= limit:
+        return rendered
+    return (
+        rendered[:limit]
+        + f"\n\n… aperçu tronqué à {limit:,} caractères pour préserver l'interface "
+        f"(réponse complète : {len(rendered):,} caractères)."
+    )
 
 
 def _cni_prompt_preview(strategy: str, system_prompt: str | None, instructions: str | None) -> str:
@@ -1800,7 +1816,7 @@ def build_ui() -> gr.Blocks:
                 tls = "SSL vérifié" if verify_ssl else "SSL non vérifié"
                 return (
                     _cni_alert_html(level, f"GET analysé terminé : HTTP {code} · {tls}. Aucun fichier n'a été enregistré."),
-                    json.dumps(payload, ensure_ascii=False, indent=2),
+                    _qlicker_trace_preview(payload),
                 )
             except Exception as exc:
                 LOGGER.exception("QlickEER parsed URL test failed")
@@ -1858,7 +1874,7 @@ def build_ui() -> gr.Blocks:
                 declared_total = response_data.get("total_customer", len(records)) if isinstance(response_data, dict) else len(records)
                 message = f"Liste reçue : HTTP {code} · {len(records)} client(s) affiché(s) · total API : {declared_total}."
                 return (
-                    _cni_alert_html(level, message), json.dumps(payload, ensure_ascii=False, indent=2),
+                    _cni_alert_html(level, message), _qlicker_trace_preview(payload),
                     _customer_table(records), records,
                     _customer_selection_summary([], len(records)),
                 )
