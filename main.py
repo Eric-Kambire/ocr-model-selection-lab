@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import random
+import threading
 import time
 from uuid import uuid4
 from pathlib import Path
@@ -37,7 +38,10 @@ from ocr_benchmark.application.qlicker_api_service import (
 )
 from ocr_benchmark.application.qlicker_cni_import_service import (
     build_qlicker_cni_routes,
+    find_completed_qlicker_batch,
     iter_prepare_qlicker_cni_clients,
+    qlicker_preparation_fingerprint,
+    write_qlicker_preparation_manifest,
 )
 from ocr_benchmark.application.retention_service import (
     cleanup_cni_run,
@@ -79,6 +83,11 @@ RUNS_DIR = ROOT_DIR / "runs"
 CNI_IMPORTS_DIR = ROOT_DIR / "cni_imports"
 ANONYMIZED_ANALYSIS_DIR = ROOT_DIR / "analysis_archive"
 QLICKEER_CONFIG_PATH = ROOT_DIR / "config" / "qlickeer_api.local.json"
+
+# Cette garde complète le manifeste disque : elle refuse immédiatement un
+# deuxième clic identique dans le même processus, avant même un appel réseau.
+QLICKEER_PREPARATION_LOCK = threading.Lock()
+ACTIVE_QLICKEER_PREPARATIONS: set[str] = set()
 
 
 def _read_retention_days() -> int | None:
@@ -2395,6 +2404,42 @@ def build_ui() -> gr.Blocks:
                     _cni_alert_html("warning", "Sélectionnez au moins un client API."),
                 )
                 return
+            working = [dict(candidate) for candidate in (candidates or [])]
+            selected_client_ids = {
+                str(candidate.get("client_id") or candidate.get("customer", {}).get("id") or "")
+                for candidate in selected
+            }
+
+            def scan_and_merge(batch: Path) -> list[dict[str, Any]]:
+                """Valide les noms réellement écrits avant de déclarer une paire prête."""
+                records = scan_cni_documents(
+                    batch,
+                    None,
+                    recto_suffix=str(recto_suffix or DEFAULT_RECTO_SUFFIX),
+                    verso_suffix=str(verso_suffix or DEFAULT_VERSO_SUFFIX),
+                )
+                by_client = {str(record.get("folder_client_id")): record for record in records}
+                for position, candidate in enumerate(working):
+                    client_id = str(candidate.get("client_id") or candidate.get("customer", {}).get("id") or "")
+                    scanned = by_client.get(client_id)
+                    if scanned is None:
+                        continue
+                    merged = {**candidate, **{
+                        "recto_source": scanned.get("recto_source"),
+                        "verso_source": scanned.get("verso_source"),
+                        "label_path": scanned.get("label_path"),
+                    }}
+                    if scanned.get("status") != "ready":
+                        merged.update(
+                            status="failed",
+                            message="Validation locale échouée : les fichiers téléchargés ne respectent pas le contrat recto/verso.",
+                            issues=[*candidate.get("issues", []), *scanned.get("issues", [])],
+                        )
+                    elif candidate.get("status") == "ready":
+                        merged["message"] = "Client prêt : recto, verso et label validés localement."
+                    working[position] = merged
+                return records
+
             try:
                 routes = build_qlicker_cni_routes(
                     customer_endpoint, customer_rows,
@@ -2405,10 +2450,13 @@ def build_ui() -> gr.Blocks:
                 if not raw_root:
                     raise ValueError("Le dossier d'import API est obligatoire.")
                 base_root = Path(raw_root).expanduser()
-                # L'horodatage rend le dossier lisible ; le suffixe évite toute
-                # collision si deux lots sont lancés dans la même seconde.
-                batch_root = base_root / f"batch-{time.strftime('%Y%m%d-%H%M%S')}-{uuid4().hex[:8]}"
-                batch_root.mkdir(parents=True, exist_ok=False)
+                fingerprint = qlicker_preparation_fingerprint(
+                    selected,
+                    base_url=base_url,
+                    routes=routes,
+                    recto_suffix=str(recto_suffix or DEFAULT_RECTO_SUFFIX),
+                    verso_suffix=str(verso_suffix or DEFAULT_VERSO_SUFFIX),
+                )
             except Exception as exc:
                 message = f"Configuration API incomplète : {type(exc).__name__}: {exc}"
                 yield (
@@ -2417,14 +2465,46 @@ def build_ui() -> gr.Blocks:
                 )
                 return
 
-            working = [dict(candidate) for candidate in (candidates or [])]
-            selected_client_ids = {
-                str(candidate.get("client_id") or candidate.get("customer", {}).get("id") or "")
-                for candidate in selected
-            }
+            # Idempotence persistante : même sélection + mêmes routes = même
+            # lot, même après un refresh de la page ou un redémarrage.
+            with QLICKEER_PREPARATION_LOCK:
+                if fingerprint in ACTIVE_QLICKEER_PREPARATIONS:
+                    message = "Cette sélection est déjà en préparation. Attendez la fin du lot en cours."
+                    yield (
+                        _cni_api_table(working, selected_client_ids=selected_client_ids), working, f"**{message}**",
+                        api_inventory_summary(_cni_api_table(working, selected_client_ids=selected_client_ids), working),
+                        gr.update(), gr.update(), gr.update(), _cni_alert_html("warning", message),
+                    )
+                    return
+                existing_batch = find_completed_qlicker_batch(base_root, fingerprint)
+                if existing_batch is not None:
+                    records = scan_and_merge(existing_batch)
+                    ready = sum(record.get("status") == "ready" for record in records)
+                    labels = sum(record.get("label_status") == "label_materialized" for record in records)
+                    summary = (
+                        f"**Lot existant réutilisé :** {len(records)} client(s), {ready} paire(s) prête(s), "
+                        f"{labels} label(s) normalisé(s). Aucun nouvel appel API."
+                    )
+                    yield (
+                        _cni_api_table(working, selected_client_ids=selected_client_ids), working, summary,
+                        api_inventory_summary(_cni_api_table(working, selected_client_ids=selected_client_ids), working), records, records,
+                        gr.update(choices=_cni_source_choices(records), value=None),
+                        _cni_alert_html("success", f"{summary} Dossier : `{existing_batch}`."),
+                    )
+                    return
+                ACTIVE_QLICKEER_PREPARATIONS.add(fingerprint)
+
+            batch_root: Path | None = None
             completed = 0
             final_statuses = {"ready", "ready_without_label", "failed"}
             try:
+                # Le nom reste unique, mais le manifeste rend le contenu
+                # idempotent pour le même contrat de préparation.
+                batch_root = base_root / f"batch-{time.strftime('%Y%m%d-%H%M%S')}-{uuid4().hex[:8]}"
+                batch_root.mkdir(parents=True, exist_ok=False)
+                write_qlicker_preparation_manifest(
+                    batch_root, fingerprint=fingerprint, status="running", selected_count=len(selected),
+                )
                 for event in iter_prepare_qlicker_cni_clients(
                     selected,
                     batch_root,
@@ -2456,34 +2536,38 @@ def build_ui() -> gr.Blocks:
                     )
             except Exception as exc:
                 LOGGER.exception("QlickEER batch preparation failed")
+                if batch_root is not None:
+                    write_qlicker_preparation_manifest(
+                        batch_root, fingerprint=fingerprint, status="failed", selected_count=len(selected),
+                    )
                 message = f"Préparation API interrompue : {type(exc).__name__}: {exc}"
                 yield (
                     _cni_api_table(working, selected_client_ids=selected_client_ids), working, f"**{message}**",
                     api_inventory_summary(_cni_api_table(working, selected_client_ids=selected_client_ids), working), gr.update(), gr.update(), gr.update(),
                     _cni_alert_html("error", message),
                 )
-                return
-
-            # Le scanner local est réutilisé : les documents importés deviennent
-            # des entrées CNI ordinaires et le benchmark reste découplé de l'API.
-            records = scan_cni_documents(
-                batch_root,
-                None,
-                recto_suffix=str(recto_suffix or DEFAULT_RECTO_SUFFIX),
-                verso_suffix=str(verso_suffix or DEFAULT_VERSO_SUFFIX),
-            )
-            ready = sum(record.get("status") == "ready" for record in records)
-            labels = sum(record.get("label_status") == "label_materialized" for record in records)
-            summary = (
-                f"**Lot API terminé :** {len(records)} client(s) matérialisé(s), "
-                f"{ready} paire(s) prête(s), {labels} label(s) normalisé(s)."
-            )
-            yield (
-                _cni_api_table(working, selected_client_ids=selected_client_ids), working, summary,
-                api_inventory_summary(_cni_api_table(working, selected_client_ids=selected_client_ids), working), records, records,
-                gr.update(choices=_cni_source_choices(records), value=None),
-                _cni_alert_html("success", f"{summary} Dossier : `{batch_root}`."),
-            )
+            else:
+                # Le scanner local est la source de vérité : un téléchargement
+                # n'est « prêt » qu'après validation de ses deux noms et du JSON.
+                records = scan_and_merge(batch_root)
+                ready = sum(record.get("status") == "ready" for record in records)
+                labels = sum(record.get("label_status") == "label_materialized" for record in records)
+                write_qlicker_preparation_manifest(
+                    batch_root, fingerprint=fingerprint, status="completed", selected_count=len(selected),
+                )
+                summary = (
+                    f"**Lot API terminé :** {len(records)} client(s) matérialisé(s), "
+                    f"{ready} paire(s) prête(s), {labels} label(s) normalisé(s)."
+                )
+                yield (
+                    _cni_api_table(working, selected_client_ids=selected_client_ids), working, summary,
+                    api_inventory_summary(_cni_api_table(working, selected_client_ids=selected_client_ids), working), records, records,
+                    gr.update(choices=_cni_source_choices(records), value=None),
+                    _cni_alert_html("success", f"{summary} Dossier : `{batch_root}`."),
+                )
+            finally:
+                with QLICKEER_PREPARATION_LOCK:
+                    ACTIVE_QLICKEER_PREPARATIONS.discard(fingerprint)
 
         def test_qlicker_info(base_url, endpoint, customer_id, load_documents, extra_json, timeout, proxy_url, use_system_proxy, verify_ssl):
             """Teste l'endpoint d'information client sans supposer sa réponse JSON."""

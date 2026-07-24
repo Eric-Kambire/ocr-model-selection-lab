@@ -4,7 +4,10 @@ from pathlib import Path
 
 from ocr_benchmark.application.qlicker_cni_import_service import (
     build_qlicker_cni_routes,
+    find_completed_qlicker_batch,
     iter_prepare_qlicker_cni_clients,
+    qlicker_preparation_fingerprint,
+    write_qlicker_preparation_manifest,
 )
 
 
@@ -133,3 +136,24 @@ def test_batch_accepts_the_enriched_candidate_sent_by_gradio(tmp_path, monkeypat
     assert (tmp_path / "C0000000" / "C0000000_CIN_Recto.png").is_file()
     assert ("documents", "C0000000") in requested_customer_ids
     assert ("customer", "C0000000") in requested_customer_ids
+
+
+def test_completed_batch_is_found_from_the_same_preparation_fingerprint(tmp_path):
+    """Un refresh peut réutiliser un lot fini sans rappeler QlickEER."""
+    routes = build_qlicker_cni_routes("customer", [], "documents", [], "file", [])
+    customers = [{"client_id": "D0000000", "customer": {"id": "D0000000"}}]
+    fingerprint = qlicker_preparation_fingerprint(
+        customers,
+        base_url="https://qlicker.internal",
+        routes=routes,
+        recto_suffix="_CIN_Recto",
+        verso_suffix="_CIN_Verso",
+    )
+    batch = tmp_path / "batch-existing"
+    batch.mkdir()
+    write_qlicker_preparation_manifest(
+        batch, fingerprint=fingerprint, status="completed", selected_count=1,
+    )
+
+    assert find_completed_qlicker_batch(tmp_path, fingerprint) == batch
+    assert find_completed_qlicker_batch(tmp_path, "other") is None
