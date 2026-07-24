@@ -85,7 +85,18 @@ def iter_prepare_qlicker_cni_clients(
     root.mkdir(parents=True, exist_ok=True)
     total = len(customers)
     for index, customer in enumerate(customers, start=1):
-        raw_client_id = str(customer.get("id") or customer.get("customer_id") or "").strip()
+        # L'UI transmet une candidature enrichie ``{customer, client_id, ...}``,
+        # tandis que les tests et futurs adaptateurs peuvent transmettre la
+        # réponse client brute. On accepte explicitement les deux contrats :
+        # sans cette normalisation, l'identifiant devient vide et la vue affiche
+        # à tort « client=0 / inconnu » pour chaque étape.
+        source_customer = customer.get("customer") if isinstance(customer.get("customer"), Mapping) else customer
+        raw_client_id = str(
+            customer.get("client_id")
+            or source_customer.get("id")
+            or source_customer.get("customer_id")
+            or ""
+        ).strip()
         client_id = _safe_client_id(raw_client_id)
         event: dict[str, Any] = {
             "index": index,
@@ -106,6 +117,8 @@ def iter_prepare_qlicker_cni_clients(
         yield dict(event)
 
         try:
+            event.update(status="loading_documents", message="Lecture de la liste des documents CNI.")
+            yield dict(event)
             documents_payload = execute_qlicker_get(
                 base_url,
                 routes.documents_endpoint,
@@ -131,6 +144,8 @@ def iter_prepare_qlicker_cni_clients(
             )
             yield dict(event)
 
+            event.update(status="downloading_recto", message="Téléchargement du recto CNI.")
+            yield dict(event)
             recto = download_qlicker_file(
                 base_url,
                 routes.file_endpoint,
@@ -144,6 +159,8 @@ def iter_prepare_qlicker_cni_clients(
                 use_system_proxy=use_system_proxy,
                 verify_ssl=verify_ssl,
             )
+            event.update(status="downloading_verso", message="Téléchargement du verso CNI.")
+            yield dict(event)
             verso = download_qlicker_file(
                 base_url,
                 routes.file_endpoint,
@@ -166,6 +183,8 @@ def iter_prepare_qlicker_cni_clients(
             yield dict(event)
 
             try:
+                event.update(status="loading_label", message="Lecture et normalisation du label client.")
+                yield dict(event)
                 customer_payload = execute_qlicker_get(
                     base_url,
                     routes.customer_endpoint,

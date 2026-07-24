@@ -39,6 +39,12 @@ from ocr_benchmark.application.qlicker_cni_import_service import (
     build_qlicker_cni_routes,
     iter_prepare_qlicker_cni_clients,
 )
+from ocr_benchmark.application.qlicker_config_service import (
+    load_qlicker_config,
+    qlicker_config_from_ui,
+    reset_qlicker_config,
+    save_qlicker_config,
+)
 from ocr_benchmark.application.run_service import list_run_ids, load_run_results, purge_expired_runs
 from ocr_benchmark.cni import (
     DEFAULT_RECTO_SUFFIX,
@@ -66,6 +72,7 @@ DATASET_DIR = ROOT_DIR / "dataset"
 CATALOG_PATH = DATASET_DIR / "dataset.json"
 RUNS_DIR = ROOT_DIR / "runs"
 CNI_IMPORTS_DIR = ROOT_DIR / "cni_imports"
+QLICKEER_CONFIG_PATH = ROOT_DIR / "config" / "qlickeer_api.local.json"
 
 
 def _read_retention_days() -> int | None:
@@ -490,8 +497,12 @@ def _cni_api_status_label(status: Any) -> str:
     """Traduit les états internes de la file API pour l'opérateur."""
     labels = {
         "discovered": "Découvert",
+        "loading_documents": "Lecture des documents",
         "documents_detected": "Documents détectés",
+        "downloading_recto": "Téléchargement recto",
+        "downloading_verso": "Téléchargement verso",
         "downloaded": "Téléchargé",
+        "loading_label": "Lecture du label",
         "label_normalized": "Label normalisé",
         "ready": "Prêt",
         "ready_without_label": "Prêt sans label",
@@ -909,6 +920,12 @@ def _catalog_html(dataset: list[dict[str, Any]]) -> str:
 def build_ui() -> gr.Blocks:
     dataset = load_dataset()
     dataset_repository = DatasetRepository(ROOT_DIR)
+    # Cette configuration est locale et ignorée par Git. Elle restaure les
+    # routes QlickEER après un rechargement du navigateur ou un redémarrage.
+    qlicker_config = load_qlicker_config(
+        QLICKEER_CONFIG_PATH,
+        import_root=str(CNI_IMPORTS_DIR / "qlickeer_api"),
+    )
     image_choices = [
         f"{index}: {Path(item['image_path']).name} [{item['category']}]"
         for index, item in enumerate(dataset)
@@ -1553,40 +1570,48 @@ def build_ui() -> gr.Blocks:
                         )
                                 cni_refresh_prompt = gr.Button("Actualiser l’aperçu du prompt")
                             with gr.Tab("API QlickEER"):
-                                gr.Markdown("Configurez chaque route une fois avec son URL Postman complète. Les paramètres parsés sont conservés pour la session ; aucun proxy explicite n'est sauvegardé.")
+                                gr.Markdown(
+                                    "La configuration est enregistrée localement dans `config/qlickeer_api.local.json` "
+                                    "(ignoré par Git), puis restaurée après un rechargement. "
+                                    "Utilisez **Réinitialiser** pour supprimer uniquement cette configuration."
+                                )
                                 with gr.Tabs():
                                     with gr.Tab("Connexion"):
                                         with gr.Row():
-                                            cni_api_settings_base_url = gr.Textbox(label="Base URL commune", placeholder="https://serveur-interne")
-                                            cni_api_settings_timeout = gr.Number(value=30, minimum=1, precision=0, label="Timeout (s)")
-                                            cni_api_settings_use_system_proxy = gr.Checkbox(value=False, label="Utiliser le proxy système")
-                                            cni_api_settings_verify_ssl = gr.Checkbox(value=True, label="Vérifier SSL")
-                                        cni_api_settings_proxy = gr.Textbox(label="Proxy explicite", type="password", placeholder="http://ncproxy:8080", info="À renseigner seulement si le proxy système est désactivé.")
+                                            cni_api_settings_base_url = gr.Textbox(value=qlicker_config["base_url"], label="Base URL commune", placeholder="https://serveur-interne")
+                                            cni_api_settings_timeout = gr.Number(value=qlicker_config["timeout_seconds"], minimum=1, precision=0, label="Timeout (s)")
+                                            cni_api_settings_use_system_proxy = gr.Checkbox(value=qlicker_config["use_system_proxy"], label="Utiliser le proxy système")
+                                            cni_api_settings_verify_ssl = gr.Checkbox(value=qlicker_config["verify_ssl"], label="Vérifier SSL")
+                                        cni_api_settings_proxy = gr.Textbox(value=qlicker_config["proxy_url"], label="Proxy explicite", type="password", placeholder="http://ncproxy:8080", info="À renseigner seulement si le proxy système est désactivé.")
                                         cni_api_import_root = gr.Textbox(
-                                            value=str(CNI_IMPORTS_DIR / "qlickeer_api"),
+                                            value=qlicker_config["import_root"],
                                             label="Dossier d'import API",
                                             info="Un sous-dossier horodaté est créé par préparation de lot.",
                                         )
+                                        with gr.Row():
+                                            cni_api_save_config = gr.Button("Enregistrer la configuration", variant="secondary")
+                                            cni_api_reset_config = gr.Button("Réinitialiser la configuration", variant="stop")
+                                        cni_api_config_status = gr.HTML(_cni_alert_html("ready", "Configuration locale chargée. Modifiez puis enregistrez."))
                                     with gr.Tab("Clients"):
-                                        cni_api_list_raw_url = gr.Textbox(label="URL Postman · liste clients", placeholder="https://serveur/api/get_customer?...", lines=2)
+                                        cni_api_list_raw_url = gr.Textbox(value=qlicker_config["routes"]["list"]["raw_url"], label="URL Postman · liste clients", placeholder="https://serveur/api/get_customer?...", lines=2)
                                         cni_api_list_parse = gr.Button("Parser et enregistrer la route Clients")
-                                        cni_api_list_endpoint_setting = gr.Textbox(label="Endpoint", interactive=False)
-                                        cni_api_list_params_setting = gr.Dataframe(headers=["Paramètre", "Valeur", "Envoyer"], datatype=["str", "str", "bool"], type="array", interactive=True, label="Paramètres parsés")
+                                        cni_api_list_endpoint_setting = gr.Textbox(value=qlicker_config["routes"]["list"]["endpoint"], label="Endpoint", interactive=False)
+                                        cni_api_list_params_setting = gr.Dataframe(value=qlicker_config["routes"]["list"]["params"], headers=["Paramètre", "Valeur", "Envoyer"], datatype=["str", "str", "bool"], type="array", interactive=True, label="Paramètres parsés")
                                     with gr.Tab("Détail client"):
-                                        cni_api_info_raw_url = gr.Textbox(label="URL Postman · get_customer_data", lines=2)
+                                        cni_api_info_raw_url = gr.Textbox(value=qlicker_config["routes"]["info"]["raw_url"], label="URL Postman · get_customer_data", lines=2)
                                         cni_api_info_parse = gr.Button("Parser et enregistrer la route Détail client")
-                                        cni_api_info_endpoint_setting = gr.Textbox(label="Endpoint", interactive=False)
-                                        cni_api_info_params_setting = gr.Dataframe(headers=["Paramètre", "Valeur", "Envoyer"], datatype=["str", "str", "bool"], type="array", interactive=True, label="Paramètres parsés")
+                                        cni_api_info_endpoint_setting = gr.Textbox(value=qlicker_config["routes"]["info"]["endpoint"], label="Endpoint", interactive=False)
+                                        cni_api_info_params_setting = gr.Dataframe(value=qlicker_config["routes"]["info"]["params"], headers=["Paramètre", "Valeur", "Envoyer"], datatype=["str", "str", "bool"], type="array", interactive=True, label="Paramètres parsés")
                                     with gr.Tab("Documents"):
-                                        cni_api_documents_raw_url = gr.Textbox(label="URL Postman · get_signed_documents_list", lines=2)
+                                        cni_api_documents_raw_url = gr.Textbox(value=qlicker_config["routes"]["documents"]["raw_url"], label="URL Postman · get_signed_documents_list", lines=2)
                                         cni_api_documents_parse = gr.Button("Parser et enregistrer la route Documents")
-                                        cni_api_documents_endpoint_setting = gr.Textbox(label="Endpoint", interactive=False)
-                                        cni_api_documents_params_setting = gr.Dataframe(headers=["Paramètre", "Valeur", "Envoyer"], datatype=["str", "str", "bool"], type="array", interactive=True, label="Paramètres parsés")
+                                        cni_api_documents_endpoint_setting = gr.Textbox(value=qlicker_config["routes"]["documents"]["endpoint"], label="Endpoint", interactive=False)
+                                        cni_api_documents_params_setting = gr.Dataframe(value=qlicker_config["routes"]["documents"]["params"], headers=["Paramètre", "Valeur", "Envoyer"], datatype=["str", "str", "bool"], type="array", interactive=True, label="Paramètres parsés")
                                     with gr.Tab("Fichier"):
-                                        cni_api_view_raw_url = gr.Textbox(label="URL Postman · view_file", lines=2)
+                                        cni_api_view_raw_url = gr.Textbox(value=qlicker_config["routes"]["view"]["raw_url"], label="URL Postman · view_file", lines=2)
                                         cni_api_view_parse = gr.Button("Parser et enregistrer la route Fichier")
-                                        cni_api_view_endpoint_setting = gr.Textbox(label="Endpoint", interactive=False)
-                                        cni_api_view_params_setting = gr.Dataframe(headers=["Paramètre", "Valeur", "Envoyer"], datatype=["str", "str", "bool"], type="array", interactive=True, label="Paramètres parsés")
+                                        cni_api_view_endpoint_setting = gr.Textbox(value=qlicker_config["routes"]["view"]["endpoint"], label="Endpoint", interactive=False)
+                                        cni_api_view_params_setting = gr.Dataframe(value=qlicker_config["routes"]["view"]["params"], headers=["Paramètre", "Valeur", "Envoyer"], datatype=["str", "str", "bool"], type="array", interactive=True, label="Paramètres parsés")
 
         def on_prepare(
             model_specs,
@@ -2009,6 +2034,90 @@ def build_ui() -> gr.Blocks:
                 LOGGER.warning("QlickEER route parse rejected | error=%s", exc)
                 return gr.update(), gr.update(), []
 
+        def parse_and_save_qlicker_route(route_name: str, raw_url: str):
+            """Parse une route Postman puis sauvegarde immédiatement son contrat local."""
+            try:
+                base_url, endpoint, rows = parse_qlicker_url(raw_url)
+                config = load_qlicker_config(
+                    QLICKEER_CONFIG_PATH,
+                    import_root=str(CNI_IMPORTS_DIR / "qlickeer_api"),
+                )
+                config["base_url"] = base_url
+                config["routes"][route_name] = {
+                    "raw_url": str(raw_url or "").strip(),
+                    "endpoint": endpoint,
+                    "params": rows,
+                }
+                save_qlicker_config(
+                    QLICKEER_CONFIG_PATH,
+                    config,
+                    import_root=str(CNI_IMPORTS_DIR / "qlickeer_api"),
+                )
+                return (
+                    gr.update(value=base_url),
+                    gr.update(value=endpoint),
+                    rows,
+                    _cni_alert_html("success", f"Route {route_name} analysée et enregistrée localement."),
+                )
+            except ValueError as exc:
+                LOGGER.warning("QlickEER route parse rejected | route=%s | error=%s", route_name, exc)
+                return gr.update(), gr.update(), [], _cni_alert_html("error", str(exc))
+
+        def save_qlicker_ui_configuration(
+            base_url, timeout, use_system_proxy, verify_ssl, proxy_url, import_root,
+            list_raw, list_endpoint, list_rows,
+            info_raw, info_endpoint, info_rows,
+            documents_raw, documents_endpoint, documents_rows,
+            view_raw, view_endpoint, view_rows,
+        ):
+            """Enregistre toutes les modifications manuelles de la vue Paramètres."""
+            config = qlicker_config_from_ui(
+                base_url=base_url,
+                timeout_seconds=timeout,
+                use_system_proxy=use_system_proxy,
+                verify_ssl=verify_ssl,
+                proxy_url=proxy_url,
+                import_root=import_root,
+                routes={
+                    "list": {"raw_url": list_raw, "endpoint": list_endpoint, "params": list_rows},
+                    "info": {"raw_url": info_raw, "endpoint": info_endpoint, "params": info_rows},
+                    "documents": {"raw_url": documents_raw, "endpoint": documents_endpoint, "params": documents_rows},
+                    "view": {"raw_url": view_raw, "endpoint": view_endpoint, "params": view_rows},
+                },
+            )
+            try:
+                save_qlicker_config(
+                    QLICKEER_CONFIG_PATH,
+                    config,
+                    import_root=str(CNI_IMPORTS_DIR / "qlickeer_api"),
+                )
+                return _cni_alert_html("success", "Configuration QlickEER enregistrée localement. Elle sera restaurée après actualisation.")
+            except OSError as exc:
+                LOGGER.exception("QlickEER configuration save failed")
+                return _cni_alert_html("error", f"Configuration non enregistrée : {type(exc).__name__}: {exc}")
+
+        def reset_qlicker_ui_configuration():
+            """Efface la configuration locale et remet les composants à zéro."""
+            try:
+                config = reset_qlicker_config(
+                    QLICKEER_CONFIG_PATH,
+                    import_root=str(CNI_IMPORTS_DIR / "qlickeer_api"),
+                )
+                values: list[Any] = [
+                    config["base_url"], config["timeout_seconds"],
+                    config["use_system_proxy"], config["verify_ssl"],
+                    config["proxy_url"], config["import_root"],
+                ]
+                for route_name in ("list", "info", "documents", "view"):
+                    route = config["routes"][route_name]
+                    values.extend([route["raw_url"], route["endpoint"], route["params"]])
+                values.append(_cni_alert_html("success", "Configuration QlickEER réinitialisée. Les imports et résultats existants ne sont pas supprimés."))
+                return tuple(values)
+            except OSError as exc:
+                LOGGER.exception("QlickEER configuration reset failed")
+                # Les composants restent intacts si le fichier ne peut pas être supprimé.
+                return (*([gr.skip()] * 18), _cni_alert_html("error", f"Réinitialisation impossible : {type(exc).__name__}: {exc}"))
+
         def load_configured_customers(base_url, endpoint, route_rows, from_date, to_date, step, page, page_size, timeout, proxy_url, use_system_proxy, verify_ssl):
             """Charge les clients API dans l'inventaire commun de la source.
 
@@ -2107,7 +2216,11 @@ def build_ui() -> gr.Blocks:
             ready = counts.get("ready", 0) + counts.get("ready_without_label", 0)
             waiting = sum(
                 counts.get(status, 0)
-                for status in ("discovered", "documents_detected", "downloaded", "label_normalized")
+                for status in (
+                    "discovered", "loading_documents", "documents_detected",
+                    "downloading_recto", "downloading_verso", "downloaded",
+                    "loading_label", "label_normalized",
+                )
             )
             return (
                 f"**Total API :** {len(candidates or [])} · "
@@ -2737,20 +2850,48 @@ def build_ui() -> gr.Blocks:
             queue=False,
         )
         cni_api_list_parse.click(
-            parse_qlickeer_route, inputs=[cni_api_list_raw_url],
-            outputs=[cni_api_settings_base_url, cni_api_list_endpoint_setting, cni_api_list_params_setting], queue=False,
+            lambda raw_url: parse_and_save_qlicker_route("list", raw_url), inputs=[cni_api_list_raw_url],
+            outputs=[cni_api_settings_base_url, cni_api_list_endpoint_setting, cni_api_list_params_setting, cni_api_config_status], queue=False,
         )
         cni_api_info_parse.click(
-            parse_qlickeer_route, inputs=[cni_api_info_raw_url],
-            outputs=[cni_api_settings_base_url, cni_api_info_endpoint_setting, cni_api_info_params_setting], queue=False,
+            lambda raw_url: parse_and_save_qlicker_route("info", raw_url), inputs=[cni_api_info_raw_url],
+            outputs=[cni_api_settings_base_url, cni_api_info_endpoint_setting, cni_api_info_params_setting, cni_api_config_status], queue=False,
         )
         cni_api_documents_parse.click(
-            parse_qlickeer_route, inputs=[cni_api_documents_raw_url],
-            outputs=[cni_api_settings_base_url, cni_api_documents_endpoint_setting, cni_api_documents_params_setting], queue=False,
+            lambda raw_url: parse_and_save_qlicker_route("documents", raw_url), inputs=[cni_api_documents_raw_url],
+            outputs=[cni_api_settings_base_url, cni_api_documents_endpoint_setting, cni_api_documents_params_setting, cni_api_config_status], queue=False,
         )
         cni_api_view_parse.click(
-            parse_qlickeer_route, inputs=[cni_api_view_raw_url],
-            outputs=[cni_api_settings_base_url, cni_api_view_endpoint_setting, cni_api_view_params_setting], queue=False,
+            lambda raw_url: parse_and_save_qlicker_route("view", raw_url), inputs=[cni_api_view_raw_url],
+            outputs=[cni_api_settings_base_url, cni_api_view_endpoint_setting, cni_api_view_params_setting, cni_api_config_status], queue=False,
+        )
+        cni_api_save_config.click(
+            save_qlicker_ui_configuration,
+            inputs=[
+                cni_api_settings_base_url, cni_api_settings_timeout,
+                cni_api_settings_use_system_proxy, cni_api_settings_verify_ssl,
+                cni_api_settings_proxy, cni_api_import_root,
+                cni_api_list_raw_url, cni_api_list_endpoint_setting, cni_api_list_params_setting,
+                cni_api_info_raw_url, cni_api_info_endpoint_setting, cni_api_info_params_setting,
+                cni_api_documents_raw_url, cni_api_documents_endpoint_setting, cni_api_documents_params_setting,
+                cni_api_view_raw_url, cni_api_view_endpoint_setting, cni_api_view_params_setting,
+            ],
+            outputs=[cni_api_config_status],
+            queue=False,
+        )
+        cni_api_reset_config.click(
+            reset_qlicker_ui_configuration,
+            outputs=[
+                cni_api_settings_base_url, cni_api_settings_timeout,
+                cni_api_settings_use_system_proxy, cni_api_settings_verify_ssl,
+                cni_api_settings_proxy, cni_api_import_root,
+                cni_api_list_raw_url, cni_api_list_endpoint_setting, cni_api_list_params_setting,
+                cni_api_info_raw_url, cni_api_info_endpoint_setting, cni_api_info_params_setting,
+                cni_api_documents_raw_url, cni_api_documents_endpoint_setting, cni_api_documents_params_setting,
+                cni_api_view_raw_url, cni_api_view_endpoint_setting, cni_api_view_params_setting,
+                cni_api_config_status,
+            ],
+            queue=False,
         )
         cni_api_load_customers.click(
             load_configured_customers,
