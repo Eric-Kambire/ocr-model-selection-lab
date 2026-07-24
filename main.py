@@ -29,6 +29,12 @@ from ocr_benchmark.application.cni_service import (
     iter_cni_extraction,
     scan_cni_documents,
 )
+from ocr_benchmark.application.cni_settings_service import (
+    cni_settings_from_ui,
+    default_cni_settings,
+    load_cni_settings,
+    save_cni_settings,
+)
 from ocr_benchmark.application.qlicker_api_service import (
     download_qlicker_file,
     editable_rows_to_query_pairs,
@@ -79,6 +85,7 @@ CATALOG_PATH = DATASET_DIR / "dataset.json"
 RUNS_DIR = ROOT_DIR / "runs"
 CNI_IMPORTS_DIR = ROOT_DIR / "cni_imports"
 QLICKEER_CONFIG_PATH = ROOT_DIR / "config" / "qlickeer_api.local.json"
+CNI_SETTINGS_CONFIG_PATH = ROOT_DIR / "config" / "cni_settings.local.json"
 
 # Cette garde complète le manifeste disque : elle refuse immédiatement un
 # deuxième clic identique dans le même processus, avant même un appel réseau.
@@ -948,6 +955,12 @@ def build_ui() -> gr.Blocks:
         QLICKEER_CONFIG_PATH,
         import_root=str(CNI_IMPORTS_DIR / "qlickeer_api"),
     )
+    cni_settings_defaults = default_cni_settings(
+        cpu_threads=max(1, min(8, os.cpu_count() or 1)),
+        system_prompt=DEFAULT_CNI_SYSTEM_PROMPT,
+        prompt_instructions=DEFAULT_CNI_USER_INSTRUCTIONS,
+    )
+    cni_settings = load_cni_settings(CNI_SETTINGS_CONFIG_PATH, defaults=cni_settings_defaults)
     image_choices = [
         f"{index}: {Path(item['image_path']).name} [{item['category']}]"
         for index, item in enumerate(dataset)
@@ -1440,7 +1453,7 @@ def build_ui() -> gr.Blocks:
                                 )
                                 cni_models = gr.Dropdown(
                                     [choice for choice in model_choices if choice.startswith("ollama:")],
-                                    value=[],
+                                    value=[model for model in cni_settings["models"] if model in model_choices],
                                     multiselect=True,
                                     filterable=True,
                                     label="Modèles Ollama",
@@ -1471,7 +1484,7 @@ def build_ui() -> gr.Blocks:
                         with gr.Row(elem_id="cni-runbar"):
                             gr.Markdown("**03 · Lancement**\n\nLe suivi détaillé apparaît dans la vue suivante.")
                             cni_continue_without_label = gr.Checkbox(
-                                value=False,
+                                value=cni_settings["continue_without_label"],
                                 label="Continuer sans labels",
                                 info="Extraction et mesures techniques uniquement ; aucun score de comparaison.",
                             )
@@ -1544,22 +1557,22 @@ def build_ui() -> gr.Blocks:
                                     ("Deux appels : recto puis verso — recommandé", "separate_calls"),
                                     ("Une image : recto en haut, verso en bas", "combined_vertical"),
                                 ],
-                                value="separate_calls",
+                                value=cni_settings["strategy"],
                                 label="Stratégie d'envoi au modèle",
                             )
-                                    cni_dpi = gr.Slider(150, 450, value=300, step=25, label="Résolution PDF (DPI)")
-                                    cni_timeout = gr.Number(value=300, minimum=1, maximum=7200, precision=0, label="Temps maximum par appel (s)")
+                                    cni_dpi = gr.Slider(150, 450, value=cni_settings["dpi"], step=25, label="Résolution PDF (DPI)")
+                                    cni_timeout = gr.Number(value=cni_settings["timeout_seconds"], minimum=1, maximum=7200, precision=0, label="Temps maximum par appel (s)")
                                 with gr.Row():
-                                    cni_cpu_threads = gr.Number(value=max(1, min(8, os.cpu_count() or 1)), minimum=1, maximum=max(1, os.cpu_count() or 1), precision=0, label="Threads CPU Ollama")
-                                    cni_unload = gr.Checkbox(value=True, label="Décharger le modèle après chaque appel")
+                                    cni_cpu_threads = gr.Number(value=min(cni_settings["cpu_threads"], max(1, os.cpu_count() or 1)), minimum=1, maximum=max(1, os.cpu_count() or 1), precision=0, label="Threads CPU Ollama")
+                                    cni_unload = gr.Checkbox(value=cni_settings["unload_after_task"], label="Décharger le modèle après chaque appel")
                                 with gr.Row():
                                     cni_recto_suffix = gr.Textbox(
-                                        value=DEFAULT_RECTO_SUFFIX,
+                                        value=cni_settings["recto_suffix"],
                                         label="Suffixe recto",
                                         info="Ex. _CIN_Recto ou CIN_recto. L'extension PDF/JPG/PNG est ignorée.",
                                     )
                                     cni_verso_suffix = gr.Textbox(
-                                        value=DEFAULT_VERSO_SUFFIX,
+                                        value=cni_settings["verso_suffix"],
                                         label="Suffixe verso",
                                         info="Ex. _CIN_Verso ou CIN_verso. L'extension PDF/JPG/PNG est ignorée.",
                                     )
@@ -1567,33 +1580,33 @@ def build_ui() -> gr.Blocks:
                                 with gr.Row():
                                     cni_rotation_method = gr.Radio(
                                 [("Aucune rotation automatique", "none"), ("Pillow · recherche par ratio", "pillow"), ("OpenCV · rectangle orienté", "opencv")],
-                                value="none", label="Rotation automatique",
+                                value=cni_settings["rotation_method"], label="Rotation automatique",
                                 info="Une seule méthode peut être activée. Pillow cherche l'angle, OpenCV utilise minAreaRect.",
                             )
                                     cni_perspective_correction = gr.Checkbox(
-                                value=False, label="Corriger la perspective (OpenCV)",
+                                value=cni_settings["perspective_correction"], label="Corriger la perspective (OpenCV)",
                                 info="Redresse la carte seulement si un quadrilatère crédible est détecté.",
                             )
                                 cni_preprocessing = gr.CheckboxGroup(
                             [("Améliorer le contraste", "contrast"), ("Réduire le bruit", "denoise")],
-                            value=[], label="Améliorations complémentaires",
+                            value=cni_settings["preprocessing"], label="Améliorations complémentaires",
                             info="Appliquées après rotation puis avant crop. Chaque opération est enregistrée dans preparation.json.",
                         )
                             with gr.Tab("Prompt et champs"):
                                 cni_system_prompt = gr.Textbox(
-                            value=DEFAULT_CNI_SYSTEM_PROMPT,
+                            value=cni_settings["system_prompt"],
                             label="Prompt système",
                             lines=5,
                             info="Règle de plus haute priorité. Trop long ou contradictoire réduit la stabilité des réponses.",
                         )
                                 cni_prompt_instructions = gr.Textbox(
-                            value=DEFAULT_CNI_USER_INSTRUCTIONS,
+                            value=cni_settings["prompt_instructions"],
                             label="Prompt utilisateur / consignes d'extraction",
                             lines=4,
                             info="Demande appliquée à chaque image. Les clés JSON doivent rester stables pour comparer les modèles.",
                         )
                                 cni_prompt_preview = gr.Code(
-                            value=_cni_prompt_preview("separate_calls", DEFAULT_CNI_SYSTEM_PROMPT, DEFAULT_CNI_USER_INSTRUCTIONS),
+                            value=_cni_prompt_preview(cni_settings["strategy"], cni_settings["system_prompt"], cni_settings["prompt_instructions"]),
                             label="Prompts réellement envoyés (système + utilisateur)",
                             lines=18,
                             interactive=False,
@@ -2806,6 +2819,48 @@ def build_ui() -> gr.Blocks:
             """Passe à la paire CNI suivante."""
             return show_cni_detail(index, results, 1)
 
+        def persist_cni_settings(
+            models, strategy, dpi, timeout, threads, unload, continue_without_label,
+            recto_suffix, verso_suffix, rotation_method, perspective_correction,
+            preprocessing, system_prompt, prompt_instructions,
+        ):
+            """Sauvegarde automatiquement les réglages CNI, sans bouton dédié."""
+            value = cni_settings_from_ui(
+                models=models,
+                strategy=strategy,
+                dpi=dpi,
+                timeout_seconds=timeout,
+                cpu_threads=threads,
+                unload_after_task=unload,
+                continue_without_label=continue_without_label,
+                recto_suffix=recto_suffix,
+                verso_suffix=verso_suffix,
+                rotation_method=rotation_method,
+                perspective_correction=perspective_correction,
+                preprocessing=preprocessing,
+                system_prompt=system_prompt,
+                prompt_instructions=prompt_instructions,
+            )
+            try:
+                save_cni_settings(CNI_SETTINGS_CONFIG_PATH, value, defaults=cni_settings_defaults)
+                LOGGER.info("CNI settings saved automatically | strategy=%s | preprocessing=%s", value["strategy"], value["preprocessing"])
+            except OSError:
+                LOGGER.exception("CNI settings auto-save failed")
+
+        def request_cni_cancel(client_records):
+            """Annule le run sans supprimer la sélection déjà préparée."""
+            ready = sum(record.get("status") == "ready" for record in (client_records or []))
+            message = (
+                f"Annulation demandée. La sélection est conservée ({ready} paire(s) prête(s)). "
+                "Cliquez sur Relancer pour reprendre ; ne préparez pas à nouveau les documents."
+            )
+            return (
+                gr.update(visible=True, value="Relancer"),
+                gr.update(visible=False),
+                _cni_alert_html("warning", message),
+                "Annulation demandée ; sélection conservée.",
+            )
+
         def on_cni_run(model_specs, client_records, strategy, dpi, timeout, threads, unload, rotation_method, perspective_correction, preprocessing, system_prompt, prompt_instructions, continue_without_label):
             """Valide le lancement puis diffuse l'avancement CNI document par document."""
             empty = empty_figure()
@@ -2824,7 +2879,7 @@ def build_ui() -> gr.Blocks:
                 )
                 return (
                     _cni_alert_html(alert_level, feedback),
-                    gr.update(visible=not running), gr.update(visible=running),
+                    gr.update(visible=not running, value="Lancer"), gr.update(visible=running),
                     status, progress, image_path, live_text,
                     counters(total), table, results, table, selector,
                     cni_accuracy_chart(results), cni_latency_chart(results),
@@ -3294,6 +3349,25 @@ def build_ui() -> gr.Blocks:
             outputs=[cni_prompt_preview],
             queue=False,
         )
+        # Aucun bouton « Save » n'est nécessaire : chaque choix CNI est
+        # conservé localement dès sa modification et restauré au redémarrage.
+        cni_settings_inputs = [
+            cni_models, cni_strategy, cni_dpi, cni_timeout, cni_cpu_threads,
+            cni_unload, cni_continue_without_label, cni_recto_suffix,
+            cni_verso_suffix, cni_rotation_method, cni_perspective_correction,
+            cni_preprocessing, cni_system_prompt, cni_prompt_instructions,
+        ]
+        for setting_component in (
+            cni_models, cni_strategy, cni_dpi, cni_timeout, cni_cpu_threads,
+            cni_unload, cni_continue_without_label, cni_recto_suffix,
+            cni_verso_suffix, cni_rotation_method, cni_perspective_correction,
+            cni_preprocessing, cni_system_prompt, cni_prompt_instructions,
+        ):
+            setting_component.change(
+                persist_cni_settings,
+                inputs=cni_settings_inputs,
+                queue=False,
+            )
         cni_event = cni_launch.click(
             on_cni_run,
             inputs=[cni_models, cni_clients_state, cni_strategy, cni_dpi, cni_timeout, cni_cpu_threads, cni_unload, cni_rotation_method, cni_perspective_correction, cni_preprocessing, cni_system_prompt, cni_prompt_instructions, cni_continue_without_label],
@@ -3309,11 +3383,8 @@ def build_ui() -> gr.Blocks:
             concurrency_id="cni-benchmark-run",
         )
         cni_stop.click(
-            lambda: (
-                gr.update(visible=True), gr.update(visible=False),
-                _cni_alert_html("warning", "Annulation demandée : l'appel en cours est arrêté dès que le fournisseur rend la main."),
-                "Annulation demandée.",
-            ),
+            request_cni_cancel,
+            inputs=[cni_clients_state],
             outputs=[cni_launch, cni_stop, cni_launch_feedback, cni_run_status],
             queue=False,
             cancels=[cni_event],
