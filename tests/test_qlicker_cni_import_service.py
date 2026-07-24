@@ -57,7 +57,9 @@ def test_batch_materializes_a_cni_pair_and_normalized_label(tmp_path, monkeypatc
     ))
 
     assert [event["status"] for event in events] == [
-        "discovered", "documents_detected", "downloaded", "label_normalized", "ready",
+        "discovered", "loading_documents", "documents_detected",
+        "downloading_recto", "downloading_verso", "downloaded",
+        "loading_label", "label_normalized", "ready",
     ]
     client_dir = tmp_path / "A0000000"
     assert (client_dir / "A0000000_CIN_Recto.pdf").is_file()
@@ -94,3 +96,40 @@ def test_batch_keeps_documents_when_customer_label_is_unavailable(tmp_path, monk
     assert events[-1]["status"] == "ready_without_label"
     assert (tmp_path / "B0000000" / "B0000000_CIN_Recto.jpg").is_file()
     assert not (tmp_path / "B0000000" / "B0000000.json").exists()
+
+
+def test_batch_accepts_the_enriched_candidate_sent_by_gradio(tmp_path, monkeypatch):
+    """La candidature UI contient le client sous ``customer`` et garde son ID."""
+    requested_customer_ids = []
+
+    def fake_get(_base, endpoint, params, **_options):
+        requested_customer_ids.append((endpoint, dict(params).get("customerID")))
+        if endpoint == "documents":
+            return {"response": {"status_code": 200, "body": {"response_data": {"documents_list": [
+                "CIN_recto.pdf", "CIN_verso.pdf",
+            ]}}}}
+        return {"response": {"status_code": 200, "body": {"response_data": {"customer": {
+            "id": "C0000000", "customer_data": {"cin_id": "C0000000"},
+        }}}}}
+
+    def fake_download(_base, _endpoint, _params, stem: Path, **_options):
+        path = stem.with_suffix(".png")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"png")
+        return {"path": str(path), "bytes": 3, "content_type": "image/png"}
+
+    monkeypatch.setattr("ocr_benchmark.application.qlicker_cni_import_service.execute_qlicker_get", fake_get)
+    monkeypatch.setattr("ocr_benchmark.application.qlicker_cni_import_service.download_qlicker_file", fake_download)
+    routes = build_qlicker_cni_routes("customer", [], "documents", [], "file", [])
+
+    events = list(iter_prepare_qlicker_cni_clients(
+        [{"client_id": "C0000000", "customer": {"id": "C0000000"}, "status": "discovered"}],
+        tmp_path, base_url="https://qlicker.internal", routes=routes,
+        timeout_seconds=30, proxy_url=None, use_system_proxy=False, verify_ssl=True,
+    ))
+
+    assert events[0]["client_id"] == "C0000000"
+    assert events[-1]["status"] == "ready"
+    assert (tmp_path / "C0000000" / "C0000000_CIN_Recto.png").is_file()
+    assert ("documents", "C0000000") in requested_customer_ids
+    assert ("customer", "C0000000") in requested_customer_ids

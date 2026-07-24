@@ -3,6 +3,7 @@ __pycache__/
 .venv/
 venv/
 .env
+config/qlickeer_api.local.json
 .gradio/
 .pytest_cache/
 .ruff_cache/
