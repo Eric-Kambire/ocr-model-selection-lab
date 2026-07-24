@@ -3,6 +3,7 @@
 import pytest
 
 from ocr_benchmark.application.qlicker_api_service import (
+    _qlicker_file_extension,
     build_qlicker_url,
     editable_rows_to_query_pairs,
     merge_query_params,
@@ -104,3 +105,14 @@ def test_document_list_detects_cni_pair_only():
         "recto": "Qlickeer_A0000000_CIN_recto.pdf",
         "verso": "Qlickeer_A0000000_CIN_verso.pdf",
     }
+
+
+def test_file_download_extension_accepts_generic_mime_filename_or_signature():
+    """view_file peut annoncer octet-stream tout en envoyant un vrai PDF/image."""
+    assert _qlicker_file_extension(
+        "application/octet-stream", 'attachment; filename="CIN_recto.pdf"', [], b"",
+    ) == ".pdf"
+    assert _qlicker_file_extension(
+        "application/octet-stream", "", [("file", "CIN_verso.jpeg")], b"",
+    ) == ".jpg"
+    assert _qlicker_file_extension("", "", [], b"\x89PNG\r\n\x1a\nrest") == ".png"

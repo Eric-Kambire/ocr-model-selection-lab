@@ -9,17 +9,22 @@ retourne un diagnostic prêt à afficher dans Gradio.
 from __future__ import annotations
 
 import json
+import logging
+import re
+import warnings
 from datetime import datetime
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
-from urllib.parse import parse_qsl, urljoin, urlsplit, urlunsplit
+from urllib.parse import parse_qsl, unquote, urljoin, urlsplit, urlunsplit
 from urllib.request import getproxies
 
 import requests
+from urllib3.exceptions import InsecureRequestWarning
 
 
 MAX_QLICKEER_DOWNLOAD_BYTES = 50 * 1024 * 1024
+LOGGER = logging.getLogger(__name__)
 
 
 def parse_extra_query_params(raw_value: str | None) -> dict[str, Any]:
@@ -218,50 +223,50 @@ def execute_qlicker_get(
     # Nous choisissons explicitement le chemin réseau : les variables
     # d'environnement ne doivent pas contourner l'option UI « direct ».
     session.trust_env = False
-    response = session.get(
-        url,
-        params=query_params,
-        timeout=timeout,
-        proxies=proxy_mapping,
-        verify=bool(verify_ssl),
+    response = _qlicker_get(
+        session, url, params=query_params, timeout=timeout,
+        proxies=proxy_mapping, verify_ssl=bool(verify_ssl), stream=False,
     )
-    content_type = response.headers.get("content-type", "").lower()
-    is_json = "json" in content_type
-    is_text = is_json or content_type.startswith("text/") or not content_type
-    if is_json:
-        try:
-            body: Any = response.json()
-        except ValueError:
+    try:
+        content_type = response.headers.get("content-type", "").lower()
+        is_json = "json" in content_type
+        is_text = is_json or content_type.startswith("text/") or not content_type
+        if is_json:
+            try:
+                body: Any = response.json()
+            except ValueError:
+                body = response.text[:100_000]
+        elif is_text:
             body = response.text[:100_000]
-    elif is_text:
-        body = response.text[:100_000]
-    else:
-        body = {
-            "binary": True,
-            "message": "Réponse binaire reçue ; elle n'est pas enregistrée pendant ce test API.",
-            "bytes": len(response.content),
+        else:
+            body = {
+                "binary": True,
+                "message": "Réponse binaire reçue ; elle n'est pas enregistrée pendant ce test API.",
+                "bytes": len(response.content),
+            }
+        return {
+            "request": {
+                "method": "GET",
+                "url": response.url,
+                "params": query_params,
+                "omitted_null_parameters": (
+                    [key for key, value in query_params.items() if value is None]
+                    if isinstance(query_params, Mapping)
+                    else []
+                ),
+                "proxy": _masked_proxy(proxy_url) if explicit_proxy else "proxy système" if proxy_mapping else "connexion directe",
+                "source_proxy": proxy_source,
+                "verification_ssl": "active" if verify_ssl else "désactivée",
+            },
+            "response": {
+                "status_code": response.status_code,
+                "content_type": content_type or "absent",
+                "bytes": len(response.content),
+                "body": body,
+            },
         }
-    return {
-        "request": {
-            "method": "GET",
-            "url": response.url,
-            "params": query_params,
-            "omitted_null_parameters": (
-                [key for key, value in query_params.items() if value is None]
-                if isinstance(query_params, Mapping)
-                else []
-            ),
-            "proxy": _masked_proxy(proxy_url) if explicit_proxy else "proxy système" if proxy_mapping else "connexion directe",
-            "source_proxy": proxy_source,
-            "verification_ssl": "active" if verify_ssl else "désactivée",
-        },
-        "response": {
-            "status_code": response.status_code,
-            "content_type": content_type or "absent",
-            "bytes": len(response.content),
-            "body": body,
-        },
-    }
+    finally:
+        response.close()
 
 
 def download_qlicker_file(
@@ -294,45 +299,55 @@ def download_qlicker_file(
     proxy_source = "explicite" if explicit_proxy else "système" if proxy_mapping else "direct"
     session = requests.Session()
     session.trust_env = False
-    response = session.get(
-        url,
-        params=query_params,
-        timeout=timeout,
-        proxies=proxy_mapping,
-        verify=bool(verify_ssl),
-        stream=True,
+    response = _qlicker_get(
+        session, url, params=query_params, timeout=timeout,
+        proxies=proxy_mapping, verify_ssl=bool(verify_ssl), stream=True,
     )
     response.raise_for_status()
 
     content_type = response.headers.get("content-type", "").lower()
-    extension = (
-        ".pdf" if "pdf" in content_type else
-        ".jpg" if "jpeg" in content_type else
-        ".png" if "png" in content_type else
-        None
+    extension = _qlicker_file_extension(
+        content_type,
+        response.headers.get("content-disposition", ""),
+        query_params,
+        b"",
     )
-    if extension is None:
-        response.close()
-        raise ValueError(f"Format QlickEER non pris en charge : {content_type or 'Content-Type absent'}")
 
     declared_size = response.headers.get("content-length")
     if declared_size and declared_size.isdigit() and int(declared_size) > max_bytes:
         response.close()
         raise ValueError(f"Fichier refusé : {int(declared_size)} octets, limite {max_bytes} octets.")
 
-    output_path = output_stem.with_suffix(extension)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    temporary_path = output_path.with_suffix(output_path.suffix + ".part")
+    output_stem.parent.mkdir(parents=True, exist_ok=True)
+    temporary_path = output_stem.with_name(output_stem.name + ".download.part")
     total = 0
+    prefix = b""
     try:
         with temporary_path.open("wb") as stream:
             for chunk in response.iter_content(chunk_size=64 * 1024):
                 if not chunk:
                     continue
+                if len(prefix) < 32:
+                    prefix += chunk[: 32 - len(prefix)]
+                    # Certains serveurs internes renvoient
+                    # application/octet-stream. Dans ce cas, la signature est
+                    # la source de vérité pour PDF/JPEG/PNG.
+                    extension = _qlicker_file_extension(
+                        content_type,
+                        response.headers.get("content-disposition", ""),
+                        query_params,
+                        prefix,
+                    )
                 total += len(chunk)
                 if total > max_bytes:
                     raise ValueError(f"Fichier refusé : limite {max_bytes} octets dépassée.")
                 stream.write(chunk)
+        if extension is None:
+            raise ValueError(
+                "Format QlickEER non pris en charge : ni Content-Type, ni nom de fichier, "
+                "ni signature PDF/JPEG/PNG reconnue."
+            )
+        output_path = output_stem.with_suffix(extension)
         temporary_path.replace(output_path)
     except Exception:
         temporary_path.unlink(missing_ok=True)
@@ -348,3 +363,74 @@ def download_qlicker_file(
         "proxy_source": proxy_source,
         "verification_ssl": "active" if verify_ssl else "désactivée",
     }
+
+
+def _qlicker_get(session: requests.Session, url: str, *, params: Any, timeout: float, proxies: Mapping[str, str], verify_ssl: bool, stream: bool):
+    """Exécute un GET QlickEER sans laisser urllib3 polluer le terminal.
+
+    Le choix ``verify_ssl=False`` reste visible par un message court dans les
+    logs applicatifs, sans la longue alerte technique d'urllib3 à chaque appel.
+    """
+    if not verify_ssl:
+        LOGGER.warning("QlickEER | SSL non vérifié")
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", InsecureRequestWarning)
+        return session.get(
+            url, params=params, timeout=timeout, proxies=dict(proxies),
+            verify=verify_ssl, stream=stream,
+        )
+
+
+def _qlicker_file_extension(
+    content_type: str,
+    content_disposition: str,
+    query_params: Mapping[str, Any] | Sequence[tuple[str, Any]],
+    prefix: bytes,
+) -> str | None:
+    """Déduit un format depuis MIME, nom annoncé, paramètre ``file`` ou octets."""
+    mime = str(content_type or "").casefold()
+    if "pdf" in mime:
+        return ".pdf"
+    if "jpeg" in mime or "image/jpg" in mime:
+        return ".jpg"
+    if "png" in mime:
+        return ".png"
+
+    sniffed = _extension_from_signature(prefix)
+    if sniffed:
+        return sniffed
+
+    # Content-Disposition est prioritaire sur le paramètre de requête ; il est
+    # généralement présent lorsque l'API utilise application/octet-stream.
+    match = re.search(r"filename\*?=(?:UTF-8''|\")?([^;\"]+)", str(content_disposition or ""), flags=re.IGNORECASE)
+    if match:
+        extension = _normalise_file_extension(unquote(match.group(1).strip()))
+        if extension:
+            return extension
+    pairs = query_params.items() if isinstance(query_params, Mapping) else query_params
+    for name, value in pairs:
+        if str(name).casefold() in {"file", "filename", "document"}:
+            extension = _normalise_file_extension(str(value or ""))
+            if extension:
+                return extension
+    return None
+
+
+def _extension_from_signature(prefix: bytes) -> str | None:
+    """Reconnaît les signatures binaires des trois formats supportés."""
+    value = bytes(prefix or b"").lstrip()
+    if value.startswith(b"%PDF-"):
+        return ".pdf"
+    if value.startswith(b"\x89PNG\r\n\x1a\n"):
+        return ".png"
+    if value.startswith(b"\xff\xd8\xff"):
+        return ".jpg"
+    return None
+
+
+def _normalise_file_extension(filename: str) -> str | None:
+    """Retourne uniquement une extension explicitement supportée."""
+    extension = Path(str(filename or "")).suffix.casefold()
+    if extension == ".jpeg":
+        return ".jpg"
+    return extension if extension in {".pdf", ".jpg", ".png"} else None

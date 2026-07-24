@@ -1584,6 +1584,10 @@ def build_ui() -> gr.Blocks:
                                     "(ignoré par Git), puis restaurée après un rechargement. "
                                     "Utilisez **Réinitialiser** pour supprimer uniquement cette configuration."
                                 )
+                                with gr.Row():
+                                    cni_api_save_config = gr.Button("Save", variant="secondary", size="sm")
+                                    cni_api_reset_config = gr.Button("Reset", variant="stop", size="sm")
+                                    cni_api_config_status = gr.HTML(_cni_alert_html("ready", "Configuration locale chargée."))
                                 with gr.Tabs():
                                     with gr.Tab("Connexion"):
                                         with gr.Row():
@@ -1597,10 +1601,6 @@ def build_ui() -> gr.Blocks:
                                             label="Dossier d'import API",
                                             info="Un sous-dossier horodaté est créé par préparation de lot.",
                                         )
-                                        with gr.Row():
-                                            cni_api_save_config = gr.Button("Enregistrer la configuration", variant="secondary")
-                                            cni_api_reset_config = gr.Button("Réinitialiser la configuration", variant="stop")
-                                        cni_api_config_status = gr.HTML(_cni_alert_html("ready", "Configuration locale chargée. Modifiez puis enregistrez."))
                                     with gr.Tab("Clients"):
                                         cni_api_list_raw_url = gr.Textbox(value=qlicker_config["routes"]["list"]["raw_url"], label="URL Postman · liste clients", placeholder="https://serveur/api/get_customer?...", lines=2)
                                         cni_api_list_parse = gr.Button("Parser et enregistrer la route Clients")
