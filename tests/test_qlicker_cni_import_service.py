@@ -164,8 +164,44 @@ def test_completed_batch_is_found_from_the_same_preparation_fingerprint(tmp_path
     batch = tmp_path / "batch-existing"
     batch.mkdir()
     write_qlicker_preparation_manifest(
-        batch, fingerprint=fingerprint, status="completed", selected_count=1,
+        batch, fingerprint=fingerprint, status="completed", selected_count=1, ready_count=1,
     )
 
     assert find_completed_qlicker_batch(tmp_path, fingerprint) == batch
     assert find_completed_qlicker_batch(tmp_path, "other") is None
+
+
+def test_partially_failed_batch_is_not_reused(tmp_path):
+    """Un lot sans paire prête doit être rejoué, pas figé par idempotence."""
+    routes = build_qlicker_cni_routes("customer", [], "documents", [], "file", [])
+    customers = [{"client_id": "E0000000", "customer": {"id": "E0000000"}}]
+    fingerprint = qlicker_preparation_fingerprint(
+        customers,
+        base_url="https://qlicker.internal",
+        routes=routes,
+        recto_suffix="_CIN_Recto",
+        verso_suffix="_CIN_Verso",
+    )
+    batch = tmp_path / "batch-failed"
+    batch.mkdir()
+    write_qlicker_preparation_manifest(
+        batch, fingerprint=fingerprint, status="completed", selected_count=1, ready_count=0,
+    )
+
+    assert find_completed_qlicker_batch(tmp_path, fingerprint) is None
+
+
+def test_qlicker_fingerprint_ignores_suffix_case():
+    """Changer seulement R/r ne crée pas artificiellement un nouveau lot."""
+    routes = build_qlicker_cni_routes("customer", [], "documents", [], "file", [])
+    customers = [{"client_id": "F0000000", "customer": {"id": "F0000000"}}]
+    upper = qlicker_preparation_fingerprint(
+        customers, base_url="https://qlicker.internal", routes=routes,
+        recto_suffix="_CIN_Recto", verso_suffix="_CIN_Verso",
+    )
+    lower = qlicker_preparation_fingerprint(
+        customers, base_url="https://qlicker.internal", routes=routes,
+        recto_suffix="_CIN_recto", verso_suffix="_CIN_verso",
+    )
+
+    assert upper == lower
