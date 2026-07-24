@@ -357,10 +357,19 @@ def download_qlicker_file(
     finally:
         response.close()
 
+    LOGGER.info(
+        "QlickEER | view_file enregistré | endpoint=%s | type=%s | format=%s | octets=%s | sortie=%s",
+        urlsplit(url).path or url,
+        content_type or "absent",
+        output_path.suffix,
+        total,
+        output_path,
+    )
     return {
         "path": str(output_path),
         "bytes": total,
         "content_type": content_type,
+        "detected_format": output_path.suffix.lstrip("."),
         "request_url": response.url,
         "proxy_source": proxy_source,
         "verification_ssl": "active" if verify_ssl else "désactivée",
