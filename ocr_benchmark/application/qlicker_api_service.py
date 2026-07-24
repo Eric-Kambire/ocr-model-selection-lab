@@ -389,7 +389,18 @@ def _qlicker_file_extension(
     query_params: Mapping[str, Any] | Sequence[tuple[str, Any]],
     prefix: bytes,
 ) -> str | None:
-    """Déduit un format depuis MIME, nom annoncé, paramètre ``file`` ou octets."""
+    """Déduit un format depuis les octets, MIME, puis le nom annoncé.
+
+    ``view_file`` peut annoncer un nom ``*.pdf`` alors que son corps HTTP est
+    un JPEG (cas observé avec certains documents QlickEER). Dès que les
+    premiers octets sont disponibles, leur signature est donc la source de
+    vérité : elle évite de nommer ``.pdf`` une image JPEG qui ne pourrait plus
+    être rendue correctement par la pipeline CNI.
+    """
+    sniffed = _extension_from_signature(prefix)
+    if sniffed:
+        return sniffed
+
     mime = str(content_type or "").casefold()
     if "pdf" in mime:
         return ".pdf"
@@ -397,10 +408,6 @@ def _qlicker_file_extension(
         return ".jpg"
     if "png" in mime:
         return ".png"
-
-    sniffed = _extension_from_signature(prefix)
-    if sniffed:
-        return sniffed
 
     # Content-Disposition est prioritaire sur le paramètre de requête ; il est
     # généralement présent lorsque l'API utilise application/octet-stream.

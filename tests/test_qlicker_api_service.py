@@ -119,6 +119,14 @@ def test_file_download_extension_accepts_generic_mime_filename_or_signature():
     assert _qlicker_file_extension("", "", [], b"\x89PNG\r\n\x1a\nrest") == ".png"
 
 
+def test_binary_signature_overrides_misleading_pdf_name_and_mime():
+    """Une réponse JPEG appelée ``.pdf`` doit rester une image exploitable."""
+    jpeg_prefix = b"\xff\xd8\xff\xe0JFIF"
+    assert _qlicker_file_extension(
+        "application/pdf", 'attachment; filename="CIN_recto.pdf"', [("file", "CIN_recto.pdf")], jpeg_prefix,
+    ) == ".jpg"
+
+
 def test_empty_binary_download_does_not_create_a_final_pdf(tmp_path, monkeypatch):
     """Une réponse PDF annoncée mais vide reste visible comme erreur, sans faux artefact."""
     class EmptyResponse:
