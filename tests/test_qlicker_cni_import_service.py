@@ -19,6 +19,7 @@ def _rows(*pairs):
 def test_batch_materializes_a_cni_pair_and_normalized_label(tmp_path, monkeypatch):
     """Un client API devient une paire locale compatible avec le scanner CNI."""
     calls = []
+    downloaded_params = []
 
     def fake_get(_base, endpoint, params, **_options):
         calls.append((endpoint, list(params)))
@@ -35,6 +36,7 @@ def test_batch_materializes_a_cni_pair_and_normalized_label(tmp_path, monkeypatc
 
     def fake_download(_base, endpoint, params, stem: Path, **_options):
         assert endpoint == "file"
+        downloaded_params.append(list(params))
         path = stem.with_suffix(".pdf")
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(b"%PDF-test")
@@ -70,6 +72,12 @@ def test_batch_materializes_a_cni_pair_and_normalized_label(tmp_path, monkeypatc
     assert '"cin": "A0000000"' in (client_dir / "A0000000.json").read_text(encoding="utf-8")
     assert ("documents", [("customerID", "A0000000"), ("filter", "")]) in calls
     assert ("customer", [("customerID", "A0000000")]) in calls
+    # La valeur ``page`` est celle testée et configurée par l'opérateur. Elle
+    # ne doit pas être remplacée silencieusement par un index arbitraire.
+    assert downloaded_params == [
+        [("customerID", "A0000000"), ("page", "9"), ("file", "Qlickeer_A0000000_CIN_recto.pdf"), ("other", "kept")],
+        [("customerID", "A0000000"), ("page", "9"), ("file", "Qlickeer_A0000000_CIN_verso.pdf"), ("other", "kept")],
+    ]
 
 
 def test_batch_keeps_documents_when_customer_label_is_unavailable(tmp_path, monkeypatch):

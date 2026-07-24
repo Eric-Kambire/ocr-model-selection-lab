@@ -231,7 +231,12 @@ def iter_prepare_qlicker_cni_clients(
                 routes.file_endpoint,
                 _replace_route_parameters(
                     routes.file_params,
-                    {"customerID": raw_client_id, "file": pair["recto"], "page": "1"},
+                    # ``page`` reste celui configuré dans l'URL Postman. Les
+                    # installations QlickEER ne partagent pas toutes le même
+                    # index (certaines commencent à 0, d'autres à 1) : le
+                    # forcer à 1 pouvait produire une réponse vide alors que
+                    # le bouton Test fonctionnait avec la bonne valeur.
+                    {"customerID": raw_client_id, "file": pair["recto"]},
                 ),
                 client_dir / f"{client_id}{recto_suffix}",
                 timeout_seconds=timeout_seconds,
@@ -246,7 +251,7 @@ def iter_prepare_qlicker_cni_clients(
                 routes.file_endpoint,
                 _replace_route_parameters(
                     routes.file_params,
-                    {"customerID": raw_client_id, "file": pair["verso"], "page": "1"},
+                    {"customerID": raw_client_id, "file": pair["verso"]},
                 ),
                 client_dir / f"{client_id}{verso_suffix}",
                 timeout_seconds=timeout_seconds,
