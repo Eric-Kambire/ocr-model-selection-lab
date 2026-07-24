@@ -30,6 +30,7 @@ from ocr_benchmark.application.cni_service import (
     scan_cni_documents,
 )
 from ocr_benchmark.application.qlicker_api_service import (
+    download_qlicker_file,
     editable_rows_to_query_pairs,
     execute_qlicker_get,
     merge_query_params,
@@ -1652,6 +1653,12 @@ def build_ui() -> gr.Blocks:
                                     cni_api_save_config = gr.Button("Save", variant="secondary", size="sm")
                                     cni_api_reset_config = gr.Button("Reset", variant="stop", size="sm")
                                     cni_api_config_status = gr.HTML(_cni_alert_html("ready", "Configuration locale chargée."))
+                                with gr.Accordion("Test de route configurée", open=False):
+                                    cni_api_route_test_feedback = gr.HTML(_cni_alert_html("ready", "Modifiez les paramètres d'une route, puis cliquez sur Test."))
+                                    cni_api_route_test_json = gr.JSON(label="Réponse JSON / diagnostic HTTP")
+                                    with gr.Row():
+                                        cni_api_route_test_file = gr.File(label="Fichier binaire de test à télécharger", interactive=False)
+                                        cni_api_route_test_image = gr.Image(label="Aperçu image du test", type="filepath", height=220)
                                 with gr.Tabs():
                                     with gr.Tab("Connexion"):
                                         with gr.Row():
@@ -1668,23 +1675,27 @@ def build_ui() -> gr.Blocks:
                                     with gr.Tab("Clients"):
                                         cni_api_list_raw_url = gr.Textbox(value=qlicker_config["routes"]["list"]["raw_url"], label="URL Postman · liste clients", placeholder="https://serveur/api/get_customer?...", lines=2)
                                         cni_api_list_parse = gr.Button("Parser et enregistrer la route Clients")
-                                        cni_api_list_endpoint_setting = gr.Textbox(value=qlicker_config["routes"]["list"]["endpoint"], label="Endpoint", interactive=False)
+                                        cni_api_list_endpoint_setting = gr.Textbox(value=qlicker_config["routes"]["list"]["endpoint"], label="Endpoint", interactive=True)
                                         cni_api_list_params_setting = gr.Dataframe(value=qlicker_config["routes"]["list"]["params"], headers=["Paramètre", "Valeur", "Envoyer"], datatype=["str", "str", "bool"], type="array", interactive=True, label="Paramètres parsés")
+                                        cni_api_list_test = gr.Button("Test", size="sm")
                                     with gr.Tab("Détail client"):
                                         cni_api_info_raw_url = gr.Textbox(value=qlicker_config["routes"]["info"]["raw_url"], label="URL Postman · get_customer_data", lines=2)
                                         cni_api_info_parse = gr.Button("Parser et enregistrer la route Détail client")
-                                        cni_api_info_endpoint_setting = gr.Textbox(value=qlicker_config["routes"]["info"]["endpoint"], label="Endpoint", interactive=False)
+                                        cni_api_info_endpoint_setting = gr.Textbox(value=qlicker_config["routes"]["info"]["endpoint"], label="Endpoint", interactive=True)
                                         cni_api_info_params_setting = gr.Dataframe(value=qlicker_config["routes"]["info"]["params"], headers=["Paramètre", "Valeur", "Envoyer"], datatype=["str", "str", "bool"], type="array", interactive=True, label="Paramètres parsés")
+                                        cni_api_info_test = gr.Button("Test", size="sm")
                                     with gr.Tab("Documents"):
                                         cni_api_documents_raw_url = gr.Textbox(value=qlicker_config["routes"]["documents"]["raw_url"], label="URL Postman · get_signed_documents_list", lines=2)
                                         cni_api_documents_parse = gr.Button("Parser et enregistrer la route Documents")
-                                        cni_api_documents_endpoint_setting = gr.Textbox(value=qlicker_config["routes"]["documents"]["endpoint"], label="Endpoint", interactive=False)
+                                        cni_api_documents_endpoint_setting = gr.Textbox(value=qlicker_config["routes"]["documents"]["endpoint"], label="Endpoint", interactive=True)
                                         cni_api_documents_params_setting = gr.Dataframe(value=qlicker_config["routes"]["documents"]["params"], headers=["Paramètre", "Valeur", "Envoyer"], datatype=["str", "str", "bool"], type="array", interactive=True, label="Paramètres parsés")
+                                        cni_api_documents_test = gr.Button("Test", size="sm")
                                     with gr.Tab("Fichier"):
                                         cni_api_view_raw_url = gr.Textbox(value=qlicker_config["routes"]["view"]["raw_url"], label="URL Postman · view_file", lines=2)
                                         cni_api_view_parse = gr.Button("Parser et enregistrer la route Fichier")
-                                        cni_api_view_endpoint_setting = gr.Textbox(value=qlicker_config["routes"]["view"]["endpoint"], label="Endpoint", interactive=False)
+                                        cni_api_view_endpoint_setting = gr.Textbox(value=qlicker_config["routes"]["view"]["endpoint"], label="Endpoint", interactive=True)
                                         cni_api_view_params_setting = gr.Dataframe(value=qlicker_config["routes"]["view"]["params"], headers=["Paramètre", "Valeur", "Envoyer"], datatype=["str", "str", "bool"], type="array", interactive=True, label="Paramètres parsés")
+                                        cni_api_view_test = gr.Button("Test", size="sm")
 
         def on_prepare(
             model_specs,
@@ -2254,6 +2265,67 @@ def build_ui() -> gr.Blocks:
             except Exception as exc:
                 LOGGER.exception("QlickEER parsed URL test failed")
                 return _cni_alert_html("error", f"Test API impossible : {type(exc).__name__}: {exc}"), ""
+
+        def test_configured_qlicker_route(route_name, base_url, endpoint, rows, timeout, proxy_url, use_system_proxy, verify_ssl):
+            """Teste une route des paramètres et matérialise seulement sa réponse binaire.
+
+            Les routes JSON restent affichées sans écriture disque. Pour une
+            réponse binaire (normalement ``view_file``), un fichier temporaire
+            téléchargeable est créé sous ``runs/qlickeer_api_tests``.
+            """
+            try:
+                pairs = editable_rows_to_query_pairs(rows)
+                is_view = route_name == "view"
+                if is_view:
+                    target = RUNS_DIR / "qlickeer_api_tests" / f"{route_name}-{time.strftime('%Y%m%d-%H%M%S')}-{uuid4().hex[:8]}"
+                    downloaded = download_qlicker_file(
+                        base_url, endpoint, pairs, target,
+                        timeout_seconds=float(timeout or 30), proxy_url=proxy_url,
+                        use_system_proxy=bool(use_system_proxy), verify_ssl=bool(verify_ssl),
+                    )
+                    path = str(downloaded["path"])
+                    image = path if Path(path).suffix.casefold() in {".jpg", ".jpeg", ".png"} else None
+                    diagnostic = {
+                        "route": route_name,
+                        "binary_download": downloaded,
+                        "note": "Le fichier est disponible au téléchargement dans le panneau ci-dessous.",
+                    }
+                    return (
+                        _cni_alert_html("success", f"Test {route_name} terminé : fichier binaire téléchargé ({downloaded['bytes']} octets)."),
+                        diagnostic, path, image,
+                    )
+
+                payload = execute_qlicker_get(
+                    base_url, endpoint, pairs,
+                    timeout_seconds=float(timeout or 30), proxy_url=proxy_url,
+                    use_system_proxy=bool(use_system_proxy), verify_ssl=bool(verify_ssl),
+                )
+                response = payload.get("response", {})
+                content_type = str(response.get("content_type") or "")
+                if "json" in content_type or content_type.startswith("text/"):
+                    code = int(response.get("status_code") or 0)
+                    level = "success" if 200 <= code < 300 else "warning"
+                    return _cni_alert_html(level, f"Test {route_name} terminé : HTTP {code} · réponse {content_type}."), payload, None, None
+
+                # Une route inhabituellement binaire est relue une seconde fois
+                # pour fournir un téléchargement, sans transformer les bytes
+                # en JSON ou en chaîne de caractères.
+                target = RUNS_DIR / "qlickeer_api_tests" / f"{route_name}-{time.strftime('%Y%m%d-%H%M%S')}-{uuid4().hex[:8]}"
+                downloaded = download_qlicker_file(
+                    base_url, endpoint, pairs, target,
+                    timeout_seconds=float(timeout or 30), proxy_url=proxy_url,
+                    use_system_proxy=bool(use_system_proxy), verify_ssl=bool(verify_ssl),
+                )
+                path = str(downloaded["path"])
+                image = path if Path(path).suffix.casefold() in {".jpg", ".jpeg", ".png"} else None
+                return (
+                    _cni_alert_html("success", f"Test {route_name} : réponse binaire téléchargée ({downloaded['bytes']} octets)."),
+                    {"route": route_name, "first_response": payload, "binary_download": downloaded}, path, image,
+                )
+            except Exception as exc:
+                LOGGER.exception("QlickEER configured route test failed | route=%s", route_name)
+                message = f"Test {route_name} impossible : {type(exc).__name__}: {exc}"
+                return _cni_alert_html("error", message), {"route": route_name, "error": message}, None, None
 
         def _customer_table(records: list[dict[str, Any]], select_all: bool = False) -> pd.DataFrame:
             """Projette la réponse GetCustomers vers les seules colonnes utiles à l'opérateur."""
@@ -3118,6 +3190,38 @@ def build_ui() -> gr.Blocks:
                 cni_api_view_raw_url, cni_api_view_endpoint_setting, cni_api_view_params_setting,
                 cni_api_config_status,
             ],
+            queue=False,
+        )
+        cni_api_list_test.click(
+            lambda base, endpoint, rows, timeout, proxy, system_proxy, verify: test_configured_qlicker_route(
+                "list", base, endpoint, rows, timeout, proxy, system_proxy, verify,
+            ),
+            inputs=[cni_api_settings_base_url, cni_api_list_endpoint_setting, cni_api_list_params_setting, cni_api_settings_timeout, cni_api_settings_proxy, cni_api_settings_use_system_proxy, cni_api_settings_verify_ssl],
+            outputs=[cni_api_route_test_feedback, cni_api_route_test_json, cni_api_route_test_file, cni_api_route_test_image],
+            queue=False,
+        )
+        cni_api_info_test.click(
+            lambda base, endpoint, rows, timeout, proxy, system_proxy, verify: test_configured_qlicker_route(
+                "info", base, endpoint, rows, timeout, proxy, system_proxy, verify,
+            ),
+            inputs=[cni_api_settings_base_url, cni_api_info_endpoint_setting, cni_api_info_params_setting, cni_api_settings_timeout, cni_api_settings_proxy, cni_api_settings_use_system_proxy, cni_api_settings_verify_ssl],
+            outputs=[cni_api_route_test_feedback, cni_api_route_test_json, cni_api_route_test_file, cni_api_route_test_image],
+            queue=False,
+        )
+        cni_api_documents_test.click(
+            lambda base, endpoint, rows, timeout, proxy, system_proxy, verify: test_configured_qlicker_route(
+                "documents", base, endpoint, rows, timeout, proxy, system_proxy, verify,
+            ),
+            inputs=[cni_api_settings_base_url, cni_api_documents_endpoint_setting, cni_api_documents_params_setting, cni_api_settings_timeout, cni_api_settings_proxy, cni_api_settings_use_system_proxy, cni_api_settings_verify_ssl],
+            outputs=[cni_api_route_test_feedback, cni_api_route_test_json, cni_api_route_test_file, cni_api_route_test_image],
+            queue=False,
+        )
+        cni_api_view_test.click(
+            lambda base, endpoint, rows, timeout, proxy, system_proxy, verify: test_configured_qlicker_route(
+                "view", base, endpoint, rows, timeout, proxy, system_proxy, verify,
+            ),
+            inputs=[cni_api_settings_base_url, cni_api_view_endpoint_setting, cni_api_view_params_setting, cni_api_settings_timeout, cni_api_settings_proxy, cni_api_settings_use_system_proxy, cni_api_settings_verify_ssl],
+            outputs=[cni_api_route_test_feedback, cni_api_route_test_json, cni_api_route_test_file, cni_api_route_test_image],
             queue=False,
         )
         cni_api_load_customers.click(

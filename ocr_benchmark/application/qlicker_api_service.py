@@ -342,6 +342,8 @@ def download_qlicker_file(
                 if total > max_bytes:
                     raise ValueError(f"Fichier refusé : limite {max_bytes} octets dépassée.")
                 stream.write(chunk)
+        if total == 0:
+            raise ValueError("Téléchargement QlickEER vide : 0 octet reçu, aucun fichier final n'est conservé.")
         if extension is None:
             raise ValueError(
                 "Format QlickEER non pris en charge : ni Content-Type, ni nom de fichier, "
@@ -372,7 +374,7 @@ def _qlicker_get(session: requests.Session, url: str, *, params: Any, timeout: f
     logs applicatifs, sans la longue alerte technique d'urllib3 à chaque appel.
     """
     if not verify_ssl:
-        LOGGER.warning("QlickEER | SSL non vérifié")
+        LOGGER.warning("QlickEER | SSL non vérifié | GET %s", urlsplit(url).path or url)
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", InsecureRequestWarning)
         return session.get(
