@@ -534,6 +534,16 @@ def _cni_api_document_label(item: dict[str, Any], side: str) -> str:
     return "À vérifier"
 
 
+def _cni_api_downloaded_files_label(item: dict[str, Any]) -> str:
+    """Expose les noms locaux écrits par view_file dans le diagnostic UI."""
+    files = item.get("downloaded_files")
+    if not isinstance(files, dict):
+        return ""
+    recto, verso = str(files.get("recto") or "").strip(), str(files.get("verso") or "").strip()
+    names = [name for name in (recto, verso) if name]
+    return f"Fichiers : {', '.join(names)}" if names else ""
+
+
 def _cni_api_label_label(item: dict[str, Any]) -> str:
     """Distingue un label non demandé, normalisé ou indisponible."""
     if item.get("label_path"):
@@ -573,6 +583,7 @@ def _cni_api_table(
             "Détail": " · ".join(
                 part for part in (
                     str(customer.get("agency_name") or customer.get("agency_code") or "").strip(),
+                    _cni_api_downloaded_files_label(item),
                     str(item.get("message") or customer.get("document_id") or "").strip(),
                     "; ".join(str(issue) for issue in item.get("issues", []) if issue),
                 ) if part

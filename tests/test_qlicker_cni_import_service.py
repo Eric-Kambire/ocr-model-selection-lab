@@ -1,6 +1,7 @@
 """Tests sans réseau du lot CNI QlickEER multi-clients."""
 
 from pathlib import Path
+import json
 
 from ocr_benchmark.application.qlicker_cni_import_service import (
     build_qlicker_cni_routes,
@@ -70,6 +71,9 @@ def test_batch_materializes_a_cni_pair_and_normalized_label(tmp_path, monkeypatc
     assert (client_dir / "A0000000_CIN_Recto.pdf").is_file()
     assert (client_dir / "A0000000_CIN_Verso.pdf").is_file()
     assert '"cin": "A0000000"' in (client_dir / "A0000000.json").read_text(encoding="utf-8")
+    manifest = json.loads((client_dir / ".qlickeer_documents.json").read_text(encoding="utf-8"))
+    assert manifest["downloads"]["recto"]["filename"] == "A0000000_CIN_Recto.pdf"
+    assert manifest["downloads"]["verso"]["bytes"] == 9
     assert ("documents", [("customerID", "A0000000"), ("filter", "")]) in calls
     assert ("customer", [("customerID", "A0000000")]) in calls
     # La valeur ``page`` est celle testée et configurée par l'opérateur. Elle

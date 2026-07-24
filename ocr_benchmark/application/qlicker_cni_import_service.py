@@ -19,6 +19,7 @@ from typing import Any
 from ..cni_ingestion import (
     DEFAULT_RECTO_SUFFIX,
     DEFAULT_VERSO_SUFFIX,
+    SUPPORTED_CNI_SOURCE_SUFFIXES,
     normalize_cni_source_suffix,
     write_cni_json,
 )
@@ -244,6 +245,7 @@ def iter_prepare_qlicker_cni_clients(
                 use_system_proxy=use_system_proxy,
                 verify_ssl=verify_ssl,
             )
+            recto = _validate_downloaded_cni_file(recto, side="recto")
             event.update(status="downloading_verso", message="Téléchargement du verso CNI.")
             yield dict(event)
             verso = download_qlicker_file(
@@ -259,11 +261,31 @@ def iter_prepare_qlicker_cni_clients(
                 use_system_proxy=use_system_proxy,
                 verify_ssl=verify_ssl,
             )
+            verso = _validate_downloaded_cni_file(verso, side="verso")
+            # Ce manifeste ne duplique pas les documents. Il conserve les
+            # faits observables de chaque appel view_file afin qu'un échec de
+            # scan puisse être diagnostiqué après coup, sans rappeler l'API.
+            write_cni_json(
+                client_dir / ".qlickeer_documents.json",
+                {
+                    "schema_version": 1,
+                    "client_id": client_id,
+                    "documents_from_list": {"recto": pair["recto"], "verso": pair["verso"]},
+                    "downloads": {
+                        "recto": _download_manifest_entry(recto),
+                        "verso": _download_manifest_entry(verso),
+                    },
+                },
+            )
             event.update(
                 status="downloaded",
-                message="Recto et verso téléchargés.",
+                message="Recto et verso téléchargés et validés localement.",
                 recto_source=recto["path"],
                 verso_source=verso["path"],
+                downloaded_files={
+                    "recto": Path(str(recto["path"])).name,
+                    "verso": Path(str(verso["path"])).name,
+                },
             )
             yield dict(event)
 
@@ -305,6 +327,39 @@ def iter_prepare_qlicker_cni_clients(
                 issues=[*event.get("issues", []), f"{type(exc).__name__}: {exc}"],
             )
             yield dict(event)
+
+
+def _validate_downloaded_cni_file(downloaded: Mapping[str, Any], *, side: str) -> dict[str, Any]:
+    """Vérifie immédiatement l'artefact écrit par ``view_file``.
+
+    Le scanner CNI intervient plus tard et ne doit pas avoir à deviner si un
+    fichier est absent, vide ou d'un format inattendu. Cette validation donne
+    donc une erreur liée directement à l'appel ``view_file`` concerné.
+    """
+    value = dict(downloaded)
+    path = Path(str(value.get("path") or ""))
+    if not path.is_file():
+        raise FileNotFoundError(f"view_file {side} : fichier final absent ({path}).")
+    actual_bytes = path.stat().st_size
+    if actual_bytes <= 0:
+        raise ValueError(f"view_file {side} : fichier final vide ({path.name}).")
+    if path.suffix.casefold() not in SUPPORTED_CNI_SOURCE_SUFFIXES:
+        raise ValueError(f"view_file {side} : format local non supporté ({path.suffix or 'sans extension'}).")
+    value["bytes"] = actual_bytes
+    value["path"] = str(path)
+    return value
+
+
+def _download_manifest_entry(downloaded: Mapping[str, Any]) -> dict[str, Any]:
+    """Réduit le résultat HTTP au diagnostic local utile et non sensible."""
+    path = Path(str(downloaded.get("path") or ""))
+    return {
+        "filename": path.name,
+        "path": str(path),
+        "bytes": int(downloaded.get("bytes") or 0),
+        "content_type": str(downloaded.get("content_type") or "absent"),
+        "detected_format": str(downloaded.get("detected_format") or path.suffix.lstrip(".")),
+    }
 
 
 def _enabled_pairs(rows: Sequence[Sequence[Any]] | None) -> list[tuple[str, str]]:
