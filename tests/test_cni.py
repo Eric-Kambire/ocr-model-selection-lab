@@ -12,6 +12,7 @@ from ocr_benchmark.cni import (
     crop_cni_from_a4,
     import_cni_zip,
     materialize_cni_labels,
+    normalize_cni_source_suffix,
     parse_cni_json_response,
     scan_cni_clients,
 )
@@ -48,6 +49,23 @@ def test_scan_uses_folder_identifier_and_materializes_external_label(tmp_path: P
     label = client / "folder-client-42.json"
     assert updated[0]["label_status"] == "label_materialized"
     assert json.loads(label.read_text(encoding="utf-8")) == {"nom": "TEST"}
+
+
+def test_suffix_accepts_qlickeer_spelling_with_or_without_file_extension(tmp_path: Path):
+    """Les suffixes UI restent métier : l'extension est déduite de view_file."""
+    client = tmp_path / "clients" / "client-42"
+    client.mkdir(parents=True)
+    _write_pdf(client / "client-42_CIN_recto.pdf")
+    _write_pdf(client / "client-42_CIN_verso.pdf")
+
+    records = scan_cni_clients(
+        tmp_path / "clients",
+        recto_suffix="_CIN_recto.pdf",
+        verso_suffix="_CIN_verso.jpg",
+    )
+
+    assert normalize_cni_source_suffix("_CIN_recto.pdf", default="_CIN_Recto") == "_CIN_recto"
+    assert records[0]["status"] == "ready"
 
 
 def test_crop_detects_card_area_without_using_a4_as_the_result(tmp_path: Path):

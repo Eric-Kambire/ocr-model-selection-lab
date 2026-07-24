@@ -16,7 +16,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from ..cni_ingestion import DEFAULT_RECTO_SUFFIX, DEFAULT_VERSO_SUFFIX, write_cni_json
+from ..cni_ingestion import (
+    DEFAULT_RECTO_SUFFIX,
+    DEFAULT_VERSO_SUFFIX,
+    normalize_cni_source_suffix,
+    write_cni_json,
+)
 from .qlicker_api_service import (
     download_qlicker_file,
     execute_qlicker_get,
@@ -156,6 +161,8 @@ def iter_prepare_qlicker_cni_clients(
     """
     root = Path(destination_root)
     root.mkdir(parents=True, exist_ok=True)
+    recto_suffix = normalize_cni_source_suffix(recto_suffix, default=DEFAULT_RECTO_SUFFIX)
+    verso_suffix = normalize_cni_source_suffix(verso_suffix, default=DEFAULT_VERSO_SUFFIX)
     total = len(customers)
     for index, customer in enumerate(customers, start=1):
         # L'UI transmet une candidature enrichie ``{customer, client_id, ...}``,

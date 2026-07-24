@@ -8,7 +8,15 @@ et exécution indépendamment.
 # Façade de compatibilité : l'interface peut importer ``cni`` sans dépendre du
 # rangement interne des modules spécialisés.
 from .cni_images import build_vertical_cni_composite, crop_cni_from_a4, render_single_page_pdf
-from .cni_ingestion import DEFAULT_RECTO_SUFFIX, DEFAULT_VERSO_SUFFIX, import_cni_zip, materialize_cni_labels, scan_cni_clients, write_cni_json
+from .cni_ingestion import (
+    DEFAULT_RECTO_SUFFIX,
+    DEFAULT_VERSO_SUFFIX,
+    import_cni_zip,
+    materialize_cni_labels,
+    normalize_cni_source_suffix,
+    scan_cni_clients,
+    write_cni_json,
+)
 from .cni_schema import (
     DEFAULT_CNI_FIELD_CONFIG,
     RECTO_FIELDS,
@@ -25,7 +33,7 @@ __all__ = [
     "DEFAULT_CNI_FIELD_CONFIG", "DEFAULT_RECTO_SUFFIX", "DEFAULT_VERSO_SUFFIX", "RECTO_FIELDS", "VERSO_FIELDS",
     "build_cni_global_json", "build_cni_prompt", "build_combined_cni_prompt",
     "build_vertical_cni_composite", "crop_cni_from_a4", "import_cni_zip",
-    "load_cni_field_config", "materialize_cni_labels", "parse_cni_json_response",
+    "load_cni_field_config", "materialize_cni_labels", "normalize_cni_source_suffix", "parse_cni_json_response",
     "parse_combined_cni_json_response", "render_single_page_pdf", "scan_cni_clients",
     "write_cni_json",
 ]

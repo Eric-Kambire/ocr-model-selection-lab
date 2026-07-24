@@ -21,11 +21,29 @@ DEFAULT_VERSO_SUFFIX = "_CIN_Verso"
 SUPPORTED_CNI_SOURCE_SUFFIXES = (".pdf", ".png", ".jpg", ".jpeg")
 
 
+def normalize_cni_source_suffix(value: str | None, *, default: str) -> str:
+    """Normalise un suffixe UI, avec ou sans extension de fichier.
+
+    L'opérateur peut écrire ``CIN_recto``, ``_CIN_recto`` ou
+    ``_CIN_recto.pdf``. L'extension est déterminée par `view_file`, elle ne
+    fait donc pas partie du suffixe métier utilisé pour nommer et scanner la
+    paire recto/verso.
+    """
+    text = str(value or default).strip()
+    text = re.sub(r"\.(?:pdf|png|jpe?g)$", "", text, flags=re.IGNORECASE)
+    if not text:
+        raise ValueError("Le suffixe CNI ne peut pas être vide.")
+    if any(separator in text for separator in ("/", "\\")):
+        raise ValueError("Le suffixe CNI ne doit pas contenir de chemin.")
+    return text
+
+
 def _side_patterns(recto_suffix: str, verso_suffix: str) -> dict[str, re.Pattern[str]]:
     """Construit des patrons sûrs pour les sources PDF, JPEG et PNG."""
-    suffixes = {"recto": str(recto_suffix or "").strip(), "verso": str(verso_suffix or "").strip()}
-    if not all(suffixes.values()):
-        raise ValueError("Les suffixes recto et verso ne peuvent pas être vides.")
+    suffixes = {
+        "recto": normalize_cni_source_suffix(recto_suffix, default=DEFAULT_RECTO_SUFFIX),
+        "verso": normalize_cni_source_suffix(verso_suffix, default=DEFAULT_VERSO_SUFFIX),
+    }
     extensions = "|".join(re.escape(value) for value in SUPPORTED_CNI_SOURCE_SUFFIXES)
     return {side: re.compile(rf"^(?P<document_id>.+){re.escape(suffix)}(?P<extension>{extensions})$", re.IGNORECASE) for side, suffix in suffixes.items()}
 
