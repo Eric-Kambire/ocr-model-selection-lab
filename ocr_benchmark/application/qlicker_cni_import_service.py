@@ -7,7 +7,10 @@ local par client compatible avec le scanner CNI existant.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import re
+import time
 from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -32,6 +35,76 @@ class QlickerCniRoutes:
     documents_params: list[tuple[str, str]]
     file_endpoint: str
     file_params: list[tuple[str, str]]
+
+
+_PREPARATION_MANIFEST = ".qlickeer_preparation.json"
+
+
+def qlicker_preparation_fingerprint(
+    customers: Sequence[Mapping[str, Any]],
+    *,
+    base_url: str,
+    routes: QlickerCniRoutes,
+    recto_suffix: str,
+    verso_suffix: str,
+) -> str:
+    """Construit une clé stable pour rejouer sans dupliquer le même lot.
+
+    Les identifiants et paramètres restent uniquement dans le calcul SHA-256 :
+    le manifeste local ne contient que le hash, jamais la liste des clients.
+    """
+    client_ids = sorted(
+        str(item.get("client_id") or (item.get("customer") or {}).get("id") or item.get("id") or "").strip()
+        for item in customers
+    )
+    payload = {
+        "clients": client_ids,
+        "base_url": str(base_url or "").strip(),
+        "routes": {
+            "customer": [routes.customer_endpoint, routes.customer_params],
+            "documents": [routes.documents_endpoint, routes.documents_params],
+            "file": [routes.file_endpoint, routes.file_params],
+        },
+        "recto_suffix": str(recto_suffix or ""),
+        "verso_suffix": str(verso_suffix or ""),
+    }
+    rendered = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(rendered.encode("utf-8")).hexdigest()
+
+
+def find_completed_qlicker_batch(import_root: Path, fingerprint: str) -> Path | None:
+    """Retrouve un lot terminé du même contrat sans suivre de chemin externe."""
+    root = Path(import_root).resolve()
+    if not root.is_dir():
+        return None
+    for batch in sorted(root.glob("batch-*"), key=lambda path: path.stat().st_mtime, reverse=True):
+        if not batch.is_dir():
+            continue
+        manifest = _read_preparation_manifest(batch / _PREPARATION_MANIFEST)
+        if manifest.get("fingerprint") == fingerprint and manifest.get("status") == "completed":
+            return batch
+    return None
+
+
+def write_qlicker_preparation_manifest(
+    batch_root: Path,
+    *,
+    fingerprint: str,
+    status: str,
+    selected_count: int,
+) -> None:
+    """Checkpoint atomique du lot, utilisé pour l'idempotence après refresh."""
+    path = Path(batch_root) / _PREPARATION_MANIFEST
+    value = {
+        "schema_version": 1,
+        "fingerprint": fingerprint,
+        "status": status,
+        "selected_count": int(selected_count),
+        "updated_at_epoch": time.time(),
+    }
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    temporary.write_text(json.dumps(value, ensure_ascii=False, indent=2), encoding="utf-8")
+    temporary.replace(path)
 
 
 def build_qlicker_cni_routes(
@@ -274,3 +347,12 @@ def _safe_client_id(value: str) -> str | None:
     """Empêche qu'un identifiant distant puisse modifier le chemin local."""
     candidate = str(value or "").strip()
     return candidate if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", candidate) else None
+
+
+def _read_preparation_manifest(path: Path) -> dict[str, Any]:
+    """Lit un manifeste facultatif ; un fichier corrompu n'est jamais réutilisé."""
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return value if isinstance(value, dict) and value.get("schema_version") == 1 else {}
