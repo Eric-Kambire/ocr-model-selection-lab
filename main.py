@@ -2666,7 +2666,11 @@ def build_ui() -> gr.Blocks:
                 ready = sum(record.get("status") == "ready" for record in records)
                 labels = sum(record.get("label_status") == "label_materialized" for record in records)
                 write_qlicker_preparation_manifest(
-                    batch_root, fingerprint=fingerprint, status="completed", selected_count=len(selected),
+                    batch_root,
+                    fingerprint=fingerprint,
+                    status="completed",
+                    selected_count=len(selected),
+                    ready_count=ready,
                 )
                 summary = (
                     f"**Lot API terminé :** {len(records)} client(s) matérialisé(s), "

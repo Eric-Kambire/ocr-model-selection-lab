@@ -66,6 +66,9 @@ def test_suffix_accepts_qlickeer_spelling_with_or_without_file_extension(tmp_pat
 
     assert normalize_cni_source_suffix("_CIN_recto.pdf", default="_CIN_Recto") == "_CIN_recto"
     assert records[0]["status"] == "ready"
+    # Le contrat de scan est volontairement insensible à la casse : une
+    # configuration par défaut ``_CIN_Recto`` accepte aussi ``_CIN_recto``.
+    assert scan_cni_clients(tmp_path / "clients")[0]["status"] == "ready"
 
 
 def test_crop_detects_card_area_without_using_a4_as_the_result(tmp_path: Path):

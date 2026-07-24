@@ -71,8 +71,11 @@ def qlicker_preparation_fingerprint(
             "documents": [routes.documents_endpoint, routes.documents_params],
             "file": [routes.file_endpoint, routes.file_params],
         },
-        "recto_suffix": str(recto_suffix or ""),
-        "verso_suffix": str(verso_suffix or ""),
+        # La reconnaissance des suffixes est insensible à la casse. La clé
+        # d'idempotence doit l'être aussi : changer seulement ``Recto`` en
+        # ``recto`` ne doit ni créer un nouveau lot ni modifier le contrat.
+        "recto_suffix": str(recto_suffix or "").casefold(),
+        "verso_suffix": str(verso_suffix or "").casefold(),
     }
     rendered = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(rendered.encode("utf-8")).hexdigest()
@@ -87,7 +90,15 @@ def find_completed_qlicker_batch(import_root: Path, fingerprint: str) -> Path | 
         if not batch.is_dir():
             continue
         manifest = _read_preparation_manifest(batch / _PREPARATION_MANIFEST)
-        if manifest.get("fingerprint") == fingerprint and manifest.get("status") == "completed":
+        # Un lot partiellement échoué reste consultable mais il ne doit jamais
+        # bloquer un nouvel essai. Les anciens manifestes sans ``ready_count``
+        # sont donc également considérés comme rejouables.
+        if (
+            manifest.get("fingerprint") == fingerprint
+            and manifest.get("status") == "completed"
+            and manifest.get("ready_count") == manifest.get("selected_count")
+            and int(manifest.get("selected_count") or 0) > 0
+        ):
             return batch
     return None
 
@@ -98,14 +109,16 @@ def write_qlicker_preparation_manifest(
     fingerprint: str,
     status: str,
     selected_count: int,
+    ready_count: int | None = None,
 ) -> None:
     """Checkpoint atomique du lot, utilisé pour l'idempotence après refresh."""
     path = Path(batch_root) / _PREPARATION_MANIFEST
     value = {
-        "schema_version": 1,
+        "schema_version": 2,
         "fingerprint": fingerprint,
         "status": status,
         "selected_count": int(selected_count),
+        "ready_count": int(ready_count) if ready_count is not None else None,
         "updated_at_epoch": time.time(),
     }
     temporary = path.with_suffix(path.suffix + ".tmp")
@@ -375,7 +388,7 @@ def _enabled_pairs(rows: Sequence[Sequence[Any]] | None) -> list[tuple[str, str]
 
 
 def _replace_route_parameters(template: Sequence[tuple[str, str]], overrides: Mapping[str, str]) -> list[tuple[str, str]]:
-    """Remplace customerID/file/page sans perdre les paramètres inconnus.
+    """Remplace customerID/file sans perdre les paramètres inconnus.
 
     Les clés non connues de ``view_file`` restent exactement celles que
     l'utilisateur a parsées depuis Postman. Si une clé obligatoire n'était pas
@@ -422,4 +435,4 @@ def _read_preparation_manifest(path: Path) -> dict[str, Any]:
         value = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return {}
-    return value if isinstance(value, dict) and value.get("schema_version") == 1 else {}
+    return value if isinstance(value, dict) and value.get("schema_version") in {1, 2} else {}
