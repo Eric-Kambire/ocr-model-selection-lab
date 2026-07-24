@@ -144,6 +144,13 @@ Ouvrez `8. Benchmark CNI → 4. Paramètres → API QlickEER`. Dans l'onglet
 - **Vérifier SSL**. Ne le désactivez que pour une API interne dont le certificat
   est connu et approuvé par votre organisation.
 
+Cliquez sur **Enregistrer la configuration** après toute modification manuelle.
+Les routes, paramètres, proxy et réglages sont enregistrés localement dans
+`config/qlickeer_api.local.json`, ignoré par Git : ils restent donc présents
+après un rechargement de la page ou un redémarrage de l'application. Le bouton
+**Réinitialiser la configuration** supprime seulement ce fichier local ; il ne
+supprime jamais les imports, documents ou résultats déjà produits.
+
 Les quatre onglets suivants correspondent aux quatre appels disponibles. Collez
 dans chacun l'URL complète testée dans Postman, puis cliquez sur **Parser et
 enregistrer**.
