@@ -2458,9 +2458,22 @@ def build_ui() -> gr.Blocks:
                         "label_path": scanned.get("label_path"),
                     }}
                     if scanned.get("status") != "ready":
+                        # Le téléchargement a peut-être réussi mais le scanner
+                        # doit encore reconnaître une paire locale exploitable.
+                        # Afficher ses constats évite le message générique
+                        # « contrat recto/verso » difficile à diagnostiquer.
+                        scan_issues = [str(issue) for issue in scanned.get("issues", []) if issue]
+                        filenames = sorted(
+                            path.name for path in Path(str(scanned.get("client_dir") or "")).iterdir()
+                            if path.is_file()
+                        ) if scanned.get("client_dir") else []
                         merged.update(
                             status="failed",
-                            message="Validation locale échouée : les fichiers téléchargés ne respectent pas le contrat recto/verso.",
+                            message=(
+                                "Validation locale échouée : "
+                                f"{', '.join(scan_issues) or 'paire recto/verso non reconnue'}. "
+                                f"Fichiers vus : {', '.join(filenames) or 'aucun'}"
+                            ),
                             issues=[*candidate.get("issues", []), *scanned.get("issues", [])],
                         )
                     elif candidate.get("status") == "ready":
