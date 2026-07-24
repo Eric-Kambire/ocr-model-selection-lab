@@ -61,6 +61,7 @@ from ocr_benchmark.cni import (
     build_cni_prompt,
     build_combined_cni_prompt,
     load_cni_field_config,
+    normalize_cni_source_suffix,
     render_single_page_pdf,
 )
 from ocr_benchmark.dataset_repository import DatasetRepository
@@ -1566,8 +1567,16 @@ def build_ui() -> gr.Blocks:
                                     cni_cpu_threads = gr.Number(value=max(1, min(8, os.cpu_count() or 1)), minimum=1, maximum=max(1, os.cpu_count() or 1), precision=0, label="Threads CPU Ollama")
                                     cni_unload = gr.Checkbox(value=True, label="Décharger le modèle après chaque appel")
                                 with gr.Row():
-                                    cni_recto_suffix = gr.Textbox(value=DEFAULT_RECTO_SUFFIX, label="Suffixe recto")
-                                    cni_verso_suffix = gr.Textbox(value=DEFAULT_VERSO_SUFFIX, label="Suffixe verso")
+                                    cni_recto_suffix = gr.Textbox(
+                                        value=DEFAULT_RECTO_SUFFIX,
+                                        label="Suffixe recto",
+                                        info="Ex. _CIN_Recto ou CIN_recto. L'extension PDF/JPG/PNG est ignorée.",
+                                    )
+                                    cni_verso_suffix = gr.Textbox(
+                                        value=DEFAULT_VERSO_SUFFIX,
+                                        label="Suffixe verso",
+                                        info="Ex. _CIN_Verso ou CIN_verso. L'extension PDF/JPG/PNG est ignorée.",
+                                    )
                             with gr.Tab("Prétraitement"):
                                 with gr.Row():
                                     cni_rotation_method = gr.Radio(
@@ -2405,6 +2414,8 @@ def build_ui() -> gr.Blocks:
                 )
                 return
             working = [dict(candidate) for candidate in (candidates or [])]
+            effective_recto_suffix = DEFAULT_RECTO_SUFFIX
+            effective_verso_suffix = DEFAULT_VERSO_SUFFIX
             selected_client_ids = {
                 str(candidate.get("client_id") or candidate.get("customer", {}).get("id") or "")
                 for candidate in selected
@@ -2415,8 +2426,8 @@ def build_ui() -> gr.Blocks:
                 records = scan_cni_documents(
                     batch,
                     None,
-                    recto_suffix=str(recto_suffix or DEFAULT_RECTO_SUFFIX),
-                    verso_suffix=str(verso_suffix or DEFAULT_VERSO_SUFFIX),
+                    recto_suffix=effective_recto_suffix,
+                    verso_suffix=effective_verso_suffix,
                 )
                 by_client = {str(record.get("folder_client_id")): record for record in records}
                 for position, candidate in enumerate(working):
@@ -2450,12 +2461,18 @@ def build_ui() -> gr.Blocks:
                 if not raw_root:
                     raise ValueError("Le dossier d'import API est obligatoire.")
                 base_root = Path(raw_root).expanduser()
+                effective_recto_suffix = normalize_cni_source_suffix(
+                    recto_suffix, default=DEFAULT_RECTO_SUFFIX,
+                )
+                effective_verso_suffix = normalize_cni_source_suffix(
+                    verso_suffix, default=DEFAULT_VERSO_SUFFIX,
+                )
                 fingerprint = qlicker_preparation_fingerprint(
                     selected,
                     base_url=base_url,
                     routes=routes,
-                    recto_suffix=str(recto_suffix or DEFAULT_RECTO_SUFFIX),
-                    verso_suffix=str(verso_suffix or DEFAULT_VERSO_SUFFIX),
+                    recto_suffix=effective_recto_suffix,
+                    verso_suffix=effective_verso_suffix,
                 )
             except Exception as exc:
                 message = f"Configuration API incomplète : {type(exc).__name__}: {exc}"
@@ -2514,8 +2531,8 @@ def build_ui() -> gr.Blocks:
                     proxy_url=proxy_url,
                     use_system_proxy=bool(use_system_proxy),
                     verify_ssl=bool(verify_ssl),
-                    recto_suffix=str(recto_suffix or DEFAULT_RECTO_SUFFIX),
-                    verso_suffix=str(verso_suffix or DEFAULT_VERSO_SUFFIX),
+                    recto_suffix=effective_recto_suffix,
+                    verso_suffix=effective_verso_suffix,
                 ):
                     client_id = str(event.get("client_id") or "")
                     for position, candidate in enumerate(working):
