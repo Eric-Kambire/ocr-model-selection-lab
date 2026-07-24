@@ -5,6 +5,7 @@ import pytest
 from ocr_benchmark.application.qlicker_api_service import (
     _qlicker_file_extension,
     build_qlicker_url,
+    download_qlicker_file,
     editable_rows_to_query_pairs,
     merge_query_params,
     parse_qlicker_url,
@@ -116,3 +117,34 @@ def test_file_download_extension_accepts_generic_mime_filename_or_signature():
         "application/octet-stream", "", [("file", "CIN_verso.jpeg")], b"",
     ) == ".jpg"
     assert _qlicker_file_extension("", "", [], b"\x89PNG\r\n\x1a\nrest") == ".png"
+
+
+def test_empty_binary_download_does_not_create_a_final_pdf(tmp_path, monkeypatch):
+    """Une réponse PDF annoncée mais vide reste visible comme erreur, sans faux artefact."""
+    class EmptyResponse:
+        url = "https://qlicker.internal/view_file"
+        headers = {"content-type": "application/pdf", "content-length": "0"}
+
+        def raise_for_status(self):
+            return None
+
+        def iter_content(self, chunk_size):
+            assert chunk_size == 64 * 1024
+            return iter(())
+
+        def close(self):
+            return None
+
+    class EmptySession:
+        trust_env = True
+
+        def get(self, *args, **kwargs):
+            return EmptyResponse()
+
+    monkeypatch.setattr("ocr_benchmark.application.qlicker_api_service.requests.Session", EmptySession)
+
+    with pytest.raises(ValueError, match="0 octet"):
+        download_qlicker_file(
+            "https://qlicker.internal", "view_file", [("file", "cin.pdf")], tmp_path / "cin",
+        )
+    assert not (tmp_path / "cin.pdf").exists()
