@@ -34,15 +34,10 @@ DEFAULT_CNI_FIELD_CONFIG = {
 # Règles métier stabilisées à partir des exemples de CNI. Elles guident la
 # sélection des champs existants sans introduire pour l'instant de nouvelles
 # clés (parents, CAN, état civil, QR ou MRZ) dans le contrat JSON.
-CNI_READING_RULES = (
-    "The card can use an old or new Moroccan CNI layout; the version is irrelevant. "
-    "For the holder's Latin name, the first personal name is prenom (given name) and the following family name is nom (surname); never reverse them. "
-    "Use the visible side being processed. A date next to 'Né le' is the birth date; "
-    "a place near 'à' and that birth date is the birth city; a date next to 'Valable jusqu’au' is the expiry date. "
-    "Do not confuse the holder with parent names near 'Fils de' or 'Et de'. "
-    "Do not confuse the visible CNI number with CAN, civil-status number, QR content, barcode content, or MRZ identifiers. "
-    "Do not read, decode, extract, or use QR codes, barcodes, or MRZ in this phase."
-)
+CNI_READING_RULES = """Old or new Moroccan CNI layout is irrelevant. Read only visible Latin values; Arabic labels may only locate a field. Never translate, infer or guess.
+On RECTO, find the two large Latin holder-name lines near the portrait and before 'Né le'/'Née le': first line = prenom, line below = nom. New cards often have the photo left; old cards often have it right. On VERSO, names after 'Fils de'/'Et de' are parents, never the holder.
+Birth date follows 'Né le'/'Née le'; nearby 'à' is birth city; expiry follows 'Valable jusqu’au'/'Valable jusqu'à'.
+cin is only the value tied to plain 'N°', never CAN, 'N° état civil', QR, barcode or MRZ. Do not decode or use MRZ, QR or barcode. Return null for an absent or ambiguous requested value."""
 
 
 def load_cni_field_config(config_path: Path | None = None) -> dict[str, list[dict[str, str]]]:
@@ -84,15 +79,18 @@ def build_cni_prompt(side: str, fields: dict[str, list[dict[str, str]]] | None =
     config = fields or load_cni_field_config()
     schema = {str(item["key"]): None for item in config[side]}
     side_focus = (
-        "Read the identity number, given name (prenom), surname (nom), birth date, birth city and validity date."
+        "RECTO scope: return only the holder's visible CIN, prenom, nom, date_naissance, ville_naissance and date_validite. "
+        "Use the spatial name block near the portrait before the birth information. For cin, use only the alphanumeric value directly associated with plain 'N°': on old fronts it is often below/right of the photo; on new fronts it is often bottom-left. Never take a CAN or 'N° état civil' value as cin."
         if side == "recto"
-        else "Read the identity number, validity date and full address. Do not use parent names or civil-status data."
+        else "VERSO scope: return only the repeated visible CIN, date_validite and the full holder address. "
+        "For cin, a top-left/top repeated number is valid only when it is not associated with CAN or 'N° état civil'. For a multi-line address, join the visible lines with a single space. Never fill requested fields from parent names, sex or civil-status data."
     )
     return (
         f"Extract these fields from the {side.upper()} side of a Moroccan CNI (old or new layout).\n"
         "Read only values visibly printed in Latin characters. Do not translate, transliterate, infer, or add fields.\n"
         + CNI_READING_RULES + "\n"
         + f"{side_focus}\n"
+        "When several dates or identifiers are visible, use only the value attached to the requested meaning. "
         "Use null when unreadable. Preserve spelling, punctuation and accents. Format a clearly readable date as YYYY-MM-DD.\n"
         "Return ONLY one valid JSON object: no Markdown, prose, comments or code fence.\n"
         "Required JSON schema:\n" + json.dumps(schema, ensure_ascii=False)
@@ -109,7 +107,8 @@ def build_combined_cni_prompt(fields: dict[str, list[dict[str, str]]] | None = N
     }
     return (
         "The image contains two sides of the same Moroccan national identity card, old or new layout: RECTO at the top and VERSO at the bottom.\n"
-        "Read only values visibly printed in Latin characters. Do not translate, transliterate, infer, duplicate across sides or add fields.\n"
+        "Read only values visibly printed in Latin characters. Do not translate, transliterate, infer, duplicate across sides or add fields. "
+        "Apply the RECTO scope only to recto and the VERSO scope only to verso; parent names are never holder names.\n"
         + CNI_READING_RULES + "\n"
         + "For ambiguous or unreadable values use null. Preserve spelling, punctuation and accents; format a clearly readable date as YYYY-MM-DD.\n"
         "Return ONLY one valid JSON object with recto and verso: no Markdown, prose, comments or code fence.\n"

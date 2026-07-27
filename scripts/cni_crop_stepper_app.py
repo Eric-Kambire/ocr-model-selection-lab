@@ -29,6 +29,13 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from ocr_benchmark.cni_images import render_single_page_pdf
+from ocr_benchmark.cni_document_cropper import (
+    _detect_dark_edge_bands,
+    _find_card_candidates,
+    _order_corners,
+    _resize_for_detection,
+    crop_cni_document,
+)
 
 
 APP_CSS = """
@@ -66,10 +73,10 @@ APP_CSS = """
 #crop-preview .image-container {
     width: 396px !important;
     max-width: 100% !important;
-    height: 560px !important;
+    height: min(560px, 62vh) !important;
     min-height: 0 !important;
     margin: 0 auto !important;
-    aspect-ratio: 210 / 297;
+    aspect-ratio: auto;
     background: #ffffff !important;
     border: 1px solid #bcc1c8;
     box-shadow: 0 8px 18px rgba(41, 47, 56, 0.14);
@@ -85,12 +92,12 @@ APP_CSS = """
 """
 
 STEPS = (
-    ("1. Source", "Le PDF est rendu en PNG, ou l'image est normalisée en RGB. En mode simulation, la carte est placée sur une feuille A4 blanche avant cette étape."),
-    ("2. Niveaux de gris", "Chaque pixel couleur devient une intensité entre 0 (noir) et 255 (blanc). Les couleurs ne sont pas encore supprimées : seule la luminance est conservée."),
-    ("3. Masque binaire", "Les pixels plus sombres que le seuil deviennent blancs ; le fond A4 blanc devient noir. Ce masque permet de localiser le contenu imprimé."),
-    ("4. Rotation", "Pillow teste -90° à +90° puis affine autour du meilleur ratio. OpenCV calcule un rectangle orienté (minAreaRect), puis applique une matrice affine (warpAffine). La rotation agrandit parfois le canevas afin de ne pas couper la carte."),
-    ("5. Contour détecté", "Le rectangle bleu englobe les pixels détectés comme non blancs, avec une marge de sécurité. Ses dimensions et son ratio sont vérifiés."),
-    ("6. Crop final", "Seule la zone validée comme carte est conservée. Si le ratio ou la surface semblent incohérents, la page entière est conservée afin de ne rien perdre."),
+    ("1. Source normalisée", "Le PDF est rendu en PNG ou l'image téléphone est orientée selon EXIF. Aucun format de page n'est supposé."),
+    ("2. Gris et contraste local", "La luminance est isolée puis CLAHE rend les contours plus lisibles malgré une ombre ou un éclairage inégal."),
+    ("3. Bords et bruit", "Canny et une fermeture morphologique mettent en évidence les bords. Les bandes noires continues reliées au bord du scan sont exclues de la zone de recherche."),
+    ("4. Candidats rectangulaires", "Chaque contour plausible reçoit un score : ratio de carte, forme rectangulaire, solidité et surface. Rouge : rejeté ; orange : plausible."),
+    ("5. Candidat retenu", "Le meilleur quadrilatère crédible est dessiné en vert. Ses quatre coins servent à calculer la correction de perspective."),
+    ("6. Image envoyée au modèle", "Si le score est suffisant, la CNI redressée est envoyée. Sinon, la source entière est conservée et envoyée sans rotation ni crop."),
 )
 
 # Dimensions physiques de référence. Elles rendent l'effet du DPI mesurable :
@@ -562,6 +569,126 @@ def _prepare_source(
     return _prepare_direct_source(input_path, output_dir, dpi)
 
 
+def _robust_detection_artifacts(source_path: Path, output_dir: Path) -> tuple[list[str], dict[str, Any]]:
+    """Produit les visuels à partir des mêmes primitives que le crop de production."""
+    try:
+        import cv2
+        import numpy as np
+    except ImportError as exc:
+        raise gr.Error("OpenCV est requis : installez opencv-python-headless.") from exc
+
+    with Image.open(source_path) as file:
+        source = ImageOps.exif_transpose(file).convert("RGB")
+    original = cv2.cvtColor(np.asarray(source), cv2.COLOR_RGB2BGR)
+    gray = cv2.cvtColor(original, cv2.COLOR_BGR2GRAY)
+    gray_path = _write_image(Image.fromarray(gray), output_dir / "02_grayscale_clahe_input.png")
+
+    left, top, right, bottom = _detect_dark_edge_bands(original, cv2, np)
+    working = original[top:bottom, left:right]
+    local_gray = cv2.cvtColor(working, cv2.COLOR_BGR2GRAY)
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8)).apply(local_gray)
+    edges = cv2.Canny(cv2.GaussianBlur(clahe, (5, 5), 0), 45, 135)
+    closed = cv2.morphologyEx(edges, cv2.MORPH_CLOSE, cv2.getStructuringElement(cv2.MORPH_RECT, (7, 7)))
+    edge_canvas = np.zeros_like(gray)
+    edge_canvas[top:bottom, left:right] = closed
+    edge_path = _write_image(Image.fromarray(edge_canvas), output_dir / "03_edges_and_noise_mask.png")
+
+    preview, scale = _resize_for_detection(working, cv2)
+    candidates = _find_card_candidates(preview, cv2, np)
+    selected = next((candidate for candidate in candidates if candidate["accepted"]), None)
+    all_candidates = original.copy()
+    cv2.rectangle(all_candidates, (left, top), (right - 1, bottom - 1), (0, 180, 180), 2)
+    selected_points = None
+    for candidate in candidates[:15]:
+        points = candidate["points"] / scale
+        points[:, 0] += left
+        points[:, 1] += top
+        color = (0, 165, 255) if candidate["accepted"] else (0, 0, 220)
+        cv2.polylines(all_candidates, [points.astype("int32")], True, color, 2)
+    candidates_path = _write_image(
+        Image.fromarray(cv2.cvtColor(all_candidates, cv2.COLOR_BGR2RGB)),
+        output_dir / "04_candidates.png",
+    )
+
+    selected_overlay = all_candidates.copy()
+    if selected is not None:
+        selected_points = selected["points"] / scale
+        selected_points[:, 0] += left
+        selected_points[:, 1] += top
+        selected_points = _order_corners(selected_points, np)
+        cv2.polylines(selected_overlay, [selected_points.astype("int32")], True, (0, 180, 0), 4)
+        cv2.putText(selected_overlay, f"score={selected['score']:.3f}", tuple(selected_points[0].astype(int)), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 120, 0), 2)
+    else:
+        cv2.putText(selected_overlay, "Aucune CNI suffisamment fiable : source complete", (18, 34), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (0, 0, 190), 2)
+    selected_path = _write_image(
+        Image.fromarray(cv2.cvtColor(selected_overlay, cv2.COLOR_BGR2RGB)),
+        output_dir / "05_selected_candidate.png",
+    )
+    return [str(source_path), gray_path, edge_path, candidates_path, selected_path], {
+        "edge_trim": [left, top, right, bottom],
+        "candidates_found": len(candidates),
+        "candidates_accepted": sum(bool(item["accepted"]) for item in candidates),
+        "selected": {
+            key: round(float(selected[key]), 4)
+            for key in ("score", "ratio", "rectangularity")
+        } if selected else None,
+        "selected_points": selected_points.astype(int).tolist() if selected_points is not None else None,
+    }
+
+
+def build_robust_pipeline(
+    input_path: str | None,
+    input_mode: str,
+    dpi: int,
+    simulation_angle: float,
+    card_width_mm: float,
+) -> tuple[Any, ...]:
+    """Exécute le détecteur robuste réel et expose ses artefacts pas à pas."""
+    if not input_path:
+        raise gr.Error("Chargez un PDF ou une image avant de préparer les étapes.")
+    _cleanup_crop_sessions()
+    output_dir = TEMP_ROOT / f"session-{time.strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:8]}"
+    started = time.perf_counter()
+    source_path, prepared_pdf, source_preparation = _prepare_source(
+        input_path, str(input_mode), output_dir, int(dpi), float(simulation_angle), float(card_width_mm)
+    )
+    source_elapsed = time.perf_counter() - started
+    started = time.perf_counter()
+    paths, detection = _robust_detection_artifacts(source_path, output_dir)
+    detection_elapsed = time.perf_counter() - started
+    started = time.perf_counter()
+    crop = crop_cni_document(source_path, output_dir / "06_model_input.png", debug_path=output_dir / "06_crop_debug.png")
+    final_path = crop["image_path"]
+    crop_elapsed = time.perf_counter() - started
+    paths.append(final_path)
+    metrics = [
+        _stage_metric(STEPS[0][0], paths[0], source_elapsed, {"dpi": int(dpi), **source_preparation}),
+        _stage_metric(STEPS[1][0], paths[1], detection_elapsed, {"operation": "grayscale + CLAHE pour la détection"}),
+        _stage_metric(STEPS[2][0], paths[2], 0.0, {"operation": "Canny + fermeture morphologique", "edge_trim": detection["edge_trim"]}),
+        _stage_metric(STEPS[3][0], paths[3], 0.0, {"candidates_found": detection["candidates_found"], "candidates_accepted": detection["candidates_accepted"]}),
+        _stage_metric(STEPS[4][0], paths[4], 0.0, {"selected": detection["selected"], "selected_points": detection["selected_points"]}),
+        _stage_metric(STEPS[5][0], paths[5], crop_elapsed, crop),
+    ]
+    state = {
+        "pipeline": "robust_opencv",
+        "paths": paths,
+        "metrics": metrics,
+        "crop": crop,
+        "detection": detection,
+        "prepared_pdf": prepared_pdf,
+        "source_preparation": source_preparation,
+        "dpi": int(dpi),
+    }
+    report_path = output_dir / "processing_log.json"
+    report_path.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+    state["report_path"] = str(report_path)
+    return (
+        state, 0, paths[0], _stage_html(0), _stage_markdown(0, state), paths[0],
+        prepared_pdf, json.dumps(state, ensure_ascii=False, indent=2), str(report_path),
+        gr.update(visible=True, interactive=True),
+    )
+
+
 def build_pipeline(
     input_path: str | None,
     input_mode: str,
@@ -679,6 +806,37 @@ def build_pipeline(
 def _stage_markdown(index: int, state: dict[str, Any]) -> str:
     """Construit l'explication affichée à côté de l'image de l'étape."""
     title, explanation = STEPS[index]
+    if state.get("pipeline") == "robust_opencv":
+        if index == 2:
+            trim = state["detection"]["edge_trim"]
+            explanation += (
+                f"\n\nZone analysée après retrait logique des bords noirs : `{trim}`. "
+                "Ce retrait n'altère jamais l'image source envoyée si la détection échoue."
+            )
+        if index == 3:
+            explanation += (
+                f"\n\nContours trouvés : `{state['detection']['candidates_found']}` ; "
+                f"candidats crédibles : `{state['detection']['candidates_accepted']}`."
+            )
+        if index == 4:
+            selected = state["detection"].get("selected")
+            explanation += "\n\n" + (f"Candidat retenu : `{selected}`." if selected else "Aucun candidat n'atteint le seuil : le fallback est obligatoire.")
+        if index == 5:
+            crop = state["crop"]
+            if crop.get("source_sent_unchanged"):
+                explanation += "\n\n**Fallback sûr actif :** le fichier affiché est la source normalisée complète. Aucun recadrage, aucune rotation n'a été appliqué."
+            else:
+                explanation += f"\n\n**Crop validé :** perspective corrigée, score `{crop.get('score')}`, ratio `{crop.get('ratio')}`."
+        metric = state["metrics"][index]
+        parameters = json.dumps(metric.get("parameters", {}), ensure_ascii=False, indent=2)
+        explanation += (
+            "\n\n### Mesures de cette étape"
+            f"\n\n- Dimensions : `{metric['width_px']} × {metric['height_px']} px`"
+            f"\n- Volume PNG : `{metric['size_human']}`"
+            f"\n- Durée : `{metric['elapsed_ms']} ms`"
+            f"\n\nParamètres :\n```json\n{parameters}\n```"
+        )
+        return f"## {title}\n\n{explanation}"
     if index == 2:
         explanation += f" Seuil utilisé : `{state['threshold']}` sur une échelle 0–255."
     if index == 3:
@@ -768,21 +926,16 @@ def build_ui() -> gr.Blocks:
                     filterable=False,
                 )
             with gr.Column(scale=3, elem_id="crop-detection"):
-                gr.HTML("<div class='crop-section-title'>2. Rendu et détection</div><div class='crop-section-copy'>Qualité du rendu et limite entre fond et contenu.</div>")
+                gr.HTML("<div class='crop-section-title'>2. Rendu</div><div class='crop-section-copy'>Le DPI n'est utile que pour rendre un PDF. Une image téléphone conserve ses pixels.</div>")
                 dpi = gr.Slider(72, 600, value=300, step=1, label="DPI de rendu")
-                threshold = gr.Slider(180, 252, value=242, step=1, label="Seuil blanc")
             with gr.Column(scale=3, elem_id="crop-rotation"):
-                gr.HTML("<div class='crop-section-title'>3. Redressement</div><div class='crop-section-copy'>Optionnel : corrigez une carte déposée de travers.</div>")
-                auto_rotate = gr.Checkbox(value=False, label="Corriger automatiquement la rotation")
-                rotation_method = gr.Dropdown(
-                    [("Pillow : recherche par ratio", "pillow"), ("OpenCV : rectangle orienté", "opencv")],
-                    value="pillow",
-                    label="Méthode de rotation",
-                    filterable=False,
+                gr.HTML("<div class='crop-section-title'>3. Détection robuste</div><div class='crop-section-copy'>Bords noirs exclus, contours classés, puis correction de perspective seulement si le score est fiable.</div>")
+                gr.Markdown(
+                    "**Mode actif :** OpenCV robuste. Il ne fait pas tourner toute la page pour deviner une carte. "
+                    "Il transforme uniquement le quadrilatère retenu ; sinon il conserve la source complète."
                 )
-                rotation_method_help = gr.Markdown(rotation_method_markdown("pillow", False))
             with gr.Column(scale=2, elem_id="crop-action"):
-                gr.HTML("<div class='crop-section-title'>4. Générer</div><div class='crop-section-copy'>Crée les six artefacts et leur journal.</div>")
+                gr.HTML("<div class='crop-section-title'>4. Générer</div><div class='crop-section-copy'>Crée les six artefacts réels et leur journal.</div>")
                 prepare = gr.Button("Préparer les étapes", variant="primary")
         with gr.Accordion("Options de simulation A4 et mesures DPI", open=False, elem_id="crop-options"):
             gr.Markdown(
@@ -796,12 +949,10 @@ def build_ui() -> gr.Blocks:
             dpi_impact = gr.Markdown(dpi_impact_markdown(300, DEFAULT_CARD_WIDTH_MM))
         with gr.Accordion("Comprendre la méthode sélectionnée", open=False):
             gr.Markdown(
-                "Les deux options commencent par un masque : pixels plus foncés que le seuil = contenu ; fond presque blanc = ignoré. "
-                "Le ratio de la CNI est ensuite comparé à `1,586`. La **couverture** ne choisit pas l'angle : "
-                "elle valide seulement le contour final, rapporté à la taille de la source avant rotation. "
-                "Un canevas agrandi par la rotation ne peut donc pas fausser cette mesure.\n\n"
-                "Pillow et OpenCV redressent une rotation dans le plan. Une carte photographiée en trapèze "
-                "demande une correction de perspective à quatre coins, qui est hors de ce laboratoire."
+                "Le détecteur cherche des contours, score les rectangles avec le ratio d'une carte comme préférence, "
+                "puis détermine quatre coins. Une homographie OpenCV redresse seulement cette zone. "
+                "Une bordure noire qui touche le bord de l'image est ignorée pour la recherche ; elle ne peut pas "
+                "devenir le crop final. Sans candidat fiable, la source est transmise telle quelle."
             )
         with gr.Row(elem_id="crop-workspace"):
             with gr.Column(scale=6, elem_id="crop-canvas"):
@@ -826,44 +977,23 @@ def build_ui() -> gr.Blocks:
                 with gr.Accordion("Journal des paramètres et mesures", open=False):
                     processing_log = gr.Code(label="Journal JSON", language=None, lines=14, interactive=False)
                     log_download = gr.File(label="Télécharger le journal JSON", type="filepath", interactive=False)
-                with gr.Accordion("Voir la recherche et l'affinage de rotation", open=False):
-                    rotation_search_view = gr.JSON(
-                        label="Angles testés, ratios et scores",
-                        value={"status": "Préparez une image avec la rotation activée."},
-                    )
-                with gr.Accordion("Lire les itérations Pillow", open=True, elem_id="rotation-playback"):
-                    gr.Markdown(
-                        "Lance la recherche sur une miniature de l'A4 : chaque image montre l'angle candidat, "
-                        "le contour redessiné et son score. La dernière image revient au résultat final complet."
-                    )
-                    playback_delay = gr.Slider(80, 1000, value=180, step=20, label="Pause entre deux itérations (ms)")
-                    play_iterations = gr.Button("Lire / recommencer les itérations", variant="secondary")
-                    rotation_playback_status = gr.Markdown("Préparez une image avec Pillow et la rotation activée.")
                 gr.Markdown(
                     "### Comment lire le laboratoire\n\n"
-                    "- **DPI** : nombre de pixels par pouce lors du rendu PDF. L'estimation au-dessus change immédiatement ; cliquez sur préparer pour recalculer les images.\n"
-                    "- **Seuil blanc** : limite entre fond et contenu. Un seuil trop bas oublie des pixels clairs ; trop haut détecte le bruit.\n"
-                    "- **Rotation** : cherche seulement une inclinaison. Les perspectives de photo ne sont pas rectifiées dans cette version.\n"
-                    "- Chaque étape affiche ses dimensions, son volume, sa durée et ses paramètres ; le même contenu est exporté en JSON."
+                    "- **DPI** : nombre de pixels par pouce pour le rendu PDF ; une image déjà chargée garde ses dimensions.\n"
+                    "- **Bords noirs** : seuls les pixels sombres continus reliés au bord sont écartés de la recherche.\n"
+                    "- **Perspective** : les quatre coins d'une carte fiable sont projetés dans un rectangle droit.\n"
+                    "- Chaque étape affiche ses dimensions, son volume, sa durée et les paramètres exportés en JSON."
                 )
 
         prepare.click(
-            build_pipeline,
-            inputs=[source, input_mode, dpi, threshold, auto_rotate, rotation_method, simulation_angle, card_width_mm],
-            outputs=[state, stage_index, stage_image, stage_name, stage_note, download, prepared_pdf, processing_log, log_download, rotation_search_view, next_button],
+            build_robust_pipeline,
+            inputs=[source, input_mode, dpi, simulation_angle, card_width_mm],
+            outputs=[state, stage_index, stage_image, stage_name, stage_note, download, prepared_pdf, processing_log, log_download, next_button],
         )
         next_button.click(next_stage, inputs=[stage_index, state], outputs=[stage_index, stage_image, stage_name, stage_note, download, next_button])
         previous.click(previous_stage, inputs=[stage_index, state], outputs=[stage_index, stage_image, stage_name, stage_note, download, next_button])
-        play_iterations.click(
-            play_pillow_iterations,
-            inputs=[state, playback_delay],
-            outputs=[stage_index, stage_image, stage_name, stage_note, download, rotation_playback_status, next_button],
-            queue=True,
-        )
         dpi.change(dpi_impact_markdown, inputs=[dpi, card_width_mm], outputs=[dpi_impact], queue=False)
         card_width_mm.change(dpi_impact_markdown, inputs=[dpi, card_width_mm], outputs=[dpi_impact], queue=False)
-        rotation_method.change(rotation_method_markdown, inputs=[rotation_method, auto_rotate], outputs=[rotation_method_help], queue=False)
-        auto_rotate.change(rotation_method_markdown, inputs=[rotation_method, auto_rotate], outputs=[rotation_method_help], queue=False)
         app.load(cleanup_crop_sessions_on_page_load, outputs=[page_cleanup_marker], queue=False)
     return app
 

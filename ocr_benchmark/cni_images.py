@@ -24,6 +24,8 @@ from typing import Any
 # - ImageOps : opérations utilitaires sur les images (conversion, niveaux de gris...).
 from PIL import Image, ImageDraw, ImageOps
 
+from .cni_document_cropper import crop_cni_document
+
 # NOTE : 'fitz' (PyMuPDF) est importé en "import tardif" DANS la fonction
 # render_single_page_pdf et non ici au niveau du module. Cela permet à
 # l'application de démarrer même si PyMuPDF n'est pas installé, tant qu'on
@@ -96,9 +98,16 @@ def render_single_page_pdf(pdf_path: Path, output_path: Path, dpi: int = 300) ->
 # CE QU'ON FAIT AVEC : avant d'envoyer l'image au modèle OCR, on veut qu'il
 # voie uniquement la CNI, pas tout l'espace vide autour.
 
-def crop_cni_from_a4(source_path: Path, output_path: Path) -> dict[str, Any]:
+def crop_cni_from_a4(source_path: Path, output_path: Path, *, debug_path: Path | None = None) -> dict[str, Any]:
     """Tente de recadrer une CNI posée sur une feuille A4 blanche."""
 
+    # Le nom historique est conservé, mais l'algorithme ne suppose désormais
+    # aucun format de page : A4, photo téléphone et scan libre sont acceptés.
+    # En cas de doute, il retourne le chemin source sans rotation ni crop.
+    return crop_cni_document(source_path, output_path, debug_path=debug_path)
+
+    # Ancienne implémentation conservée temporairement sous le return ci-dessus
+    # pour minimiser ce changement dans un fichier historiquement très commenté.
     # On ouvre l'image source dans un bloc 'with' pour fermeture automatique.
     with Image.open(source_path) as source:
         # exif_transpose : corrige l'orientation si l'image a été prise avec un

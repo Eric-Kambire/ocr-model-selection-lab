@@ -17,6 +17,7 @@ from typing import Any, Iterator
 # Le runner orchestre les modules spécialisés ; il ne contient ni logique de
 # scan de dossiers, ni règle de crop, ni définition du contrat JSON.
 from .cni_images import build_vertical_cni_composite, crop_cni_from_a4
+from .cni_comparison import compare_cni_extraction
 from .cni_ingestion import write_cni_json
 from .cni_preprocessing import prepare_cni_source, preprocess_cni_image
 from .cni_schema import (
@@ -168,7 +169,12 @@ def prepare_cni_client_images(
     *,
     preprocessing: dict[str, bool] | None = None,
 ) -> dict[str, Any]:
-    """Normalise, prétraite si demandé, recadre puis compose la paire CNI."""
+    """Normalise, détecte la carte puis prétraite seulement un crop fiable.
+
+    Le point important est l'ordre : la détection travaille sur la source
+    normalisée. Si elle n'est pas certaine, le modèle reçoit cette source entière
+    et non une page tournée, assombrie ou coupée par erreur.
+    """
     # Tout est écrit dans le run, jamais à côté des PDF utilisateur : les
     # sources restent intactes et chaque benchmark peut être rejoué/analyse.
     recto_page = artefacts_dir / "recto_page.png"
@@ -178,14 +184,16 @@ def prepare_cni_client_images(
     verso_source = Path(str(client.get("verso_source") or client["verso_pdf"]))
     recto_render = prepare_cni_source(recto_source, recto_page, dpi)
     verso_render = prepare_cni_source(verso_source, verso_page, dpi)
-    recto_preprocessed = preprocess_cni_image(recto_page, artefacts_dir / "recto_preprocessed.png", **options)
-    verso_preprocessed = preprocess_cni_image(verso_page, artefacts_dir / "verso_preprocessed.png", **options)
-    recto_crop = crop_cni_from_a4(Path(recto_preprocessed["image_path"]), artefacts_dir / "crop_recto.png")
-    verso_crop = crop_cni_from_a4(Path(verso_preprocessed["image_path"]), artefacts_dir / "crop_verso.png")
+    recto_crop = crop_cni_from_a4(recto_page, artefacts_dir / "crop_recto.png", debug_path=artefacts_dir / "crop_recto_debug.png")
+    verso_crop = crop_cni_from_a4(verso_page, artefacts_dir / "crop_verso.png", debug_path=artefacts_dir / "crop_verso_debug.png")
+    recto_preprocessed = _preprocess_only_reliable_crop(recto_crop, artefacts_dir / "recto_preprocessed.png", options)
+    verso_preprocessed = _preprocess_only_reliable_crop(verso_crop, artefacts_dir / "verso_preprocessed.png", options)
+    recto_model_image = recto_preprocessed["image_path"]
+    verso_model_image = verso_preprocessed["image_path"]
     # Même en mode séparé, conserver le composite facilite une inspection
     # humaine ultérieure et un éventuel nouvel essai en mode combiné.
     combined_path = build_vertical_cni_composite(
-        Path(recto_crop["image_path"]), Path(verso_crop["image_path"]), artefacts_dir / "recto_verso_composite.png"
+        Path(recto_model_image), Path(verso_model_image), artefacts_dir / "recto_verso_composite.png"
     )
     prepared = {
         "recto_source": str(recto_source),
@@ -197,6 +205,8 @@ def prepare_cni_client_images(
         "verso_preprocessed": verso_preprocessed,
         "recto_crop": recto_crop,
         "verso_crop": verso_crop,
+        "recto_model_image": recto_model_image,
+        "verso_model_image": verso_model_image,
         "combined_image": combined_path,
     }
     write_cni_json(artefacts_dir / "preparation.json", prepared)
@@ -205,6 +215,21 @@ def prepare_cni_client_images(
         client["folder_client_id"], recto_crop["crop_status"], verso_crop["crop_status"],
     )
     return prepared
+
+
+def _preprocess_only_reliable_crop(
+    crop: dict[str, Any],
+    output_path: Path,
+    options: dict[str, bool],
+) -> dict[str, Any]:
+    """Préserve strictement la source si le crop automatique est incertain."""
+    if crop.get("source_sent_unchanged"):
+        return {
+            "status": "skipped_crop_uncertain_original_preserved",
+            "image_path": crop["image_path"],
+            "operations": [],
+        }
+    return preprocess_cni_image(Path(crop["image_path"]), output_path, **options)
 
 
 def _extract_one_cni_client(
@@ -242,7 +267,7 @@ def _extract_one_cni_client(
         # sait immédiatement quelle face a posé problème.
         recto_inference = _perform_cni_call(
             model,
-            Path(prepared["recto_crop"]["image_path"]),
+            Path(prepared["recto_model_image"]),
             build_cni_prompt("recto", fields, instructions=prompt_instructions),
             timeout_seconds,
             artefacts_dir,
@@ -251,7 +276,7 @@ def _extract_one_cni_client(
         )
         verso_inference = _perform_cni_call(
             model,
-            Path(prepared["verso_crop"]["image_path"]),
+            Path(prepared["verso_model_image"]),
             build_cni_prompt("verso", fields, instructions=prompt_instructions),
             timeout_seconds,
             artefacts_dir,
@@ -268,6 +293,8 @@ def _extract_one_cni_client(
     write_cni_json(artefacts_dir / "recto.extraction.json", recto_payload)
     write_cni_json(artefacts_dir / "verso.extraction.json", verso_payload)
     global_payload = build_cni_global_json(client, recto, verso)
+    label_payload = _read_json_mapping(client.get("label_path"))
+    comparison = compare_cni_extraction(label_payload, global_payload)
     global_payload.update(
         {
             "run_id": run_id,
@@ -275,6 +302,7 @@ def _extract_one_cni_client(
             "strategy": strategy,
             "recto_status": recto_payload["status"],
             "verso_status": verso_payload["status"],
+            "comparison": comparison,
         }
     )
     write_cni_json(artefacts_dir / "global.extraction.json", global_payload)
@@ -290,8 +318,9 @@ def _extract_one_cni_client(
         "strategy": strategy,
         "label_status": client.get("label_status"),
         "label_path": client.get("label_path"),
-        "accuracy": None,
-        "score_status": "not_scored_label_mapping_pending",
+        "accuracy": comparison["accuracy"],
+        "score_status": comparison["score_status"],
+        "field_comparison": comparison,
         "recto_status": recto_payload["status"],
         "verso_status": verso_payload["status"],
         "cin_recto": global_payload["cin_recto"],
@@ -309,9 +338,14 @@ def _extract_one_cni_client(
         "recto_raw_output_path": str(artefacts_dir / "raw_recto_output.txt"),
         "verso_raw_output_path": str(artefacts_dir / "raw_verso_output.txt"),
         "combined_raw_output_path": str(artefacts_dir / "raw_combined_output.txt"),
-        "recto_image_path": prepared["recto_crop"]["image_path"],
-        "verso_image_path": prepared["verso_crop"]["image_path"],
+        # Ces chemins sont ceux effectivement remis au modèle. En fallback ils
+        # pointent vers recto_page/verso_page, donc la source complète intacte.
+        "recto_image_path": prepared["recto_model_image"],
+        "verso_image_path": prepared["verso_model_image"],
         "combined_image_path": prepared["combined_image"],
+        "recto_prompt_path": str(artefacts_dir / "prompt_recto.txt"),
+        "verso_prompt_path": str(artefacts_dir / "prompt_verso.txt"),
+        "combined_prompt_path": str(artefacts_dir / "prompt_combined.txt"),
         "error": _join_errors(recto_payload.get("error"), verso_payload.get("error")),
     }
 
@@ -394,7 +428,7 @@ def _overall_status(recto_status: str, verso_status: str, recto_parse_error: str
 
 def _processing_event(run_id: str, completed: int, total: int, model_name: str, client: dict[str, Any], side: str, prepared: dict[str, Any], started_at: float) -> dict[str, Any]:
     """Construit l'événement léger consommé par la vue live Gradio."""
-    image = prepared["combined_image"] if side == "recto_verso" else prepared[f"{side}_crop"]["image_path"]
+    image = prepared["combined_image"] if side == "recto_verso" else prepared[f"{side}_model_image"]
     return {
         "stage": "processing",
         "run_id": run_id,
@@ -441,6 +475,17 @@ def _failed_client_result(run_id: str, model_name: str, client: dict[str, Any], 
         "tokens_per_second": None,
         "error": error,
     }
+
+
+def _read_json_mapping(path_value: Any) -> dict[str, Any] | None:
+    """Lit un label local sans rendre l'extraction dépendante de son format."""
+    if not path_value:
+        return None
+    try:
+        value = json.loads(Path(str(path_value)).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    return value if isinstance(value, dict) else None
 
 
 def _write_results_index(run_dir: Path, results: list[dict[str, Any]]) -> None:

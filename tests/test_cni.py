@@ -66,9 +66,42 @@ def test_crop_detects_card_area_without_using_a4_as_the_result(tmp_path: Path):
     page.save(source)
 
     result = crop_cni_from_a4(source, target)
-    assert result["crop_status"] == "crop_detected"
+    assert result["crop_status"] == "crop_detected_perspective"
     with Image.open(target) as cropped:
         assert 1.2 <= cropped.width / cropped.height <= 2.05
+
+
+def test_crop_discards_black_scanner_bands_without_assuming_an_a4_page(tmp_path: Path):
+    """Une bordure noire de scanner ne doit pas devenir le rectangle de crop."""
+    page = Image.new("RGB", (1300, 900), "black")
+    draw = ImageDraw.Draw(page)
+    draw.rectangle((80, 55, 1220, 845), fill="white")
+    draw.rectangle((315, 260, 995, 690), fill=(160, 200, 180))
+    source, target = tmp_path / "scanner.png", tmp_path / "crop.png"
+    page.save(source)
+
+    result = crop_cni_from_a4(source, target)
+
+    assert result["crop_status"] == "crop_detected_perspective"
+    assert result["source_sent_unchanged"] is False
+    assert result["edge_trim"][0] > 0
+    with Image.open(target) as cropped:
+        assert 1.2 <= cropped.width / cropped.height <= 2.05
+
+
+def test_uncertain_crop_sends_the_original_page_without_creating_a_rotated_copy(tmp_path: Path):
+    """Le repli n'est ni un A4 supposé ni une image tournée/coupée."""
+    page = Image.new("RGB", (901, 617), "white")
+    ImageDraw.Draw(page).ellipse((10, 10, 24, 24), fill="black")
+    source, target = tmp_path / "phone_scan.png", tmp_path / "crop.png"
+    page.save(source)
+
+    result = crop_cni_from_a4(source, target)
+
+    assert result["crop_status"].startswith("crop_uncertain")
+    assert result["source_sent_unchanged"] is True
+    assert Path(result["image_path"]) == source
+    assert not target.exists()
 
 
 def test_scan_accepts_jpeg_and_png_sources_with_the_same_suffix_contract(tmp_path: Path):
@@ -106,7 +139,21 @@ def test_cni_prompt_covers_old_new_layout_and_operator_instructions():
     assert "old or new layout" in prompt
     assert "Prioritize a sharp reading" in prompt
     assert '"cin": null' in prompt
-    assert "first personal name is prenom" in prompt
+    assert "first line = prenom" in prompt
+
+
+def test_cni_prompt_prevents_parent_name_and_identifier_confusion():
+    """Les règles de localisation évitent les erreurs CNI les plus coûteuses."""
+    recto_prompt = build_cni_prompt("recto")
+    verso_prompt = build_cni_prompt("verso")
+
+    assert "holder-name lines near the portrait and before 'Né le'" in recto_prompt
+    assert "Never take a CAN" in recto_prompt
+    assert "plain 'N°'" in recto_prompt
+    assert "old fronts it is often below/right of the photo" in recto_prompt
+    assert "names after 'Fils de'/'Et de' are parents" in verso_prompt
+    assert "top-left/top repeated number" in verso_prompt
+    assert "multi-line address" in verso_prompt
 
 
 def test_zip_import_rejects_path_traversal(tmp_path: Path):
@@ -223,3 +270,19 @@ def test_cni_strategies_send_expected_images_and_keep_pair_progress(tmp_path: Pa
     assert combined.model.calls[0][0].endswith("recto_verso_composite.png")
     assert combined_events[-1]["completed"] == 1
     assert combined_events[-1]["total"] == 1
+
+
+def test_runner_sends_the_full_normalized_source_when_crop_is_uncertain(tmp_path: Path):
+    """La garantie importante : aucun faux crop ne part vers le modèle."""
+    client = tmp_path / "clients" / "folder-client"
+    client.mkdir(parents=True)
+    Image.new("RGB", (920, 610), "white").save(client / "source_CIN_Recto.png")
+    Image.new("RGB", (920, 610), "white").save(client / "source_CIN_Verso.png")
+    records = scan_cni_clients(tmp_path / "clients")
+    registry = _RecordingRegistry()
+
+    list(iter_cni_benchmark(registry, ["fake:vision"], records, tmp_path / "runs", strategy="separate_calls"))
+
+    assert len(registry.model.calls) == 2
+    assert registry.model.calls[0][0].endswith("recto_page.png")
+    assert registry.model.calls[1][0].endswith("verso_page.png")

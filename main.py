@@ -28,6 +28,7 @@ from ocr_benchmark.application.cni_service import (
     iter_cni_extraction,
     scan_cni_documents,
 )
+from ocr_benchmark.cni_comparison import compare_cni_extraction, field_state_map
 from ocr_benchmark.application.run_service import list_run_ids, load_run_results, purge_expired_runs
 from ocr_benchmark.cni import (
     DEFAULT_RECTO_SUFFIX,
@@ -136,12 +137,10 @@ puis ajouté atomiquement à `dataset/dataset.json`.
 # Ces consignes restent courtes et complètent le contrat JSON centralisé. Elles
 # sont modifiables dans l'onglet Paramètres CNI avant chaque lancement.
 DEFAULT_CNI_SYSTEM_PROMPT = (
-    "Extract Moroccan CNI fields exactly. Return only one valid JSON object matching "
-    "the requested schema. Never guess; use null if unreadable. Ignore QR, barcode and MRZ."
+    "Return only the exact requested CNI JSON schema. Never guess: use null for absent or ambiguous values."
 )
 DEFAULT_CNI_USER_INSTRUCTIONS = (
-    "Read Latin values only. 'Né le' = birth date; nearby 'à' = birth city; "
-    "'Valable jusqu’au' = expiry. Do not confuse holder, parents, CAN or civil-status number."
+    "Apply the CNI reading rules above. Do not alter the JSON schema."
 )
 
 APP_CSS = """
@@ -1052,7 +1051,8 @@ def _cni_result_table(results: list[dict[str, Any]]) -> pd.DataFrame:
                 "CIN verso": item.get("cin_verso") or "—",
                 "CIN cohérent": _cni_boolean(item.get("cin_coherent")),
                 "Champs à revoir": ", ".join(
-                    key for key, state in _cni_field_comparisons(item).items() if state == "different"
+                    key for key, state in _cni_field_comparisons(item).items()
+                    if state in {"different", "extracted_missing", "extraction_unavailable"}
                 ) or "—",
                 "Latence (s)": round(float(item.get("latency") or 0), 3),
             }
@@ -1083,47 +1083,70 @@ def _read_json_if_available(path_value: Any) -> Any:
 
 
 def _cni_field_comparisons(result: dict[str, Any]) -> dict[str, str]:
-    """Compare les champs canoniques lorsque le label est disponible.
-
-    Le label reste optionnel : l'absence de label produit ``label_missing`` et
-    ne transforme jamais une extraction techniquement réussie en échec.
-    """
+    """Retourne les états persistés, ou les recalcule pour un ancien run."""
+    stored = result.get("field_comparison")
+    if isinstance(stored, dict):
+        return field_state_map(stored)
     label = _read_json_if_available(result.get("label_path"))
     extracted = _read_json_if_available(result.get("global_json_path"))
-    fields = ("cin", "prenom", "nom", "date_naissance", "ville_naissance", "date_validite", "adresse")
-    if not isinstance(label, dict) or "status" in label:
-        return {field: "label_missing" for field in fields}
-    if not isinstance(extracted, dict) or "status" in extracted:
-        return {field: "missing_model" for field in fields}
+    comparison = compare_cni_extraction(
+        label if isinstance(label, dict) else None,
+        extracted if isinstance(extracted, dict) else None,
+    )
+    return field_state_map(comparison)
 
-    def label_value(field: str) -> Any:
-        if field in label:
-            return label.get(field)
-        for side in ("recto", "verso"):
-            nested = label.get(side)
-            if isinstance(nested, dict) and field in nested:
-                return nested.get(field)
-        return None
 
-    def extracted_value(field: str) -> Any:
-        aliases = {
-            "cin": "cin_fusionne", "date_validite": "date_validite_fusionnee",
-        }
-        return extracted.get(aliases.get(field, field))
+def _cni_comparison_frame(result: dict[str, Any]) -> pd.DataFrame:
+    """Produit la vue opérateur Attendu / Extrait / Confiance / État."""
+    stored = result.get("field_comparison")
+    if not isinstance(stored, dict):
+        label = _read_json_if_available(result.get("label_path"))
+        extracted = _read_json_if_available(result.get("global_json_path"))
+        stored = compare_cni_extraction(
+            label if isinstance(label, dict) else None,
+            extracted if isinstance(extracted, dict) else None,
+        )
+    labels = {
+        "correct": "Correct",
+        "different": "Différent",
+        "extracted_missing": "Valeur extraite absente",
+        "extraction_unavailable": "Extraction indisponible",
+        "reference_missing": "Référence absente",
+    }
+    rows = stored.get("rows", [])
+    return pd.DataFrame(
+        [
+            {
+                "Champ": row.get("field"),
+                "Attendu": row.get("expected") if row.get("expected") not in (None, "") else "—",
+                "Extrait": row.get("actual") if row.get("actual") not in (None, "") else "—",
+                "Confiance référence": row.get("reference_confidence") if row.get("reference_confidence") is not None else "—",
+                "État": labels.get(str(row.get("state")), str(row.get("state") or "—")),
+            }
+            for row in rows
+            if isinstance(row, dict)
+        ]
+    )
 
-    def normalized(value: Any) -> str:
-        return re.sub(r"[^a-z0-9]", "", str(value or "").casefold())
 
-    comparison: dict[str, str] = {}
-    for field in fields:
-        expected, actual = label_value(field), extracted_value(field)
-        if expected in (None, ""):
-            comparison[field] = "label_missing"
-        elif actual in (None, ""):
-            comparison[field] = "missing_model"
-        else:
-            comparison[field] = "correct" if normalized(expected) == normalized(actual) else "different"
-    return comparison
+def _read_prompt_text(result: dict[str, Any]) -> str:
+    """Lit le prompt persisté du run plutôt que le prompt actuellement affiché."""
+    paths = [
+        result.get("recto_prompt_path"),
+        result.get("verso_prompt_path"),
+        result.get("combined_prompt_path"),
+    ]
+    texts: list[str] = []
+    for value in paths:
+        if not value:
+            continue
+        path = Path(str(value))
+        if path.is_file():
+            try:
+                texts.append(f"--- {path.name} ---\n" + path.read_text(encoding="utf-8"))
+            except OSError as exc:
+                texts.append(f"--- {path.name} ---\nLecture impossible : {type(exc).__name__}: {exc}")
+    return "\n\n".join(texts) or "Prompt non disponible pour ce résultat (ancien run ou appel interrompu avant écriture)."
 
 
 def _read_text_if_available(path_value: Any) -> str:
@@ -1792,7 +1815,14 @@ def build_ui() -> gr.Blocks:
                             label="Champ à contrôler",
                         )
                         cni_field_state_filter = gr.Dropdown(
-                            [("Tous les états", ""), ("Correct", "correct"), ("Différent", "different"), ("Valeur modèle absente", "missing_model"), ("Label absent", "label_missing")],
+                            [
+                                ("Tous les états", ""),
+                                ("Correct", "correct"),
+                                ("Différent", "different"),
+                                ("Valeur extraite absente", "extracted_missing"),
+                                ("Extraction indisponible", "extraction_unavailable"),
+                                ("Référence absente", "reference_missing"),
+                            ],
                             value="",
                             label="État du champ",
                         )
@@ -1822,6 +1852,11 @@ def build_ui() -> gr.Blocks:
                             cni_result_identity = gr.Markdown("Le client et le modèle apparaîtront ici.", elem_id="cni-result-identity")
                         with gr.Column(scale=2):
                             cni_detail_metrics = gr.Markdown("### Mesures\n\nAucun résultat sélectionné.")
+                            cni_field_comparison_table = gr.Dataframe(
+                                headers=["Champ", "Attendu", "Extrait", "Confiance référence", "État"],
+                                label="Comparaison champ par champ",
+                                interactive=False,
+                            )
                             with gr.Row():
                                 with gr.Column():
                                     cni_label_json = gr.JSON(label="Label attendu (JSON converti)")
@@ -1845,6 +1880,13 @@ def build_ui() -> gr.Blocks:
                                                 label="Verso : retour brut du modèle (conservé même en erreur)",
                                                 language=None,
                                                 lines=8,
+                                                interactive=False,
+                                            )
+                                        with gr.Tab("Prompt réellement envoyé", render_children=True):
+                                            cni_prompt_sent = gr.Code(
+                                                label="Prompt sauvegardé avec ce résultat",
+                                                language=None,
+                                                lines=14,
                                                 interactive=False,
                                             )
                 with gr.Column(elem_id="cni-step-settings"):
@@ -1874,8 +1916,8 @@ def build_ui() -> gr.Blocks:
                             ("Réduire le bruit", "denoise"),
                         ],
                         value=[],
-                        label="Prétraitement image (optionnel)",
-                        info="OpenCV s’applique après normalisation PDF/JPEG/PNG et avant crop. Les opérations sont gardées dans preparation.json.",
+                        label="Prétraitement du crop fiable (optionnel)",
+                        info="Le détecteur robuste retire d'abord les bordures noires de scanner, cherche la CNI et corrige sa perspective. Ces options ne s'appliquent qu'après un crop fiable. En cas de doute, la page/photo entière originale est envoyée au modèle.",
                     )
                     with gr.Row():
                         cni_recto_suffix = gr.Textbox(
@@ -2439,6 +2481,10 @@ def build_ui() -> gr.Blocks:
             output_tokens = result.get("output_tokens")
             token_speed = result.get("tokens_per_second")
             token_speed_text = f"{float(token_speed):.2f}" if token_speed is not None else "N/A"
+            comparison = result.get("field_comparison") if isinstance(result.get("field_comparison"), dict) else {}
+            correct = comparison.get("correct_fields", "—")
+            comparable = comparison.get("comparable_fields", "—")
+            score_status = result.get("score_status") or "non calculé"
             return (
                 "### Mesures principales\n\n"
                 f"**Temps total :** {float(result.get('latency') or 0):.3f} s · "
@@ -2448,7 +2494,9 @@ def build_ui() -> gr.Blocks:
                 f"**Tokens sortie :** {output_tokens if output_tokens is not None else 'N/A'} · "
                 f"**Tokens/s :** {token_speed_text}\n\n"
                 f"**CIN recto/verso cohérent :** {_cni_boolean(result.get('cin_coherent'))} · "
-                f"**Label :** `{result.get('label_status') or 'absent'}`"
+                f"**Label :** `{result.get('label_status') or 'absent'}`\n\n"
+                f"**Champs corrects :** {correct} / {comparable} · "
+                f"**État du score :** `{score_status}`"
             )
 
         def show_cni_detail(index, results, offset=0):
@@ -2461,8 +2509,10 @@ def build_ui() -> gr.Blocks:
                     "**Aucune paire testée pour le moment.**", None, None,
                     "Lancez un benchmark pour alimenter cet onglet.",
                     "### Mesures\n\nAucun résultat sélectionné.",
+                    pd.DataFrame(),
                     empty_json, empty_json, empty_json, empty_json,
                     "Aucune sortie brute disponible.", "Aucune sortie brute disponible.",
+                    "Aucun prompt disponible.",
                 )
             position = max(0, min(int(index or 0) + offset, len(results) - 1))
             result = results[position]
@@ -2481,12 +2531,14 @@ def build_ui() -> gr.Blocks:
                 result.get("verso_image_path"),
                 identity,
                 cni_detail_metric_summary(result),
+                _cni_comparison_frame(result),
                 _read_json_if_available(result.get("label_path")),
                 _read_json_if_available(result.get("recto_json_path")),
                 _read_json_if_available(result.get("verso_json_path")),
                 _read_json_if_available(result.get("global_json_path")),
                 _read_text_if_available(result.get("recto_raw_output_path") or result.get("combined_raw_output_path")),
                 _read_text_if_available(result.get("verso_raw_output_path") or result.get("combined_raw_output_path")),
+                _read_prompt_text(result),
             )
 
         def select_cni_detail(selection, results):
@@ -2867,12 +2919,14 @@ def build_ui() -> gr.Blocks:
             cni_verso_preview,
             cni_result_identity,
             cni_detail_metrics,
+            cni_field_comparison_table,
             cni_label_json,
             cni_recto_json,
             cni_verso_json,
             cni_global_json,
             cni_recto_raw,
             cni_verso_raw,
+            cni_prompt_sent,
         ]
         cni_previous_result.click(
             show_previous_cni_detail,
