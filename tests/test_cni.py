@@ -80,9 +80,22 @@ def test_crop_detects_card_area_without_using_a4_as_the_result(tmp_path: Path):
     page.save(source)
 
     result = crop_cni_from_a4(source, target)
-    assert result["crop_status"] == "crop_detected"
+    assert result["crop_status"] == "crop_detected_perspective"
     with Image.open(target) as cropped:
         assert 1.2 <= cropped.width / cropped.height <= 2.05
+
+
+def test_uncertain_crop_keeps_the_full_normalized_source(tmp_path: Path):
+    """Une page sans CNI n'est jamais tournée ni recadrée par un faux positif."""
+    source, target = tmp_path / "phone_scan.png", tmp_path / "crop.png"
+    Image.new("RGB", (901, 617), "white").save(source)
+
+    result = crop_cni_from_a4(source, target)
+
+    assert result["crop_status"].startswith("crop_uncertain")
+    assert result["source_sent_unchanged"] is True
+    assert Path(result["image_path"]) == source
+    assert not target.exists()
 
 
 def test_side_json_parser_and_global_preserve_both_cin_values():

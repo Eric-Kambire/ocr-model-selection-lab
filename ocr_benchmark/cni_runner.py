@@ -162,7 +162,7 @@ def iter_cni_benchmark(
 
 
 def prepare_cni_client_images(client: dict[str, Any], artefacts_dir: Path, dpi: int, *, preprocessing: dict[str, bool] | None = None) -> dict[str, Any]:
-    """Rend, recadre et compose la paire d'entrée avant l'inférence."""
+    """Rend, détecte la CNI, puis prétraite uniquement un crop fiable."""
     # Tout est écrit dans le run, jamais à côté des PDF utilisateur : les
     # sources restent intactes et chaque benchmark peut être rejoué/analyse.
     recto_page = artefacts_dir / "recto_page.png"
@@ -170,14 +170,15 @@ def prepare_cni_client_images(client: dict[str, Any], artefacts_dir: Path, dpi: 
     options = preprocessing or {}
     recto_render = prepare_cni_source(Path(str(client.get("recto_source") or client["recto_pdf"])), recto_page, dpi)
     verso_render = prepare_cni_source(Path(str(client.get("verso_source") or client["verso_pdf"])), verso_page, dpi)
-    recto_processed = preprocess_cni_image(recto_page, artefacts_dir / "recto_preprocessed.png", options)
-    verso_processed = preprocess_cni_image(verso_page, artefacts_dir / "verso_preprocessed.png", options)
-    recto_crop = crop_cni_from_a4(Path(recto_processed["image_path"]), artefacts_dir / "crop_recto.png")
-    verso_crop = crop_cni_from_a4(Path(verso_processed["image_path"]), artefacts_dir / "crop_verso.png")
+    recto_crop = crop_cni_from_a4(recto_page, artefacts_dir / "crop_recto.png", debug_path=artefacts_dir / "crop_recto_debug.png")
+    verso_crop = crop_cni_from_a4(verso_page, artefacts_dir / "crop_verso.png", debug_path=artefacts_dir / "crop_verso_debug.png")
+    recto_processed = _preprocess_only_reliable_crop(recto_crop, artefacts_dir / "recto_preprocessed.png", options)
+    verso_processed = _preprocess_only_reliable_crop(verso_crop, artefacts_dir / "verso_preprocessed.png", options)
+    recto_model_image, verso_model_image = recto_processed["image_path"], verso_processed["image_path"]
     # Même en mode séparé, conserver le composite facilite une inspection
     # humaine ultérieure et un éventuel nouvel essai en mode combiné.
     combined_path = build_vertical_cni_composite(
-        Path(recto_crop["image_path"]), Path(verso_crop["image_path"]), artefacts_dir / "recto_verso_composite.png"
+        Path(recto_model_image), Path(verso_model_image), artefacts_dir / "recto_verso_composite.png"
     )
     prepared = {
         "recto_page": recto_render,
@@ -187,6 +188,8 @@ def prepare_cni_client_images(client: dict[str, Any], artefacts_dir: Path, dpi: 
         "verso_preprocessed": verso_processed,
         "recto_crop": recto_crop,
         "verso_crop": verso_crop,
+        "recto_model_image": recto_model_image,
+        "verso_model_image": verso_model_image,
         "combined_image": combined_path,
     }
     write_cni_json(artefacts_dir / "preparation.json", prepared)
@@ -195,6 +198,13 @@ def prepare_cni_client_images(client: dict[str, Any], artefacts_dir: Path, dpi: 
         client["folder_client_id"], recto_crop["crop_status"], verso_crop["crop_status"],
     )
     return prepared
+
+
+def _preprocess_only_reliable_crop(crop: dict[str, Any], output_path: Path, options: dict[str, bool]) -> dict[str, Any]:
+    """Préserve la source entière lorsqu'aucune carte fiable n'a été trouvée."""
+    if crop.get("source_sent_unchanged"):
+        return {"status": "skipped_crop_uncertain_original_preserved", "image_path": crop["image_path"], "operations": []}
+    return preprocess_cni_image(Path(crop["image_path"]), output_path, options)
 
 
 def _extract_one_cni_client(
@@ -232,7 +242,7 @@ def _extract_one_cni_client(
         # sait immédiatement quelle face a posé problème.
         recto_inference = _perform_cni_call(
             model,
-            Path(prepared["recto_crop"]["image_path"]),
+            Path(prepared["recto_model_image"]),
             build_cni_prompt("recto", fields, instructions=prompt_instructions),
             timeout_seconds,
             artefacts_dir,
@@ -241,7 +251,7 @@ def _extract_one_cni_client(
         )
         verso_inference = _perform_cni_call(
             model,
-            Path(prepared["verso_crop"]["image_path"]),
+            Path(prepared["verso_model_image"]),
             build_cni_prompt("verso", fields, instructions=prompt_instructions),
             timeout_seconds,
             artefacts_dir,
@@ -296,8 +306,8 @@ def _extract_one_cni_client(
         "recto_json_path": str(artefacts_dir / "recto.extraction.json"),
         "verso_json_path": str(artefacts_dir / "verso.extraction.json"),
         "global_json_path": str(artefacts_dir / "global.extraction.json"),
-        "recto_image_path": prepared["recto_crop"]["image_path"],
-        "verso_image_path": prepared["verso_crop"]["image_path"],
+        "recto_image_path": prepared["recto_model_image"],
+        "verso_image_path": prepared["verso_model_image"],
         "combined_image_path": prepared["combined_image"],
         "error": _join_errors(recto_payload.get("error"), verso_payload.get("error")),
     }
@@ -365,7 +375,7 @@ def _overall_status(recto_status: str, verso_status: str, recto_parse_error: str
 
 def _processing_event(run_id: str, completed: int, total: int, model_name: str, client: dict[str, Any], side: str, prepared: dict[str, Any], started_at: float) -> dict[str, Any]:
     """Construit l'événement léger consommé par la vue live Gradio."""
-    image = prepared["combined_image"] if side == "recto_verso" else prepared[f"{side}_crop"]["image_path"]
+    image = prepared["combined_image"] if side == "recto_verso" else prepared[f"{side}_model_image"]
     return {
         "stage": "processing",
         "run_id": run_id,
