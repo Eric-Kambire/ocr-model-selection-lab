@@ -1607,16 +1607,16 @@ def build_ui() -> gr.Blocks:
                                     cni_rotation_method = gr.Radio(
                                 [("Aucune rotation automatique", "none"), ("Pillow · recherche par ratio", "pillow"), ("OpenCV · rectangle orienté", "opencv")],
                                 value=cni_settings["rotation_method"], label="Rotation automatique",
-                                info="Une seule méthode peut être activée. Pillow cherche l'angle, OpenCV utilise minAreaRect.",
+                                info="Ajustement supplémentaire appliqué uniquement après un crop CNI fiable. Si aucune carte n'est certaine, la source entière reste inchangée.",
                             )
                                     cni_perspective_correction = gr.Checkbox(
                                 value=cni_settings["perspective_correction"], label="Corriger la perspective (OpenCV)",
-                                info="Redresse la carte seulement si un quadrilatère crédible est détecté.",
+                                info="Le détecteur robuste redresse déjà une carte retenue. Cette option ajoute une seconde correction seulement après un crop fiable.",
                             )
                                 cni_preprocessing = gr.CheckboxGroup(
                             [("Améliorer le contraste", "contrast"), ("Réduire le bruit", "denoise")],
                             value=cni_settings["preprocessing"], label="Améliorations complémentaires",
-                            info="Appliquées après rotation puis avant crop. Chaque opération est enregistrée dans preparation.json.",
+                            info="Appliquées après la détection/correction robuste. En cas de doute de crop, aucune option ne modifie la page/photo envoyée au modèle.",
                         )
                             with gr.Tab("Prompt et champs"):
                                 cni_system_prompt = gr.Textbox(
