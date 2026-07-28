@@ -16,7 +16,12 @@ from typing import Any, Iterator
 
 # Le runner orchestre les modules spécialisés ; il ne contient ni logique de
 # scan de dossiers, ni règle de crop, ni définition du contrat JSON.
-from .cni_crop_service import SMART_CROP_V4, crop_cni_for_benchmark
+from .cni_crop_service import (
+    DEFAULT_SMART_CROP_MARGIN,
+    DEFAULT_SMART_CROP_MIN_SCORE,
+    SMART_CROP_V4,
+    crop_cni_for_benchmark,
+)
 from .cni_images import build_vertical_cni_composite
 from .cni_comparison import compare_cni_extraction
 from .cni_ingestion import write_cni_json
@@ -185,8 +190,28 @@ def prepare_cni_client_images(
     verso_page = artefacts_dir / "verso_page.png"
     options: dict[str, Any] = dict(preprocessing or {})
     crop_method = str(options.get("crop_method") or SMART_CROP_V4)
-    minimum_score = float(options.get("smart_crop_min_score") or 0.55)
-    margin_ratio = float(options.get("smart_crop_margin") or 0.012)
+    minimum_score = float(
+        options.get("smart_crop_min_score") or DEFAULT_SMART_CROP_MIN_SCORE
+    )
+    margin_ratio = float(
+        options.get("smart_crop_margin") or DEFAULT_SMART_CROP_MARGIN
+    )
+    LOGGER.info(
+        "CNI preprocessing options | client=%s | dpi=%d | crop_method=%s | "
+        "smart_crop_min_score=%.3f | smart_crop_margin=%.3f | "
+        "rotation_pillow=%s | rotation_opencv=%s | perspective=%s | "
+        "contrast=%s | denoise=%s",
+        client["folder_client_id"],
+        int(dpi),
+        crop_method,
+        minimum_score,
+        margin_ratio,
+        bool(options.get("rotation_pillow")),
+        bool(options.get("rotation_opencv")),
+        bool(options.get("perspective")),
+        bool(options.get("contrast")),
+        bool(options.get("denoise")),
+    )
     recto_source = Path(str(client.get("recto_source") or client["recto_pdf"]))
     verso_source = Path(str(client.get("verso_source") or client["verso_pdf"]))
     recto_render = prepare_cni_source(recto_source, recto_page, dpi)

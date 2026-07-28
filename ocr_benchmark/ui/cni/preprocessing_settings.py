@@ -33,10 +33,18 @@ def build_preprocessing_settings(settings: dict[str, Any]) -> PreprocessingSetti
             smart_crop_min_score = gr.Slider(
                 0.30, 0.90, value=settings["smart_crop_min_score"], step=0.01,
                 label="Score minimum V4",
+                info=(
+                    "Défaut recommandé : 0,55. Plus la valeur est haute, plus "
+                    "le détecteur préfère conserver l'image entière plutôt qu'un crop incertain."
+                ),
             )
             smart_crop_margin = gr.Slider(
                 0.0, 0.05, value=settings["smart_crop_margin"], step=0.002,
                 label="Marge autour de la carte",
+                info=(
+                    "Défaut recommandé : 0,012, soit 1,2 % autour du quadrilatère. "
+                    "Cette marge évite de couper un bord ou un caractère proche du contour."
+                ),
             )
         gr.Markdown(
             "La détection peut utiliser une copie réduite, mais le redressement "
