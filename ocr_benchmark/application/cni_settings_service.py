@@ -30,6 +30,7 @@ def default_cni_settings(*, cpu_threads: int, system_prompt: str, prompt_instruc
         "rotation_method": "none",
         "perspective_correction": False,
         "preprocessing": [],
+        "output_format_mode": "schema",
         "system_prompt": system_prompt,
         "prompt_instructions": prompt_instructions,
     }
@@ -73,6 +74,7 @@ def cni_settings_from_ui(
     rotation_method: Any,
     perspective_correction: Any,
     preprocessing: Any,
+    output_format_mode: Any,
     system_prompt: Any,
     prompt_instructions: Any,
 ) -> dict[str, Any]:
@@ -94,6 +96,7 @@ def cni_settings_from_ui(
         "rotation_method": str(rotation_method or ""),
         "perspective_correction": bool(perspective_correction),
         "preprocessing": [str(name) for name in (preprocessing or []) if str(name).strip()],
+        "output_format_mode": str(output_format_mode or ""),
         "system_prompt": str(system_prompt or "").strip(),
         "prompt_instructions": str(prompt_instructions or "").strip(),
     }
@@ -119,6 +122,7 @@ def _normalise(value: Any, defaults: Mapping[str, Any]) -> dict[str, Any]:
         rotation_method=raw.get("rotation_method", fallback["rotation_method"]),
         perspective_correction=raw.get("perspective_correction", fallback["perspective_correction"]),
         preprocessing=raw.get("preprocessing", fallback["preprocessing"]),
+        output_format_mode=raw.get("output_format_mode", fallback["output_format_mode"]),
         system_prompt=raw.get("system_prompt", fallback["system_prompt"]),
         prompt_instructions=raw.get("prompt_instructions", fallback["prompt_instructions"]),
     )
@@ -130,6 +134,11 @@ def _normalise(value: Any, defaults: Mapping[str, Any]) -> dict[str, Any]:
     )
     result["rotation_method"] = result["rotation_method"] if result["rotation_method"] in {"none", "pillow", "opencv"} else fallback["rotation_method"]
     result["preprocessing"] = [name for name in result["preprocessing"] if name in {"contrast", "denoise"}]
+    result["output_format_mode"] = (
+        result["output_format_mode"]
+        if result["output_format_mode"] in {"prompt", "json", "schema"}
+        else fallback["output_format_mode"]
+    )
     result["recto_suffix"] = result["recto_suffix"] or fallback["recto_suffix"]
     result["verso_suffix"] = result["verso_suffix"] or fallback["verso_suffix"]
     result["system_prompt"] = result["system_prompt"] or fallback["system_prompt"]

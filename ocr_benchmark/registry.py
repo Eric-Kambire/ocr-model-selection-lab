@@ -56,9 +56,12 @@ def build_default_registry() -> ModelRegistry:
     )
     registry.register(
         "ollama",
-        lambda model_name, model_prompt=None, **_: OllamaOCRModel(
+        lambda model_name, model_prompt=None, cpu_threads=None,
+        unload_after_task=True, **_: OllamaOCRModel(
             model_name=model_name,
             prompt=model_prompt,
+            cpu_threads=cpu_threads,
+            unload_after_task=unload_after_task,
         ),
     )
 

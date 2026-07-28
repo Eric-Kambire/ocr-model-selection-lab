@@ -15,9 +15,18 @@ class OllamaOCRModel(BaseOCRModel):
     """
     An OCR model wrapper that uses a local Ollama vision model (e.g., gemma3:1b, llama3.2-vision).
     """
-    def __init__(self, model_name: str, prompt: str | None = None):
+    def __init__(
+        self,
+        model_name: str,
+        prompt: str | None = None,
+        *,
+        cpu_threads: int | None = None,
+        unload_after_task: bool = True,
+    ):
         super().__init__(model_name)
         self.prompt = prompt.strip() if prompt and prompt.strip() else DEFAULT_OCR_PROMPT
+        self.cpu_threads = max(1, int(cpu_threads)) if cpu_threads else None
+        self.unload_after_task = bool(unload_after_task)
         # Import ollama here to avoid dependency issues if not installed
         try:
             import ollama
@@ -26,8 +35,21 @@ class OllamaOCRModel(BaseOCRModel):
             self.client = None
             print("Warning: 'ollama' Python library not installed. Please install it using pip.")
 
-    def perform_ocr(self, image_path: str, *, prompt: str | None = None, system_prompt: str | None = None) -> dict:
-        """Run OCR and allow a structured workflow to override one prompt."""
+    def perform_ocr(
+        self,
+        image_path: str,
+        *,
+        prompt: str | None = None,
+        system_prompt: str | None = None,
+        output_format: str = "prompt",
+        output_schema: dict | None = None,
+    ) -> dict:
+        """Exécute Ollama avec une contrainte JSON facultative.
+
+        La réponse brute reste toujours retournée. Le mode ``schema`` utilise
+        le JSON Schema natif d'Ollama ; ``json`` demande seulement un objet JSON
+        valide ; ``prompt`` conserve le comportement historique.
+        """
         if not self.client:
             return {
                 "text": "",
@@ -58,12 +80,20 @@ class OllamaOCRModel(BaseOCRModel):
             if effective_system:
                 messages.append({"role": "system", "content": effective_system})
             messages.append({"role": "user", "content": effective_prompt, "images": [image_path]})
+            options = {"temperature": 0.0}
+            if self.cpu_threads:
+                options["num_thread"] = self.cpu_threads
+            request = {
+                "model": self.model_name,
+                "messages": messages,
+                "options": options,
+            }
+            if output_format == "schema" and output_schema:
+                request["format"] = output_schema
+            elif output_format == "json":
+                request["format"] = "json"
             response = self.client.chat(
-                model=self.model_name,
-                messages=messages,
-                options={
-                    "temperature": 0.0  # Keep transcription deterministic
-                }
+                **request
             )
             
             if isinstance(response, dict):
@@ -123,3 +153,14 @@ class OllamaOCRModel(BaseOCRModel):
                 "error": error_msg,
                 "device": "ollama",
             }
+
+    def close(self) -> None:
+        """Demande explicitement au serveur Ollama de libérer le modèle."""
+        if not self.client or not self.unload_after_task:
+            return
+        try:
+            self.client.generate(model=self.model_name, prompt="", keep_alive=0)
+        except Exception:
+            # La libération est une optimisation mémoire : son échec ne doit
+            # jamais remplacer un résultat OCR déjà obtenu.
+            return

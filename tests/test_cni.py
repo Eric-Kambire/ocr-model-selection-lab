@@ -8,11 +8,11 @@ from PIL import Image, ImageDraw
 
 from ocr_benchmark.cni import (
     build_cni_global_json,
+    build_cni_output_schema,
     build_cni_prompt,
     crop_cni_from_a4,
     import_cni_zip,
     materialize_cni_labels,
-    normalize_cni_source_suffix,
     parse_cni_json_response,
     scan_cni_clients,
 )
@@ -28,6 +28,13 @@ def _write_pdf(path: Path) -> None:
     page.insert_text((60, 80), "CNI TEST")
     document.save(path)
     document.close()
+
+
+def _write_image(path: Path) -> None:
+    """Crée une page blanche contenant une carte synthétique pour le test."""
+    page = Image.new("RGB", (1200, 1600), "white")
+    ImageDraw.Draw(page).rectangle((40, 40, 760, 495), fill=(170, 205, 190))
+    page.save(path)
 
 
 def test_scan_uses_folder_identifier_and_materializes_external_label(tmp_path: Path):
@@ -51,26 +58,6 @@ def test_scan_uses_folder_identifier_and_materializes_external_label(tmp_path: P
     assert json.loads(label.read_text(encoding="utf-8")) == {"nom": "TEST"}
 
 
-def test_suffix_accepts_qlickeer_spelling_with_or_without_file_extension(tmp_path: Path):
-    """Les suffixes UI restent métier : l'extension est déduite de view_file."""
-    client = tmp_path / "clients" / "client-42"
-    client.mkdir(parents=True)
-    _write_pdf(client / "client-42_CIN_recto.pdf")
-    _write_pdf(client / "client-42_CIN_verso.pdf")
-
-    records = scan_cni_clients(
-        tmp_path / "clients",
-        recto_suffix="_CIN_recto.pdf",
-        verso_suffix="_CIN_verso.jpg",
-    )
-
-    assert normalize_cni_source_suffix("_CIN_recto.pdf", default="_CIN_Recto") == "_CIN_recto"
-    assert records[0]["status"] == "ready"
-    # Le contrat de scan est volontairement insensible à la casse : une
-    # configuration par défaut ``_CIN_Recto`` accepte aussi ``_CIN_recto``.
-    assert scan_cni_clients(tmp_path / "clients")[0]["status"] == "ready"
-
-
 def test_crop_detects_card_area_without_using_a4_as_the_result(tmp_path: Path):
     page = Image.new("RGB", (1200, 1600), "white")
     draw = ImageDraw.Draw(page)
@@ -85,10 +72,30 @@ def test_crop_detects_card_area_without_using_a4_as_the_result(tmp_path: Path):
         assert 1.2 <= cropped.width / cropped.height <= 2.05
 
 
-def test_uncertain_crop_keeps_the_full_normalized_source(tmp_path: Path):
-    """Une page sans CNI n'est jamais tournée ni recadrée par un faux positif."""
+def test_crop_discards_black_scanner_bands_without_assuming_an_a4_page(tmp_path: Path):
+    """Une bordure noire de scanner ne doit pas devenir le rectangle de crop."""
+    page = Image.new("RGB", (1300, 900), "black")
+    draw = ImageDraw.Draw(page)
+    draw.rectangle((80, 55, 1220, 845), fill="white")
+    draw.rectangle((315, 260, 995, 690), fill=(160, 200, 180))
+    source, target = tmp_path / "scanner.png", tmp_path / "crop.png"
+    page.save(source)
+
+    result = crop_cni_from_a4(source, target)
+
+    assert result["crop_status"] == "crop_detected_perspective"
+    assert result["source_sent_unchanged"] is False
+    assert result["edge_trim"][0] > 0
+    with Image.open(target) as cropped:
+        assert 1.2 <= cropped.width / cropped.height <= 2.05
+
+
+def test_uncertain_crop_sends_the_original_page_without_creating_a_rotated_copy(tmp_path: Path):
+    """Le repli n'est ni un A4 supposé ni une image tournée/coupée."""
+    page = Image.new("RGB", (901, 617), "white")
+    ImageDraw.Draw(page).ellipse((10, 10, 24, 24), fill="black")
     source, target = tmp_path / "phone_scan.png", tmp_path / "crop.png"
-    Image.new("RGB", (901, 617), "white").save(source)
+    page.save(source)
 
     result = crop_cni_from_a4(source, target)
 
@@ -96,6 +103,19 @@ def test_uncertain_crop_keeps_the_full_normalized_source(tmp_path: Path):
     assert result["source_sent_unchanged"] is True
     assert Path(result["image_path"]) == source
     assert not target.exists()
+
+
+def test_scan_accepts_jpeg_and_png_sources_with_the_same_suffix_contract(tmp_path: Path):
+    client = tmp_path / "clients" / "folder-client-image"
+    client.mkdir(parents=True)
+    _write_image(client / "source_CIN_Recto.jpg")
+    _write_image(client / "source_CIN_Verso.png")
+
+    record = scan_cni_clients(tmp_path / "clients")[0]
+    assert record["status"] == "ready"
+    assert record["recto_format"] == "jpg"
+    assert record["verso_format"] == "png"
+    assert record["recto_source"].endswith("source_CIN_Recto.jpg")
 
 
 def test_side_json_parser_and_global_preserve_both_cin_values():
@@ -120,6 +140,33 @@ def test_cni_prompt_covers_old_new_layout_and_operator_instructions():
     assert "old or new layout" in prompt
     assert "Prioritize a sharp reading" in prompt
     assert '"cin": null' in prompt
+    assert "first line = prenom" in prompt
+
+
+def test_cni_prompt_prevents_parent_name_and_identifier_confusion():
+    """Les règles de localisation évitent les erreurs CNI les plus coûteuses."""
+    recto_prompt = build_cni_prompt("recto")
+    verso_prompt = build_cni_prompt("verso")
+
+    assert "holder-name lines near the portrait and before 'Né le'" in recto_prompt
+    assert "Never take a CAN" in recto_prompt
+    assert "plain 'N°'" in recto_prompt
+    assert "old fronts it is often below/right of the photo" in recto_prompt
+    assert "names after 'Fils de'/'Et de' are parents" in verso_prompt
+    assert "top-left/top repeated number" in verso_prompt
+    assert "multi-line address" in verso_prompt
+
+
+def test_cni_output_schema_is_strict_and_nullable():
+    """Le schéma fournisseur impose les clés sans inventer les valeurs."""
+    recto = build_cni_output_schema("recto")
+    combined = build_cni_output_schema("combined")
+
+    assert recto["additionalProperties"] is False
+    assert set(recto["required"]) == set(recto["properties"])
+    assert recto["properties"]["cin"]["type"] == ["string", "null"]
+    assert combined["required"] == ["recto", "verso"]
+    assert combined["properties"]["verso"]["additionalProperties"] is False
 
 
 def test_zip_import_rejects_path_traversal(tmp_path: Path):
@@ -166,6 +213,21 @@ def test_separate_runner_creates_recto_verso_and_global_outputs(tmp_path: Path):
     assert Path(result["recto_json_path"]).is_file()
     assert Path(result["verso_json_path"]).is_file()
     assert Path(result["global_json_path"]).is_file()
+
+
+def test_runner_normalizes_direct_image_sources_before_crop(tmp_path: Path):
+    client = tmp_path / "clients" / "folder-client"
+    client.mkdir(parents=True)
+    _write_image(client / "source_CIN_Recto.jpg")
+    _write_image(client / "source_CIN_Verso.png")
+    records = scan_cni_clients(tmp_path / "clients")
+
+    events = list(iter_cni_benchmark(_FakeRegistry(), ["fake:vision"], records, tmp_path / "runs"))
+    result = events[-1]["result"]
+    preparation = json.loads((Path(result["recto_image_path"]).parent / "preparation.json").read_text(encoding="utf-8"))
+    assert result["status"] == "success"
+    assert preparation["recto_page"]["source_type"] == "jpg"
+    assert preparation["verso_page"]["source_type"] == "png"
 
 
 class _RecordingModel:
@@ -221,3 +283,19 @@ def test_cni_strategies_send_expected_images_and_keep_pair_progress(tmp_path: Pa
     assert combined.model.calls[0][0].endswith("recto_verso_composite.png")
     assert combined_events[-1]["completed"] == 1
     assert combined_events[-1]["total"] == 1
+
+
+def test_runner_sends_the_full_normalized_source_when_crop_is_uncertain(tmp_path: Path):
+    """La garantie importante : aucun faux crop ne part vers le modèle."""
+    client = tmp_path / "clients" / "folder-client"
+    client.mkdir(parents=True)
+    Image.new("RGB", (920, 610), "white").save(client / "source_CIN_Recto.png")
+    Image.new("RGB", (920, 610), "white").save(client / "source_CIN_Verso.png")
+    records = scan_cni_clients(tmp_path / "clients")
+    registry = _RecordingRegistry()
+
+    list(iter_cni_benchmark(registry, ["fake:vision"], records, tmp_path / "runs", strategy="separate_calls"))
+
+    assert len(registry.model.calls) == 2
+    assert registry.model.calls[0][0].endswith("recto_page.png")
+    assert registry.model.calls[1][0].endswith("verso_page.png")
