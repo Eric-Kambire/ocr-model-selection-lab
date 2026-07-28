@@ -101,12 +101,13 @@ def render_single_page_pdf(pdf_path: Path, output_path: Path, dpi: int = 300) ->
 def crop_cni_from_a4(source_path: Path, output_path: Path, *, debug_path: Path | None = None) -> dict[str, Any]:
     """Tente de recadrer une CNI posée sur une feuille A4 blanche."""
 
-    # Le nom historique reste disponible, mais la détection n'impose plus un A4.
-    # En cas d'incertitude, l'image source complète est envoyée sans modification.
+    # Le nom historique est conservé, mais l'algorithme ne suppose désormais
+    # aucun format de page : A4, photo téléphone et scan libre sont acceptés.
+    # En cas de doute, il retourne le chemin source sans rotation ni crop.
     return crop_cni_document(source_path, output_path, debug_path=debug_path)
 
-    # Ancienne implémentation laissée sous ce return afin de ne pas mélanger ce
-    # correctif de sécurité avec la documentation historique du module.
+    # Ancienne implémentation conservée temporairement sous le return ci-dessus
+    # pour minimiser ce changement dans un fichier historiquement très commenté.
     # On ouvre l'image source dans un bloc 'with' pour fermeture automatique.
     with Image.open(source_path) as source:
         # exif_transpose : corrige l'orientation si l'image a été prise avec un

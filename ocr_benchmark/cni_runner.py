@@ -17,6 +17,7 @@ from typing import Any, Iterator
 # Le runner orchestre les modules spécialisés ; il ne contient ni logique de
 # scan de dossiers, ni règle de crop, ni définition du contrat JSON.
 from .cni_images import build_vertical_cni_composite, crop_cni_from_a4
+from .cni_comparison import compare_cni_extraction
 from .cni_ingestion import write_cni_json
 from .cni_preprocessing import prepare_cni_source, preprocess_cni_image
 from .cni_schema import (
@@ -161,31 +162,47 @@ def iter_cni_benchmark(
             LOGGER.info("CNI model released | model=%s", model_name)
 
 
-def prepare_cni_client_images(client: dict[str, Any], artefacts_dir: Path, dpi: int, *, preprocessing: dict[str, bool] | None = None) -> dict[str, Any]:
-    """Rend, détecte la CNI, puis prétraite uniquement un crop fiable."""
+def prepare_cni_client_images(
+    client: dict[str, Any],
+    artefacts_dir: Path,
+    dpi: int,
+    *,
+    preprocessing: dict[str, bool] | None = None,
+) -> dict[str, Any]:
+    """Normalise, détecte la carte puis prétraite seulement un crop fiable.
+
+    Le point important est l'ordre : la détection travaille sur la source
+    normalisée. Si elle n'est pas certaine, le modèle reçoit cette source entière
+    et non une page tournée, assombrie ou coupée par erreur.
+    """
     # Tout est écrit dans le run, jamais à côté des PDF utilisateur : les
     # sources restent intactes et chaque benchmark peut être rejoué/analyse.
     recto_page = artefacts_dir / "recto_page.png"
     verso_page = artefacts_dir / "verso_page.png"
-    options = preprocessing or {}
-    recto_render = prepare_cni_source(Path(str(client.get("recto_source") or client["recto_pdf"])), recto_page, dpi)
-    verso_render = prepare_cni_source(Path(str(client.get("verso_source") or client["verso_pdf"])), verso_page, dpi)
+    options = {key: bool((preprocessing or {}).get(key, False)) for key in ("deskew", "perspective", "contrast", "denoise")}
+    recto_source = Path(str(client.get("recto_source") or client["recto_pdf"]))
+    verso_source = Path(str(client.get("verso_source") or client["verso_pdf"]))
+    recto_render = prepare_cni_source(recto_source, recto_page, dpi)
+    verso_render = prepare_cni_source(verso_source, verso_page, dpi)
     recto_crop = crop_cni_from_a4(recto_page, artefacts_dir / "crop_recto.png", debug_path=artefacts_dir / "crop_recto_debug.png")
     verso_crop = crop_cni_from_a4(verso_page, artefacts_dir / "crop_verso.png", debug_path=artefacts_dir / "crop_verso_debug.png")
-    recto_processed = _preprocess_only_reliable_crop(recto_crop, artefacts_dir / "recto_preprocessed.png", options)
-    verso_processed = _preprocess_only_reliable_crop(verso_crop, artefacts_dir / "verso_preprocessed.png", options)
-    recto_model_image, verso_model_image = recto_processed["image_path"], verso_processed["image_path"]
+    recto_preprocessed = _preprocess_only_reliable_crop(recto_crop, artefacts_dir / "recto_preprocessed.png", options)
+    verso_preprocessed = _preprocess_only_reliable_crop(verso_crop, artefacts_dir / "verso_preprocessed.png", options)
+    recto_model_image = recto_preprocessed["image_path"]
+    verso_model_image = verso_preprocessed["image_path"]
     # Même en mode séparé, conserver le composite facilite une inspection
     # humaine ultérieure et un éventuel nouvel essai en mode combiné.
     combined_path = build_vertical_cni_composite(
         Path(recto_model_image), Path(verso_model_image), artefacts_dir / "recto_verso_composite.png"
     )
     prepared = {
+        "recto_source": str(recto_source),
+        "verso_source": str(verso_source),
         "recto_page": recto_render,
         "verso_page": verso_render,
         "preprocessing_options": options,
-        "recto_preprocessed": recto_processed,
-        "verso_preprocessed": verso_processed,
+        "recto_preprocessed": recto_preprocessed,
+        "verso_preprocessed": verso_preprocessed,
         "recto_crop": recto_crop,
         "verso_crop": verso_crop,
         "recto_model_image": recto_model_image,
@@ -200,10 +217,18 @@ def prepare_cni_client_images(client: dict[str, Any], artefacts_dir: Path, dpi: 
     return prepared
 
 
-def _preprocess_only_reliable_crop(crop: dict[str, Any], output_path: Path, options: dict[str, bool]) -> dict[str, Any]:
-    """Préserve la source entière lorsqu'aucune carte fiable n'a été trouvée."""
+def _preprocess_only_reliable_crop(
+    crop: dict[str, Any],
+    output_path: Path,
+    options: dict[str, bool],
+) -> dict[str, Any]:
+    """Préserve strictement la source si le crop automatique est incertain."""
     if crop.get("source_sent_unchanged"):
-        return {"status": "skipped_crop_uncertain_original_preserved", "image_path": crop["image_path"], "operations": []}
+        return {
+            "status": "skipped_crop_uncertain_original_preserved",
+            "image_path": crop["image_path"],
+            "operations": [],
+        }
     return preprocess_cni_image(Path(crop["image_path"]), output_path, options)
 
 
@@ -268,6 +293,8 @@ def _extract_one_cni_client(
     write_cni_json(artefacts_dir / "recto.extraction.json", recto_payload)
     write_cni_json(artefacts_dir / "verso.extraction.json", verso_payload)
     global_payload = build_cni_global_json(client, recto, verso)
+    label_payload = _read_json_mapping(client.get("label_path"))
+    comparison = compare_cni_extraction(label_payload, global_payload)
     global_payload.update(
         {
             "run_id": run_id,
@@ -275,6 +302,7 @@ def _extract_one_cni_client(
             "strategy": strategy,
             "recto_status": recto_payload["status"],
             "verso_status": verso_payload["status"],
+            "comparison": comparison,
         }
     )
     write_cni_json(artefacts_dir / "global.extraction.json", global_payload)
@@ -290,8 +318,9 @@ def _extract_one_cni_client(
         "strategy": strategy,
         "label_status": client.get("label_status"),
         "label_path": client.get("label_path"),
-        "accuracy": None,
-        "score_status": "not_scored_label_mapping_pending",
+        "accuracy": comparison["accuracy"],
+        "score_status": comparison["score_status"],
+        "field_comparison": comparison,
         "recto_status": recto_payload["status"],
         "verso_status": verso_payload["status"],
         "cin_recto": global_payload["cin_recto"],
@@ -306,14 +335,30 @@ def _extract_one_cni_client(
         "recto_json_path": str(artefacts_dir / "recto.extraction.json"),
         "verso_json_path": str(artefacts_dir / "verso.extraction.json"),
         "global_json_path": str(artefacts_dir / "global.extraction.json"),
+        "recto_raw_output_path": str(artefacts_dir / "raw_recto_output.txt"),
+        "verso_raw_output_path": str(artefacts_dir / "raw_verso_output.txt"),
+        "combined_raw_output_path": str(artefacts_dir / "raw_combined_output.txt"),
+        # Ces chemins sont ceux effectivement remis au modèle. En fallback ils
+        # pointent vers recto_page/verso_page, donc la source complète intacte.
         "recto_image_path": prepared["recto_model_image"],
         "verso_image_path": prepared["verso_model_image"],
         "combined_image_path": prepared["combined_image"],
+        "recto_prompt_path": str(artefacts_dir / "prompt_recto.txt"),
+        "verso_prompt_path": str(artefacts_dir / "prompt_verso.txt"),
+        "combined_prompt_path": str(artefacts_dir / "prompt_combined.txt"),
         "error": _join_errors(recto_payload.get("error"), verso_payload.get("error")),
     }
 
 
-def _perform_cni_call(model: Any, image_path: Path, prompt: str, timeout_seconds: float | None, artefacts_dir: Path, side: str, system_prompt: str | None) -> InferenceResult:
+def _perform_cni_call(
+    model: Any,
+    image_path: Path,
+    prompt: str,
+    timeout_seconds: float | None,
+    artefacts_dir: Path,
+    side: str,
+    system_prompt: str | None,
+) -> InferenceResult:
     """Appelle une image et conserve sortie brute ou sortie tardive."""
     def save_late(raw: Any | None, error: str | None) -> None:
         # Une réponse arrivée après timeout est précieuse pour le débogage, mais
@@ -327,6 +372,12 @@ def _perform_cni_call(model: Any, image_path: Path, prompt: str, timeout_seconds
 
     # Le runner générique centralise le timeout fournisseur et le mécanisme de
     # réponse tardive afin que CNI et benchmark général se comportent pareil.
+    # Le prompt exact reste dans le run, même si l'appel échoue. C'est le
+    # point de départ indispensable pour comprendre une réponse invalide.
+    (artefacts_dir / f"prompt_{side}.txt").write_text(
+        "--- SYSTEM ---\n" + (system_prompt or "") + "\n\n--- USER ---\n" + prompt,
+        encoding="utf-8",
+    )
     raw = BenchmarkRunner._perform_with_timeout(
         model,
         str(image_path),
@@ -351,6 +402,8 @@ def _side_payload(side: str, fields: dict[str, str | None], inference: Inference
         "fields": fields,
         "parse_error": parse_error,
         "error": inference.error,
+        # La réponse brute reste visible même lorsque le parsing JSON échoue ou
+        # que le fournisseur retourne un statut failed/timeout.
         "text": inference.text,
         "raw_response": inference.raw_response,
         "reasoning": inference.reasoning,
@@ -422,6 +475,17 @@ def _failed_client_result(run_id: str, model_name: str, client: dict[str, Any], 
         "tokens_per_second": None,
         "error": error,
     }
+
+
+def _read_json_mapping(path_value: Any) -> dict[str, Any] | None:
+    """Lit un label local sans rendre l'extraction dépendante de son format."""
+    if not path_value:
+        return None
+    try:
+        value = json.loads(Path(str(path_value)).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    return value if isinstance(value, dict) else None
 
 
 def _write_results_index(run_dir: Path, results: list[dict[str, Any]]) -> None:

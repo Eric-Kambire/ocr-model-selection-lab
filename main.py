@@ -56,6 +56,7 @@ from ocr_benchmark.application.qlicker_config_service import (
     reset_qlicker_config,
     save_qlicker_config,
 )
+from ocr_benchmark.cni_comparison import compare_cni_extraction, field_state_map
 from ocr_benchmark.application.run_service import list_run_ids, load_run_results, purge_expired_runs
 from ocr_benchmark.cni import (
     DEFAULT_RECTO_SUFFIX,
@@ -763,43 +764,44 @@ def _read_json_if_available(path_value: Any) -> Any:
 
 
 def _cni_field_comparisons(result: dict[str, Any]) -> dict[str, str]:
-    """Compare les champs canoniques au label, quand celui-ci existe."""
+    """Read the persisted score or compare a raw QlickEER label directly."""
+    stored = result.get("field_comparison")
+    if isinstance(stored, dict):
+        return field_state_map(stored)
     label = _read_json_if_available(result.get("label_path"))
     extracted = _read_json_if_available(result.get("global_json_path"))
-    fields = ("cin", "prenom", "nom", "date_naissance", "ville_naissance", "date_validite", "adresse")
-    if not isinstance(label, dict) or "status" in label:
-        return {field: "label_missing" for field in fields}
-    if not isinstance(extracted, dict) or "status" in extracted:
-        return {field: "missing_model" for field in fields}
-    aliases = {"cin": "cin_fusionne", "date_validite": "date_validite_fusionnee"}
-    def normal(value: Any) -> str:
-        return re.sub(r"[^a-z0-9]", "", str(value or "").casefold())
-    output: dict[str, str] = {}
-    for field in fields:
-        expected = label.get(field)
-        if expected is None:
-            expected = next((side.get(field) for side in (label.get("recto"), label.get("verso")) if isinstance(side, dict) and field in side), None)
-        actual = extracted.get(aliases.get(field, field))
-        output[field] = "label_missing" if expected in (None, "") else "missing_model" if actual in (None, "") else "correct" if normal(expected) == normal(actual) else "different"
-    return output
-
+    comparison = compare_cni_extraction(
+        label if isinstance(label, dict) else None,
+        extracted if isinstance(extracted, dict) else None,
+    )
+    return field_state_map(comparison)
 
 def _cni_confidence_summary(result: dict[str, Any]) -> str:
-    """Présente la confiance QlickEER par champ à côté du verdict OCR."""
+    """Show QlickEER reference confidence next to each OCR verdict."""
     label = _read_json_if_available(result.get("label_path"))
-    confidence = label.get("field_confidence", {}) if isinstance(label, dict) else {}
-    if not isinstance(confidence, dict) or not confidence:
+    comparison = result.get("field_comparison")
+    if not isinstance(comparison, dict):
+        extracted = _read_json_if_available(result.get("global_json_path"))
+        comparison = compare_cni_extraction(
+            label if isinstance(label, dict) else None,
+            extracted if isinstance(extracted, dict) else None,
+        )
+    confidence = {
+        str(row.get("field")): row.get("reference_confidence")
+        for row in comparison.get("rows", [])
+        if isinstance(row, dict) and row.get("reference_confidence") is not None
+    }
+    if not confidence:
         return ""
-    comparisons = _cni_field_comparisons(result)
+    comparisons = field_state_map(comparison)
     rows = [
-        f"| `{field}` | {comparisons.get(field, '—')} | {float(value):.1f} % |"
+        f"| {field} | {comparisons.get(field, '-')} | {float(value):.1f} % |"
         for field, value in confidence.items()
         if isinstance(value, (int, float))
     ]
     if not rows:
         return ""
-    return "\n\n**Confiance du label QlickEER et comparaison OCR**\n\n| Champ | Comparaison | Confiance label |\n|---|---|---|\n" + "\n".join(rows)
-
+    return "\n\n**QlickEER label confidence and OCR comparison**\n\n| Field | Comparison | Reference confidence |\n|---|---|---|\n" + "\n".join(rows)
 
 def _cni_raw_output(path_value: Any) -> str:
     """Expose aussi une réponse reçue après le timeout de l'interface."""
