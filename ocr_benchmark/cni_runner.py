@@ -16,7 +16,8 @@ from typing import Any, Iterator
 
 # Le runner orchestre les modules spécialisés ; il ne contient ni logique de
 # scan de dossiers, ni règle de crop, ni définition du contrat JSON.
-from .cni_images import build_vertical_cni_composite, crop_cni_from_a4
+from .cni_crop_service import SMART_CROP_V4, crop_cni_for_benchmark
+from .cni_images import build_vertical_cni_composite
 from .cni_ingestion import write_cni_json
 from .cni_preprocessing import prepare_cni_source, preprocess_cni_image
 from .cni_schema import (
@@ -47,7 +48,7 @@ def iter_cni_benchmark(
     fields: dict[str, list[dict[str, str]]] | None = None,
     prompt_instructions: str | None = None,
     system_prompt: str | None = None,
-    preprocessing: dict[str, bool] | None = None,
+    preprocessing: dict[str, Any] | None = None,
 ) -> Iterator[dict[str, Any]]:
     """Émet des événements live et persiste un jeu d'artefacts par modèle/client.
 
@@ -161,19 +162,42 @@ def iter_cni_benchmark(
             LOGGER.info("CNI model released | model=%s", model_name)
 
 
-def prepare_cni_client_images(client: dict[str, Any], artefacts_dir: Path, dpi: int, *, preprocessing: dict[str, bool] | None = None) -> dict[str, Any]:
+def prepare_cni_client_images(
+    client: dict[str, Any],
+    artefacts_dir: Path,
+    dpi: int,
+    *,
+    preprocessing: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     """Rend, détecte la CNI, puis prétraite uniquement un crop fiable."""
     # Tout est écrit dans le run, jamais à côté des PDF utilisateur : les
     # sources restent intactes et chaque benchmark peut être rejoué/analyse.
     recto_page = artefacts_dir / "recto_page.png"
     verso_page = artefacts_dir / "verso_page.png"
-    options = preprocessing or {}
+    options: dict[str, Any] = dict(preprocessing or {})
+    crop_method = str(options.get("crop_method") or SMART_CROP_V4)
+    minimum_score = float(options.get("smart_crop_min_score") or 0.55)
+    margin_ratio = float(options.get("smart_crop_margin") or 0.012)
     recto_render = prepare_cni_source(Path(str(client.get("recto_source") or client["recto_pdf"])), recto_page, dpi)
     verso_render = prepare_cni_source(Path(str(client.get("verso_source") or client["verso_pdf"])), verso_page, dpi)
     # Détection avant prétraitement : sur un échec, le modèle reçoit donc la
     # source normalisée entière, jamais une page tournée ou cropée par erreur.
-    recto_crop = crop_cni_from_a4(recto_page, artefacts_dir / "crop_recto.png", debug_path=artefacts_dir / "crop_recto_debug.png")
-    verso_crop = crop_cni_from_a4(verso_page, artefacts_dir / "crop_verso.png", debug_path=artefacts_dir / "crop_verso_debug.png")
+    recto_crop = crop_cni_for_benchmark(
+        recto_page,
+        artefacts_dir / "crop_recto_diagnostics",
+        output_path=artefacts_dir / "crop_recto.png",
+        method=crop_method,
+        minimum_score=minimum_score,
+        margin_ratio=margin_ratio,
+    )
+    verso_crop = crop_cni_for_benchmark(
+        verso_page,
+        artefacts_dir / "crop_verso_diagnostics",
+        output_path=artefacts_dir / "crop_verso.png",
+        method=crop_method,
+        minimum_score=minimum_score,
+        margin_ratio=margin_ratio,
+    )
     recto_processed = _preprocess_only_reliable_crop(recto_crop, artefacts_dir / "recto_preprocessed.png", options)
     verso_processed = _preprocess_only_reliable_crop(verso_crop, artefacts_dir / "verso_preprocessed.png", options)
     recto_model_image, verso_model_image = recto_processed["image_path"], verso_processed["image_path"]

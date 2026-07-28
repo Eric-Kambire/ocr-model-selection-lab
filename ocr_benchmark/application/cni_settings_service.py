@@ -24,6 +24,9 @@ def default_cni_settings(*, cpu_threads: int, system_prompt: str, prompt_instruc
         "continue_without_label": False,
         "recto_suffix": "_CIN_Recto",
         "verso_suffix": "_CIN_Verso",
+        "crop_method": "smart_crop_v4",
+        "smart_crop_min_score": 0.55,
+        "smart_crop_margin": 0.012,
         "rotation_method": "none",
         "perspective_correction": False,
         "preprocessing": [],
@@ -64,6 +67,9 @@ def cni_settings_from_ui(
     continue_without_label: Any,
     recto_suffix: Any,
     verso_suffix: Any,
+    crop_method: Any,
+    smart_crop_min_score: Any,
+    smart_crop_margin: Any,
     rotation_method: Any,
     perspective_correction: Any,
     preprocessing: Any,
@@ -82,6 +88,9 @@ def cni_settings_from_ui(
         "continue_without_label": bool(continue_without_label),
         "recto_suffix": str(recto_suffix or "").strip(),
         "verso_suffix": str(verso_suffix or "").strip(),
+        "crop_method": str(crop_method or ""),
+        "smart_crop_min_score": _bounded_float(smart_crop_min_score, 0.55, 0.0, 1.0),
+        "smart_crop_margin": _bounded_float(smart_crop_margin, 0.012, 0.0, 0.08),
         "rotation_method": str(rotation_method or ""),
         "perspective_correction": bool(perspective_correction),
         "preprocessing": [str(name) for name in (preprocessing or []) if str(name).strip()],
@@ -104,6 +113,9 @@ def _normalise(value: Any, defaults: Mapping[str, Any]) -> dict[str, Any]:
         continue_without_label=raw.get("continue_without_label", fallback["continue_without_label"]),
         recto_suffix=raw.get("recto_suffix", fallback["recto_suffix"]),
         verso_suffix=raw.get("verso_suffix", fallback["verso_suffix"]),
+        crop_method=raw.get("crop_method", fallback["crop_method"]),
+        smart_crop_min_score=raw.get("smart_crop_min_score", fallback["smart_crop_min_score"]),
+        smart_crop_margin=raw.get("smart_crop_margin", fallback["smart_crop_margin"]),
         rotation_method=raw.get("rotation_method", fallback["rotation_method"]),
         perspective_correction=raw.get("perspective_correction", fallback["perspective_correction"]),
         preprocessing=raw.get("preprocessing", fallback["preprocessing"]),
@@ -111,6 +123,11 @@ def _normalise(value: Any, defaults: Mapping[str, Any]) -> dict[str, Any]:
         prompt_instructions=raw.get("prompt_instructions", fallback["prompt_instructions"]),
     )
     result["strategy"] = result["strategy"] if result["strategy"] in {"separate_calls", "combined_vertical"} else fallback["strategy"]
+    result["crop_method"] = (
+        result["crop_method"]
+        if result["crop_method"] in {"smart_crop_v4", "legacy_opencv", "original"}
+        else fallback["crop_method"]
+    )
     result["rotation_method"] = result["rotation_method"] if result["rotation_method"] in {"none", "pillow", "opencv"} else fallback["rotation_method"]
     result["preprocessing"] = [name for name in result["preprocessing"] if name in {"contrast", "denoise"}]
     result["recto_suffix"] = result["recto_suffix"] or fallback["recto_suffix"]
@@ -125,3 +142,14 @@ def _positive_integer(value: Any, fallback: int) -> int:
         return max(1, int(value))
     except (TypeError, ValueError):
         return fallback
+
+
+def _bounded_float(value: Any, fallback: float, minimum: float, maximum: float) -> float:
+    """Convertit une valeur UI en nombre fini borné, sinon conserve le défaut."""
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return fallback
+    if not minimum <= number <= maximum:
+        return fallback
+    return number

@@ -24,6 +24,19 @@ noires continues attachées au cadre dans une copie de travail. Il pénalise
 Si aucun candidat n'atteint le score minimal, l'image normalisée entière est
 conservée sans crop forcé.
 
+Smart Crop V4 est aussi la méthode par défaut du pipeline réel :
+`8. Benchmark CNI → 4. Paramètres → Prétraitement`. Le runner passe par
+`ocr_benchmark/cni_crop_service.py`, qui garantit le même comportement dans le
+laboratoire et dans un benchmark. La détection peut utiliser une copie de
+travail limitée à 1 800 px pour gagner du temps, mais le quadrilatère est remis
+à l'échelle et le redressement final utilise l'image rendue au DPI choisi.
+La résolution de sortie n'est donc pas artificiellement abaissée.
+
+Les méthodes `OpenCV historique` et `Aucun crop` restent disponibles pour
+comparer les résultats et diagnostiquer un cas difficile. Avec V4, laissez la
+rotation supplémentaire et la seconde correction de perspective désactivées :
+V4 redresse déjà le quadrilatère retenu.
+
 ## Démarrage rapide
 
 Prérequis : Python 3.10 à 3.14 et `pip`. Installez Ollama séparément seulement
