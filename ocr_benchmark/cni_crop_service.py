@@ -20,6 +20,8 @@ from .cni_images import crop_cni_from_a4
 SMART_CROP_V4 = "smart_crop_v4"
 LEGACY_OPENCV = "legacy_opencv"
 ORIGINAL_IMAGE = "original"
+DEFAULT_SMART_CROP_MIN_SCORE = 0.55
+DEFAULT_SMART_CROP_MARGIN = 0.012
 SUPPORTED_CROP_METHODS = {SMART_CROP_V4, LEGACY_OPENCV, ORIGINAL_IMAGE}
 
 
@@ -29,8 +31,8 @@ def crop_cni_for_benchmark(
     *,
     output_path: Path | None = None,
     method: str = SMART_CROP_V4,
-    minimum_score: float = 0.55,
-    margin_ratio: float = 0.012,
+    minimum_score: float = DEFAULT_SMART_CROP_MIN_SCORE,
+    margin_ratio: float = DEFAULT_SMART_CROP_MARGIN,
 ) -> dict[str, Any]:
     """Recadre une image normalisée et retourne le contrat attendu par le runner.
 
@@ -79,8 +81,12 @@ def crop_cni_for_benchmark(
         output_dir,
         method="hybrid_v4",
         parameters={
-            "hybrid_min_score": _bounded(minimum_score, 0.55, 0.0, 1.0),
-            "hybrid_margin": _bounded(margin_ratio, 0.012, 0.0, 0.08),
+            "hybrid_min_score": _bounded(
+                minimum_score, DEFAULT_SMART_CROP_MIN_SCORE, 0.0, 1.0
+            ),
+            "hybrid_margin": _bounded(
+                margin_ratio, DEFAULT_SMART_CROP_MARGIN, 0.0, 0.08
+            ),
         },
     )
     unchanged = bool(result.get("source_sent_unchanged"))

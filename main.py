@@ -2856,8 +2856,27 @@ def build_ui() -> gr.Blocks:
                 f"{total_pairs} évaluation(s) séquentielle(s)."
             )
             LOGGER.info(
-                "CNI launch accepted | pairs=%d | models=%d | strategy=%s | dpi=%s | timeout=%s | unlabeled=%d | invalid=%d",
-                len(ready_records), len(model_specs), strategy, dpi, timeout, len(unlabeled), invalid_count,
+                "CNI launch accepted | pairs=%d | models=%d | strategy=%s | "
+                "dpi=%s | timeout=%s | cpu_threads=%s | unload=%s | "
+                "crop_method=%s | smart_crop_min_score=%s | smart_crop_margin=%s | "
+                "rotation=%s | perspective=%s | preprocessing=%s | "
+                "output_format=%s | unlabeled=%d | invalid=%d",
+                len(ready_records),
+                len(model_specs),
+                strategy,
+                dpi,
+                timeout,
+                threads,
+                bool(unload),
+                crop_method,
+                smart_crop_min_score,
+                smart_crop_margin,
+                rotation_method,
+                bool(perspective_correction),
+                list(preprocessing or []),
+                output_format_mode,
+                len(unlabeled),
+                invalid_count,
             )
             yield view(start_message, "Initialisation des modèles en cours.", 0, None, start_message, total_pairs, running=True)
 

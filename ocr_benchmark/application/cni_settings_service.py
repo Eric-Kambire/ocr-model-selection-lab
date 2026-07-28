@@ -10,6 +10,12 @@ import json
 from pathlib import Path
 from typing import Any, Mapping
 
+from ..cni_crop_service import (
+    DEFAULT_SMART_CROP_MARGIN,
+    DEFAULT_SMART_CROP_MIN_SCORE,
+    SMART_CROP_V4,
+)
+
 
 def default_cni_settings(*, cpu_threads: int, system_prompt: str, prompt_instructions: str) -> dict[str, Any]:
     """Retourne une configuration CNI sûre et sérialisable par défaut."""
@@ -24,9 +30,9 @@ def default_cni_settings(*, cpu_threads: int, system_prompt: str, prompt_instruc
         "continue_without_label": False,
         "recto_suffix": "_CIN_Recto",
         "verso_suffix": "_CIN_Verso",
-        "crop_method": "smart_crop_v4",
-        "smart_crop_min_score": 0.55,
-        "smart_crop_margin": 0.012,
+        "crop_method": SMART_CROP_V4,
+        "smart_crop_min_score": DEFAULT_SMART_CROP_MIN_SCORE,
+        "smart_crop_margin": DEFAULT_SMART_CROP_MARGIN,
         "rotation_method": "none",
         "perspective_correction": False,
         "preprocessing": [],
@@ -91,8 +97,12 @@ def cni_settings_from_ui(
         "recto_suffix": str(recto_suffix or "").strip(),
         "verso_suffix": str(verso_suffix or "").strip(),
         "crop_method": str(crop_method or ""),
-        "smart_crop_min_score": _bounded_float(smart_crop_min_score, 0.55, 0.0, 1.0),
-        "smart_crop_margin": _bounded_float(smart_crop_margin, 0.012, 0.0, 0.08),
+        "smart_crop_min_score": _bounded_float(
+            smart_crop_min_score, DEFAULT_SMART_CROP_MIN_SCORE, 0.0, 1.0
+        ),
+        "smart_crop_margin": _bounded_float(
+            smart_crop_margin, DEFAULT_SMART_CROP_MARGIN, 0.0, 0.08
+        ),
         "rotation_method": str(rotation_method or ""),
         "perspective_correction": bool(perspective_correction),
         "preprocessing": [str(name) for name in (preprocessing or []) if str(name).strip()],
