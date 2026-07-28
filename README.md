@@ -50,6 +50,7 @@ ocr_benchmark/cni_images.py     # rendu PDF/image et opérations d'image réutil
 ocr_benchmark/cni_preprocessing.py # source unique : rotation, contour et crop CNI
 ocr_benchmark/cni_smart_crop.py # détecteur hybride V4, cadre noir et fuite locale
 ocr_benchmark/cni_crop_methods.py # méthodes comparables et fallback vers l'original
+ocr_benchmark/cni_crop_service.py # méthode de crop choisie et contrat stable du runner
 ocr_benchmark/cni_schema.py     # champs configurables, prompt, parsing et fusion JSON
 ocr_benchmark/cni_runner.py     # exécution séquentielle, live events, artefacts de run
 ocr_benchmark/cni.py            # façade d'import compatible pour le reste de l'application
@@ -67,6 +68,12 @@ exécution peut donc être retrouvé dans le bon module, sans modifier l'interfa
 Le détecteur V4 neutralise les bandes noires continues dans une copie de travail
 et pénalise un quadrilatère lorsque du contenu reste juste à l'extérieur. Si
 aucun candidat n'est assez fiable, l'image normalisée entière est conservée.
+Smart Crop V4 est la méthode par défaut dans
+`8. Benchmark CNI → 4. Paramètres → Prétraitement`. Le détecteur peut analyser
+une copie limitée à 1 800 px pour rester rapide, mais il remet les coins à
+l'échelle et redresse l'image originale : le DPI et les pixels de sortie ne
+sont pas réduits. Les méthodes OpenCV historique et image entière restent
+sélectionnables pour comparer et diagnostiquer un cas difficile.
 
 La description détaillée des frontières, de la réutilisation future et des
 choix de stockage est disponible dans `docs/ARCHITECTURE_INTERNE.md`.
