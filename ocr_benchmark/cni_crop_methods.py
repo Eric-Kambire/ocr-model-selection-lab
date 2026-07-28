@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import math
 import time
+import unicodedata
 from pathlib import Path
 from typing import Any
 
@@ -23,6 +24,7 @@ METHOD_LABELS = {
     "canny_contours": "Canny + contours quadrilatères",
     "min_area_rect": "Rectangle orienté global (minAreaRect)",
     "pillow_ratio": "Pillow — recherche d'angle par ratio",
+    "hybrid_v3": "Hybride V3 — multi-détecteurs",
 }
 
 METHOD_DESCRIPTIONS = {
@@ -41,6 +43,11 @@ METHOD_DESCRIPTIONS = {
     "pillow_ratio": (
         "Tourne une copie réduite de la page à plusieurs angles et retient le "
         "rectangle englobant dont le ratio est le plus proche d'une CNI."
+    ),
+    "hybrid_v3": (
+        "Combine contours, lignes Hough/LSD, texture et premier plan. Plusieurs "
+        "quadrilatères sont classés par continuité des bords, ratio, angles, "
+        "densité et distance au cadre avant la correction de perspective."
     ),
 }
 
@@ -125,8 +132,10 @@ def run_crop_method(
         result = _canny_contours_pipeline(source_path, output_dir, values)
     elif method == "min_area_rect":
         result = _min_area_rect_pipeline(source_path, output_dir, values)
-    else:
+    elif method == "pillow_ratio":
         result = _pillow_ratio_pipeline(source_path, output_dir, values)
+    else:
+        result = _hybrid_v3_pipeline(source_path, output_dir, values)
     # OpenCV retourne certains nombres et tableaux dans des types NumPy. Le
     # rapport, Gradio et les futurs exports doivent recevoir uniquement des
     # structures Python sérialisables.
@@ -154,6 +163,203 @@ def _json_safe(value: Any) -> Any:
     if hasattr(value, "item"):
         return _json_safe(value.item())
     return value
+
+
+def _hybrid_v3_pipeline(
+    source_path: Path,
+    output_dir: Path,
+    parameters: dict[str, Any],
+) -> dict[str, Any]:
+    """Exécute le détecteur V3 et expose ses décisions étape par étape.
+
+    La détection travaille éventuellement sur une copie réduite, mais les
+    quatre coins sont remis à l'échelle avant le crop de l'image originale.
+    Un score insuffisant active le fallback sûr vers l'image entière.
+    """
+    cv2, np = _opencv()
+    from .cni_smart_crop_v3 import (
+        DetectorConfig,
+        detect_card,
+        draw_debug,
+        order_quad,
+        resize_for_work,
+        warp_card,
+    )
+
+    original = _read_bgr(source_path, cv2, np)
+    config = DetectorConfig(
+        expected_aspect_ratio=float(parameters.get("hybrid_ratio") or CARD_RATIO),
+        min_area_ratio=float(parameters.get("hybrid_min_area") or 0.035),
+        max_area_ratio=float(parameters.get("hybrid_max_area") or 0.92),
+        edge_tolerance_ratio=float(parameters.get("hybrid_edge_tolerance") or 0.004),
+        final_margin_ratio=float(parameters.get("hybrid_margin") or 0.012),
+    )
+    minimum_score = float(parameters.get("hybrid_min_score") or 0.55)
+    stages: list[dict[str, Any]] = []
+    _save_stage(
+        stages,
+        output_dir,
+        original,
+        name="Source normalisée",
+        explanation=(
+            "Image complète de référence. Elle reste intacte pendant toute la détection."
+        ),
+    )
+
+    best, candidates, maps, scale = detect_card(original, config)
+    working, _ = resize_for_work(original, config.max_working_side)
+    diagnostic_maps = (
+        ("Niveaux de gris", "gray", "Luminance utilisée par les détecteurs."),
+        (
+            "Gradient Sobel",
+            "gradient",
+            "Les variations fortes d'intensité révèlent les limites possibles.",
+        ),
+        (
+            "Bords reconnectés",
+            "connected_edges",
+            "Canny et Sobel sont réunis puis les petites coupures sont fermées.",
+        ),
+        (
+            "Masque premier plan",
+            "foreground_mask",
+            "Le fond est estimé sur le cadre ; les objets éloignés restent séparés.",
+        ),
+        (
+            "Masque densité et texture",
+            "density_mask",
+            "Le texte, la photo et les motifs forment des régions localement denses.",
+        ),
+        (
+            "Segments de lignes",
+            "line_mask",
+            "Hough et LSD proposent des côtés malgré un contour interrompu.",
+        ),
+    )
+    for name, key, explanation in diagnostic_maps:
+        image = maps.get(key)
+        if image is not None:
+            _save_stage(
+                stages,
+                output_dir,
+                image,
+                name=name,
+                explanation=explanation,
+            )
+
+    debug = draw_debug(working, candidates, limit=12)
+    _save_stage(
+        stages,
+        output_dir,
+        debug,
+        name="Candidats classés",
+        explanation=(
+            "Chaque quadrilatère vient d'un détecteur. Le vert porte le meilleur "
+            "score global ; les autres restent visibles pour le diagnostic."
+        ),
+        metrics={
+            "candidate_count": len(candidates),
+            "top_candidates": [candidate.to_json() for candidate in candidates[:5]],
+        },
+    )
+
+    selected_overlay = working.copy()
+    accepted = best is not None and float(best.score) >= minimum_score
+    if best is not None:
+        colour = (0, 180, 0) if accepted else (0, 0, 220)
+        points = np.round(order_quad(best.quad)).astype(np.int32)
+        cv2.polylines(selected_overlay, [points], True, colour, 4, cv2.LINE_AA)
+        cv2.putText(
+            selected_overlay,
+            f"score={best.score:.3f} seuil={minimum_score:.3f}",
+            tuple(points[0]),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.62,
+            colour,
+            2,
+            cv2.LINE_AA,
+        )
+    _save_stage(
+        stages,
+        output_dir,
+        selected_overlay,
+        name="Décision du détecteur",
+        explanation=(
+            "Vert : candidat accepté. Rouge : meilleur candidat visible mais "
+            "refusé ; l'image entière sera alors transmise."
+        ),
+        metrics={
+            "accepted": accepted,
+            "minimum_score": minimum_score,
+            "best_score": float(best.score) if best is not None else None,
+            "best_source": best.source if best is not None else None,
+            "best_metrics": best.metrics if best is not None else None,
+        },
+    )
+
+    if not accepted or best is None:
+        return _fallback_result(
+            source_path,
+            stages,
+            reason=(
+                "aucun candidat"
+                if best is None
+                else f"score {best.score:.3f} inférieur au minimum {minimum_score:.3f}"
+            ),
+            method_metrics={
+                "candidate_count": len(candidates),
+                "best": best.to_json() if best is not None else None,
+                "working_scale": scale,
+            },
+        )
+
+    original_quad = order_quad(best.quad) / scale
+    crop = warp_card(
+        original,
+        original_quad,
+        config.expected_aspect_ratio,
+        margin_ratio=config.final_margin_ratio,
+    )
+    final_rotation = int(parameters.get("final_rotation") or 0)
+    rotations = {
+        90: cv2.ROTATE_90_CLOCKWISE,
+        180: cv2.ROTATE_180,
+        270: cv2.ROTATE_90_COUNTERCLOCKWISE,
+    }
+    if final_rotation in rotations:
+        crop = cv2.rotate(crop, rotations[final_rotation])
+    final_path = output_dir / "final_hybrid_v3.png"
+    if not cv2.imwrite(str(final_path), crop):
+        raise OSError(f"Impossible d'écrire le crop final : {final_path}")
+    _save_stage(
+        stages,
+        output_dir,
+        crop,
+        name="Crop redressé",
+        explanation=(
+            "Les quatre coins remis à l'échelle sur l'original sont projetés "
+            "vers un rectangle par homographie."
+        ),
+        metrics={
+            "score": float(best.score),
+            "detector": best.source,
+            "working_scale": scale,
+            "quad_original": np.round(original_quad, 2).tolist(),
+            "final_rotation": final_rotation,
+        },
+    )
+    return {
+        "status": "crop_detected",
+        "final_path": str(final_path),
+        "source_sent_unchanged": False,
+        "stages": stages,
+        "summary": {
+            "score": float(best.score),
+            "detector": best.source,
+            "candidate_count": len(candidates),
+            "metrics": best.metrics,
+        },
+    }
 
 
 def _opencv() -> tuple[Any, Any]:
@@ -207,7 +413,11 @@ def _save_stage(
 
 
 def _safe_name(value: str) -> str:
-    return "".join(character if character.isalnum() else "_" for character in value).strip("_").lower()
+    """Produit un nom ASCII stable, y compris sous Windows et OpenCV."""
+    ascii_value = unicodedata.normalize("NFKD", value).encode("ascii", "ignore").decode("ascii")
+    return "".join(
+        character if character.isalnum() else "_" for character in ascii_value
+    ).strip("_").lower()
 
 
 def _gray_and_contrast(image: Any, cv2: Any) -> tuple[Any, Any]:
