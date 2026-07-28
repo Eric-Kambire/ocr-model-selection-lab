@@ -1,6 +1,7 @@
-# Smart Crop & Degradation Lab — V3
+# Smart Crop & Degradation Lab — V4
 
-Cette version réunit dans une seule interface Gradio :
+Cette version corrige le cas où une ligne interne de la carte était prise pour
+son bord droit. Elle réunit dans une seule interface Gradio :
 
 1. la détection et le redressement d'une carte d'identité ;
 2. une galerie de toutes les étapes du pipeline ;
@@ -55,15 +56,27 @@ L'algorithme est une combinaison CPU de :
 - Hough et LSD ;
 - densité/variance locale ;
 - espace couleur LAB ;
+- détection et neutralisation des bandes noires continues du scanner ;
+- pénalité de fuite locale lorsqu'un candidat laisse du document à l'extérieur ;
 - score multi-critères ;
 - homographie.
 
 Aucune hypothèse A4 et aucune orientation EXIF.
 
+## Correction V4 : document coupé à droite
+
+V4 détecte les bandes noires continues attachées au cadre et les remplace
+uniquement dans la copie de travail. Elle mesure ensuite le premier plan dans
+une couronne autour de chaque candidat. Si du contenu reste juste à l'extérieur,
+le score diminue : une ligne interne ne doit plus devenir le bord droit.
+
+Les étapes « cadre noir détecté » et « image nettoyée » sont visibles dans la
+galerie et dans l'animation.
+
 ## Intégration dans ce dépôt
 
 Le moteur n'est pas dupliqué dans ce dossier. `smart_crop.py` est un adaptateur
-vers `ocr_benchmark/cni_smart_crop_v3.py`, également utilisé par :
+vers `ocr_benchmark/cni_smart_crop.py`, également utilisé par :
 
 - `scripts/cni_crop_methods_lab.py` pour comparer plusieurs méthodes ;
 - `scripts/cni_crop_stepper_app.py` pour le parcours pédagogique en six étapes ;

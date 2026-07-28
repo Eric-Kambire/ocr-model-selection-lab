@@ -48,17 +48,25 @@ Le flux CNI n’est pas concentré dans un seul gros fichier :
 ocr_benchmark/cni_ingestion.py  # scan client, import ZIP, JSONB externe → JSON local
 ocr_benchmark/cni_images.py     # rendu PDF/image et opérations d'image réutilisables
 ocr_benchmark/cni_preprocessing.py # source unique : rotation, contour et crop CNI
+ocr_benchmark/cni_smart_crop.py # détecteur hybride V4, cadre noir et fuite locale
+ocr_benchmark/cni_crop_methods.py # méthodes comparables et fallback vers l'original
 ocr_benchmark/cni_schema.py     # champs configurables, prompt, parsing et fusion JSON
 ocr_benchmark/cni_runner.py     # exécution séquentielle, live events, artefacts de run
 ocr_benchmark/cni.py            # façade d'import compatible pour le reste de l'application
 config/cni_fields.json          # champs d'extraction modifiables sans changer le code
 docs/CNI_BENCHMARK_IMPLEMENTATION_PLAN.md # contrat de données et décisions métier
+scripts/cni_crop_methods_lab.py # comparaison visuelle des méthodes de crop
+scripts/cni_crop_stepper_app.py # parcours V4 compact en six étapes
+scripts/smart_crop_lab_v4/      # laboratoire complet et cas dégradés reproductibles
 ```
 
 Chaque module a une seule responsabilité. La préparation CNI n'est notamment
 implémentée qu'une fois dans `cni_preprocessing.py`; `cni_images.py` l'utilise
 au lieu de dupliquer la logique. Un problème de fichier, crop, réponse JSON ou
 exécution peut donc être retrouvé dans le bon module, sans modifier l'interface.
+Le détecteur V4 neutralise les bandes noires continues dans une copie de travail
+et pénalise un quadrilatère lorsque du contenu reste juste à l'extérieur. Si
+aucun candidat n'est assez fiable, l'image normalisée entière est conservée.
 
 La description détaillée des frontières, de la réutilisation future et des
 choix de stockage est disponible dans `docs/ARCHITECTURE_INTERNE.md`.
@@ -230,6 +238,76 @@ Une réponse reçue après le timeout reste exclue des scores et conserve le sta
 `timeout`. Elle est néanmoins ajoutée à `traces.jsonl` avec
 `timing: "late_after_timeout"` afin de permettre l’audit et un nettoyage
 ultérieur.
+
+## Convertir des images brutes en PDF A4
+
+Le script [images_to_a4_corner_pdf.py](scripts/images_to_a4_corner_pdf.py)
+crée **un PDF A4 par image**, avec l'image conservée dans un coin. Il est utile
+pour préparer des scans de CNI avant le scan du dossier client.
+
+Mode interactif : le script liste les images du dossier, puis demande `all`
+pour tout convertir ou une sélection telle que `1,3-5`.
+
+```powershell
+python scripts/images_to_a4_corner_pdf.py "D:\data\clients\client-001"
+```
+
+Par défaut, les PDF sont créés dans le même dossier que les images afin de
+conserver un nom comme `client_CIN_Recto.pdf`. L'image est placée en **haut à
+gauche**, dans une zone standard de **120 × 90 mm**, sans recadrage ni
+déformation. Vous pouvez choisir un autre coin et automatiser la sélection :
+
+```powershell
+python scripts/images_to_a4_corner_pdf.py "D:\data\clients\client-001" --select all --corner bottom-left
+```
+
+Options utiles : `--recursive` pour les sous-dossiers, `--output-dir` pour
+écrire ailleurs et `--overwrite` pour remplacer un PDF existant.
+
+## Regrouper les PDF Recto/Verso en dossiers clients
+
+Le script [group_cni_pdf_pairs.py](scripts/group_cni_pdf_pairs.py) prend un
+dossier plat de PDF et repère les paires ayant le même préfixe :
+`123_CIN_Recto.pdf` avec `123_CIN_Verso.pdf`, par exemple. Il crée ensuite un
+dossier aléatoire par paire (`client-a1b2c3d4e5f6`) dans
+`clients_generated/`, en conservant les noms de PDF.
+
+```powershell
+python scripts/group_cni_pdf_pairs.py "D:\data\pdf_plats"
+```
+
+Par sécurité, le script **copie** les PDF ; les originaux restent intacts.
+Utilisez `--move` seulement lorsque vous voulez réellement les déplacer. Avant
+toute écriture, vous pouvez vérifier les paires et les PDF orphelins :
+
+```powershell
+python scripts/group_cni_pdf_pairs.py "D:\data\pdf_plats" --dry-run
+```
+
+Le fichier `clients_generated/client_mapping.json` relie chaque identifiant
+aléatoire au préfixe de la paire source. Les PDF sans recto/verso associé et
+les doublons sont explicitement affichés dans le terminal.
+
+## Coller un recto et un verso en une image
+
+Le script [combine_cni_image_pairs.py](scripts/combine_cni_image_pairs.py)
+trouve les paires image ayant le même préfixe et produit une image verticale :
+recto en haut, verso en bas. Par défaut, il crée du **PNG sans perte** : les
+images ne sont ni recadrées ni redimensionnées.
+
+```powershell
+python scripts/combine_cni_image_pairs.py "D:\data\images"
+```
+
+Les collages sont créés dans `combined_images/`. Pour réduire la taille des
+fichiers avec JPEG, choisissez une qualité explicite :
+
+```powershell
+python scripts/combine_cni_image_pairs.py "D:\data\images" --format jpeg --jpeg-quality 85
+```
+
+`--png-compress-level 0..9` règle uniquement la compression PNG sans perte ;
+il ne réduit pas la qualité visuelle.
 
 ## Ajouter des données
 

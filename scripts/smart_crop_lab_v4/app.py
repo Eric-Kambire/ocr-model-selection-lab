@@ -80,6 +80,8 @@ def _map_to_rgb(image: np.ndarray | None) -> np.ndarray | None:
 
 def _diagnostic_mosaic(maps: dict[str, np.ndarray]) -> np.ndarray:
     items = [
+        ("Cadre noir détecté", maps.get("frame_artifact_mask")),
+        ("Image nettoyée pour l'analyse", maps.get("analysis_image")),
         ("Gradient Sobel", maps.get("gradient")),
         ("Contours Canny + gradient", maps.get("edge_union")),
         ("Fermeture morphologique", maps.get("connected_edges")),
@@ -163,19 +165,28 @@ def _build_stages(
     selected: np.ndarray,
     crop: np.ndarray | None,
 ) -> list[dict[str, Any]]:
+    frame_bands = maps.get("frame_bands") or {}
+    frame_text = (
+        f"Bandes neutralisées pour l'analyse — haut={frame_bands.get('top', 0)} px, "
+        f"bas={frame_bands.get('bottom', 0)} px, "
+        f"gauche={frame_bands.get('left', 0)} px, "
+        f"droite={frame_bands.get('right', 0)} px. L'original n'est pas modifié."
+    )
     stages = [
         _stage(original, "0 — Image d’entrée", "Image ou page PDF rendue en pixels. Aucun EXIF n’est utilisé."),
-        _stage(maps.get("gray"), "1 — Niveaux de gris", "Réduction de l’image à une intensité I(x,y)."),
-        _stage(maps.get("smooth"), "2 — CLAHE + filtrage", "Contraste local renforcé, bruit fin atténué."),
-        _stage(maps.get("gradient"), "3 — Gradient Sobel", "Amplitude √(Gx²+Gy²) : les changements d’intensité deviennent visibles."),
-        _stage(maps.get("edge_union"), "4 — Contours", "Union Canny + gradients forts."),
-        _stage(maps.get("connected_edges"), "5 — Bords reconnectés", "Fermeture morphologique pour tolérer de petites ruptures."),
-        _stage(maps.get("foreground_mask"), "6 — Premier plan / fond", "Distance de couleur en espace LAB par rapport au fond estimé sur le cadre."),
-        _stage(maps.get("density_mask"), "7 — Densité / texture", "Concentration locale de contours et variance, utile pour le texte et la photo."),
-        _stage(maps.get("line_mask"), "8 — Segments de lignes", "Fragments Hough/LSD, en ignorant le cadre extérieur de l’image."),
-        _stage(debug, "9 — Candidats", "Quadrilatères proposés par les détecteurs, avec leurs scores."),
-        _stage(selected, "10 — Meilleur quadrilatère", "Fusion des indices : ratio, continuité, gradient, densité, angles et pénalités."),
-        _stage(crop, "11 — Homographie et crop", "Transformation projective des quatre coins vers un rectangle normalisé."),
+        _stage(maps.get("frame_artifact_mask"), "1 — Cadre noir détecté", frame_text),
+        _stage(maps.get("analysis_image"), "2 — Copie de travail nettoyée", "Les bandes continues sont remplacées seulement pour la détection."),
+        _stage(maps.get("gray"), "3 — Niveaux de gris", "Réduction de l’image à une intensité I(x,y)."),
+        _stage(maps.get("smooth"), "4 — CLAHE + filtrage", "Contraste local renforcé, bruit fin atténué."),
+        _stage(maps.get("gradient"), "5 — Gradient Sobel", "Amplitude √(Gx²+Gy²) : les changements d’intensité deviennent visibles."),
+        _stage(maps.get("edge_union"), "6 — Contours", "Union Canny + gradients forts."),
+        _stage(maps.get("connected_edges"), "7 — Bords reconnectés", "Fermeture morphologique pour tolérer de petites ruptures."),
+        _stage(maps.get("foreground_mask"), "8 — Premier plan / fond", "Distance LAB au fond après neutralisation du cadre."),
+        _stage(maps.get("density_mask"), "9 — Densité / texture", "Concentration locale de contours et variance."),
+        _stage(maps.get("line_mask"), "10 — Segments de lignes", "Fragments Hough/LSD ; le cadre continu a déjà été neutralisé."),
+        _stage(debug, "11 — Candidats", "Quadrilatères proposés par les détecteurs, avec leurs scores."),
+        _stage(selected, "12 — Meilleur quadrilatère", "La fuite locale pénalise un crop qui laisse du document juste à l'extérieur."),
+        _stage(crop, "13 — Homographie et crop", "Transformation projective des quatre coins vers un rectangle normalisé."),
     ]
     return [item for item in stages if item is not None]
 
@@ -240,6 +251,7 @@ def run_smart_crop(
             "pdf_dpi": int(pdf_dpi),
         },
         "top_candidates": [candidate.to_json() for candidate in candidates[:20]],
+        "detected_frame_bands_px": maps.get("frame_bands", {}),
     }
 
     crop_bgr = None
@@ -262,9 +274,13 @@ def run_smart_crop(
 
         state = "SUCCESS" if best.score >= 0.55 else "LOW_CONFIDENCE"
         icon = "✅" if state == "SUCCESS" else "⚠️"
+        leakage = float((best.metrics or {}).get("foreground_leakage_ratio", 0.0))
+        bands = maps.get("frame_bands", {})
         status_text = (
             f"{icon} **{state}** — score `{best.score:.3f}` — détecteur `{best.source}` — "
-            f"{len(candidates)} candidat(s) — `{elapsed:.3f} s`."
+            f"fuite locale `{leakage:.3f}` — {len(candidates)} candidat(s) — `{elapsed:.3f} s`. "
+            f"Cadre : H `{bands.get('top', 0)}`, B `{bands.get('bottom', 0)}`, "
+            f"G `{bands.get('left', 0)}`, D `{bands.get('right', 0)}` px."
         )
         result.update(
             {
@@ -517,7 +533,7 @@ def build_interface() -> gr.Blocks:
     with gr.Blocks(title="Smart Crop & Degradation Lab") as demo:
         gr.Markdown(
             """
-# Smart Crop & Degradation Lab
+# Smart Crop & Degradation Lab — V4
 
 Application locale CPU en trois parties : **détection**, **visualisation pas à pas** et **génération contrôlée de cas dégradés**.
 Aucune hypothèse de feuille A4 et aucune utilisation des métadonnées EXIF.
@@ -739,9 +755,11 @@ Ce n’est pas encore un réseau neuronal. C’est un **algorithme hybride de vi
 4. détection de lignes Hough et LSD ;
 5. détection de régions par densité de texture ;
 6. séparation premier plan/fond dans l’espace couleur LAB ;
-7. génération de plusieurs quadrilatères candidats ;
-8. score multi-critères ;
-9. homographie pour redresser le document.
+7. neutralisation des bandes noires continues attachées au cadre ;
+8. génération de plusieurs quadrilatères candidats ;
+9. pénalité de fuite locale autour de chaque candidat ;
+10. score multi-critères ;
+11. homographie pour redresser le document.
 
 ## Principes mathématiques simples
 
@@ -771,7 +789,10 @@ d=\frac{\text{nombre de pixels de contour dans la région}}{\text{nombre total d
 S=\sum_i w_i s_i-\sum_j \lambda_j p_j
 \]
 
-Les indices positifs sont le rapport largeur/hauteur, le gradient, la continuité, les angles proches de 90°, la densité et la répartition du premier plan. Les pénalités concernent notamment le cadre extérieur de l’image.
+Les indices positifs sont le rapport largeur/hauteur, le gradient, la continuité,
+les angles proches de 90°, la densité et la répartition du premier plan. La
+fuite locale mesure le contenu présent dans une couronne autour du candidat :
+si la carte continue juste après un bord proposé, ce candidat perd des points.
 
 **Homographie** :
 

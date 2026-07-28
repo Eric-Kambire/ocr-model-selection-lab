@@ -87,10 +87,10 @@ APP_CSS = """
 
 STEPS = (
     ("1. Source normalisée", "Le PDF est rendu en PNG ou l'image téléphone est orientée selon EXIF. Aucun format de page n'est supposé."),
-    ("2. Gris et contraste local", "La luminance est isolée puis CLAHE rend les contours plus lisibles malgré une ombre ou un éclairage inégal."),
-    ("3. Bords et bruit", "Canny et une fermeture morphologique mettent en évidence les bords. Les bandes noires continues reliées au bord du scan sont exclues de la zone de recherche."),
+    ("2. Cadre noir détecté", "Le masque montre uniquement les bandes sombres continues attachées au bord du scan ou de la capture."),
+    ("3. Copie de travail nettoyée", "Le cadre détecté est remplacé dans une copie d'analyse. La source originale n'est jamais modifiée."),
     ("4. Candidats rectangulaires", "Chaque contour plausible reçoit un score : ratio de carte, forme rectangulaire, solidité et surface. Rouge : rejeté ; orange : plausible."),
-    ("5. Candidat retenu", "Le meilleur quadrilatère crédible est dessiné en vert. Ses quatre coins servent à calculer la correction de perspective."),
+    ("5. Candidat retenu", "Le meilleur quadrilatère est dessiné en vert. Une fuite de contenu juste à l'extérieur réduit son score afin d'éviter un crop incomplet."),
     ("6. Image envoyée au modèle", "Si le score est suffisant, la CNI redressée est envoyée. Sinon, la source entière est conservée et envoyée sans rotation ni crop."),
 )
 
@@ -575,8 +575,8 @@ def _robust_detection_artifacts(
     """
     result = run_crop_method(
         source_path,
-        output_dir / "hybrid_v3",
-        method="hybrid_v3",
+        output_dir / "hybrid_v4",
+        method="hybrid_v4",
         parameters={"hybrid_min_score": 0.55},
     )
     stages = result.get("stages", [])
@@ -592,8 +592,8 @@ def _robust_detection_artifacts(
 
     paths = [
         stage_path("Source normalisée", 0),
-        stage_path("Niveaux de gris", 1),
-        stage_path("Bords reconnectés", 3),
+        stage_path("Cadre noir détecté", 1),
+        stage_path("Image nettoyée pour l'analyse", 2),
         stage_path("Candidats classés", max(0, len(stages) - 3)),
         stage_path("Décision du détecteur", max(0, len(stages) - 2)),
         str(result.get("final_path") or source_path),
@@ -601,7 +601,7 @@ def _robust_detection_artifacts(
     summary = dict(result.get("summary") or {})
     crop_detected = result.get("status") == "crop_detected"
     detection = {
-        "edge_trim": "non applicable : le cadre est pénalisé par le score",
+        "frame_bands": summary.get("frame_bands") or {},
         "candidates_found": int(summary.get("candidate_count") or 0),
         "candidates_accepted": int(crop_detected),
         "selected": (
@@ -651,14 +651,24 @@ def build_robust_pipeline(
     crop_elapsed = float(crop_result.get("elapsed_ms") or 0.0) / 1000.0
     metrics = [
         _stage_metric(STEPS[0][0], paths[0], source_elapsed, {"dpi": int(dpi), **source_preparation}),
-        _stage_metric(STEPS[1][0], paths[1], detection_elapsed, {"operation": "grayscale + CLAHE pour la détection"}),
-        _stage_metric(STEPS[2][0], paths[2], 0.0, {"operation": "Canny + fermeture morphologique", "edge_trim": detection["edge_trim"]}),
+        _stage_metric(
+            STEPS[1][0],
+            paths[1],
+            detection_elapsed,
+            {"operation": "détection des bandes sombres continues", "frame_bands": detection["frame_bands"]},
+        ),
+        _stage_metric(
+            STEPS[2][0],
+            paths[2],
+            0.0,
+            {"operation": "remplacement du cadre dans la copie de travail"},
+        ),
         _stage_metric(STEPS[3][0], paths[3], 0.0, {"candidates_found": detection["candidates_found"], "candidates_accepted": detection["candidates_accepted"]}),
         _stage_metric(STEPS[4][0], paths[4], 0.0, {"selected": detection["selected"], "selected_points": detection["selected_points"]}),
         _stage_metric(STEPS[5][0], paths[5], crop_elapsed, crop),
     ]
     state = {
-        "pipeline": "hybrid_v3",
+        "pipeline": "hybrid_v4",
         "paths": paths,
         "metrics": metrics,
         "crop": crop,
@@ -794,12 +804,18 @@ def build_pipeline(
 def _stage_markdown(index: int, state: dict[str, Any]) -> str:
     """Construit l'explication affichée à côté de l'image de l'étape."""
     title, explanation = STEPS[index]
-    if state.get("pipeline") in {"robust_opencv", "hybrid_v3"}:
-        if index == 2:
-            trim = state["detection"]["edge_trim"]
+    if state.get("pipeline") in {"robust_opencv", "hybrid_v3", "hybrid_v4"}:
+        if index == 1:
+            bands = state["detection"].get("frame_bands") or {}
             explanation += (
-                f"\n\nGestion du cadre : `{trim}`. "
-                "Cette étape n'altère jamais l'image source envoyée si la détection échoue."
+                "\n\nBandes détectées : "
+                f"haut `{bands.get('top', 0)}` px, bas `{bands.get('bottom', 0)}` px, "
+                f"gauche `{bands.get('left', 0)}` px, droite `{bands.get('right', 0)}` px."
+            )
+        if index == 2:
+            explanation += (
+                "\n\nCette image est une copie de calcul. Le fichier source reste "
+                "inchangé et sera utilisé intégralement si aucun crop n'est accepté."
             )
         if index == 3:
             explanation += (
@@ -917,7 +933,7 @@ def build_ui() -> gr.Blocks:
                 gr.HTML("<div class='crop-section-title'>2. Rendu</div><div class='crop-section-copy'>Le DPI n'est utile que pour rendre un PDF. Une image téléphone conserve ses pixels.</div>")
                 dpi = gr.Slider(72, 600, value=300, step=1, label="DPI de rendu")
             with gr.Column(scale=3, elem_id="crop-rotation"):
-                gr.HTML("<div class='crop-section-title'>3. Détection hybride V3</div><div class='crop-section-copy'>Contours, lignes, texture et premier plan proposent des candidats comparables.</div>")
+                gr.HTML("<div class='crop-section-title'>3. Détection hybride V4</div><div class='crop-section-copy'>Cadre noir neutralisé, candidats comparés et crops incomplets pénalisés.</div>")
                 gr.Markdown(
                     "**Mode actif :** score multi-détecteurs. Le moteur pénalise le cadre de l'image et "
                     "les objets dispersés. Il redresse uniquement un quadrilatère assez fiable ; sinon "

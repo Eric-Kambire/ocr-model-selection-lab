@@ -24,7 +24,7 @@ METHOD_LABELS = {
     "canny_contours": "Canny + contours quadrilatères",
     "min_area_rect": "Rectangle orienté global (minAreaRect)",
     "pillow_ratio": "Pillow — recherche d'angle par ratio",
-    "hybrid_v3": "Hybride V3 — multi-détecteurs",
+    "hybrid_v4": "Hybride V4 — cadre et fuite locale",
 }
 
 METHOD_DESCRIPTIONS = {
@@ -44,10 +44,10 @@ METHOD_DESCRIPTIONS = {
         "Tourne une copie réduite de la page à plusieurs angles et retient le "
         "rectangle englobant dont le ratio est le plus proche d'une CNI."
     ),
-    "hybrid_v3": (
+    "hybrid_v4": (
         "Combine contours, lignes Hough/LSD, texture et premier plan. Plusieurs "
         "quadrilatères sont classés par continuité des bords, ratio, angles, "
-        "densité et distance au cadre avant la correction de perspective."
+        "densité, cadre noir et contenu laissé juste hors du crop."
     ),
 }
 
@@ -121,6 +121,9 @@ def run_crop_method(
     parameters: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Exécute une méthode et retourne toutes ses étapes visualisables."""
+    # Compatibilité avec les appels ou rapports créés avant la mise à jour V4.
+    if method == "hybrid_v3":
+        method = "hybrid_v4"
     if method not in METHOD_LABELS:
         raise ValueError(f"Méthode inconnue : {method}")
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -135,7 +138,7 @@ def run_crop_method(
     elif method == "pillow_ratio":
         result = _pillow_ratio_pipeline(source_path, output_dir, values)
     else:
-        result = _hybrid_v3_pipeline(source_path, output_dir, values)
+        result = _hybrid_v4_pipeline(source_path, output_dir, values)
     # OpenCV retourne certains nombres et tableaux dans des types NumPy. Le
     # rapport, Gradio et les futurs exports doivent recevoir uniquement des
     # structures Python sérialisables.
@@ -165,19 +168,19 @@ def _json_safe(value: Any) -> Any:
     return value
 
 
-def _hybrid_v3_pipeline(
+def _hybrid_v4_pipeline(
     source_path: Path,
     output_dir: Path,
     parameters: dict[str, Any],
 ) -> dict[str, Any]:
-    """Exécute le détecteur V3 et expose ses décisions étape par étape.
+    """Exécute le détecteur V4 et expose ses décisions étape par étape.
 
     La détection travaille éventuellement sur une copie réduite, mais les
     quatre coins sont remis à l'échelle avant le crop de l'image originale.
     Un score insuffisant active le fallback sûr vers l'image entière.
     """
     cv2, np = _opencv()
-    from .cni_smart_crop_v3 import (
+    from .cni_smart_crop import (
         DetectorConfig,
         detect_card,
         draw_debug,
@@ -208,7 +211,24 @@ def _hybrid_v3_pipeline(
 
     best, candidates, maps, scale = detect_card(original, config)
     working, _ = resize_for_work(original, config.max_working_side)
+    frame_bands = maps.get("frame_bands") or {}
     diagnostic_maps = (
+        (
+            "Cadre noir détecté",
+            "frame_artifact_mask",
+            (
+                "Seules les bandes sombres continues attachées au bord sont "
+                f"retenues : haut={frame_bands.get('top', 0)} px, "
+                f"bas={frame_bands.get('bottom', 0)} px, "
+                f"gauche={frame_bands.get('left', 0)} px, "
+                f"droite={frame_bands.get('right', 0)} px."
+            ),
+        ),
+        (
+            "Image nettoyée pour l'analyse",
+            "analysis_image",
+            "Le cadre est remplacé uniquement dans la copie de travail ; l'original reste intact.",
+        ),
         ("Niveaux de gris", "gray", "Luminance utilisée par les détecteurs."),
         (
             "Gradient Sobel",
@@ -310,6 +330,7 @@ def _hybrid_v3_pipeline(
                 "candidate_count": len(candidates),
                 "best": best.to_json() if best is not None else None,
                 "working_scale": scale,
+                "frame_bands": frame_bands,
             },
         )
 
@@ -328,7 +349,7 @@ def _hybrid_v3_pipeline(
     }
     if final_rotation in rotations:
         crop = cv2.rotate(crop, rotations[final_rotation])
-    final_path = output_dir / "final_hybrid_v3.png"
+    final_path = output_dir / "final_hybrid_v4.png"
     if not cv2.imwrite(str(final_path), crop):
         raise OSError(f"Impossible d'écrire le crop final : {final_path}")
     _save_stage(
@@ -358,6 +379,7 @@ def _hybrid_v3_pipeline(
             "detector": best.source,
             "candidate_count": len(candidates),
             "metrics": best.metrics,
+            "frame_bands": frame_bands,
         },
     }
 
