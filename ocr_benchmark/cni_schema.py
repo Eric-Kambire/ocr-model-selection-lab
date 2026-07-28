@@ -117,6 +117,45 @@ def build_combined_cni_prompt(fields: dict[str, list[dict[str, str]]] | None = N
     )
 
 
+def build_cni_output_schema(
+    side: str,
+    fields: dict[str, list[dict[str, str]]] | None = None,
+) -> dict[str, Any]:
+    """Construit le JSON Schema envoyé aux fournisseurs qui le supportent.
+
+    ``side`` accepte ``recto``, ``verso`` ou ``combined``. Toutes les clés sont
+    obligatoires, mais leur valeur peut être ``null`` lorsque l'information est
+    absente ou illisible. Le parser local reste ensuite la source de vérité.
+    """
+    config = fields or load_cni_field_config()
+
+    def side_schema(side_name: str) -> dict[str, Any]:
+        keys = [str(item["key"]) for item in config[side_name]]
+        return {
+            "type": "object",
+            "properties": {
+                key: {"type": ["string", "null"]}
+                for key in keys
+            },
+            "required": keys,
+            "additionalProperties": False,
+        }
+
+    if side in {"recto", "verso"}:
+        return side_schema(side)
+    if side == "combined":
+        return {
+            "type": "object",
+            "properties": {
+                "recto": side_schema("recto"),
+                "verso": side_schema("verso"),
+            },
+            "required": ["recto", "verso"],
+            "additionalProperties": False,
+        }
+    raise ValueError("side must be 'recto', 'verso' or 'combined'.")
+
+
 def parse_cni_json_response(raw_text: str, side: str, fields: dict[str, list[dict[str, str]]] | None = None) -> tuple[dict[str, str | None], str | None]:
     """Parse une réponse modèle selon les seuls champs configurés de la face."""
     if side not in {"recto", "verso"}:

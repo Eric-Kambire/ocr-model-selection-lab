@@ -111,6 +111,22 @@ def test_hybrid_v4_returns_original_when_confidence_is_insufficient(tmp_path: Pa
     assert Path(result["final_path"]) == source
 
 
+def test_intermediate_stage_generation_can_be_disabled(tmp_path: Path):
+    """La production peut garder source/sortie sans écrire tous les diagnostics."""
+    source = tmp_path / "scan.png"
+    _noisy_card_scan(source)
+
+    result = run_crop_method(
+        source,
+        tmp_path / "compact",
+        method="hybrid_v4",
+        parameters={"hybrid_min_score": 0.40, "generate_steps": False},
+    )
+
+    assert Path(result["final_path"]).exists()
+    assert len(result["stages"]) <= 3
+
+
 def test_v4_detects_only_continuous_dark_frame_bands():
     """Une bordure continue est neutralisée, pas un simple objet sombre isolé."""
     import numpy as np

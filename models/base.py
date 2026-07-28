@@ -8,13 +8,21 @@ class BaseOCRModel(abc.ABC):
         self.model_name = model_name
 
     @abc.abstractmethod
-    def perform_ocr(self, image_path: str, *, prompt: str | None = None, system_prompt: str | None = None) -> dict:
+    def perform_ocr(
+        self,
+        image_path: str,
+        *,
+        prompt: str | None = None,
+        system_prompt: str | None = None,
+        output_format: str = "prompt",
+        output_schema: dict | None = None,
+    ) -> dict:
         """
         Performs OCR on the given image.
 
-        ``prompt`` is optional so a structured workflow can reuse one loaded
-        vision model for different pages of the same document. Adapters that
-        do not support prompts simply ignore it.
+        ``output_format`` vaut ``prompt``, ``json`` ou ``schema``. Les
+        adaptateurs qui ne supportent pas la contrainte structurée peuvent
+        l'ignorer ; le parser applicatif validera toujours la réponse.
         
         Returns a dictionary with:
             - "text": Extracted text (clean transcription)

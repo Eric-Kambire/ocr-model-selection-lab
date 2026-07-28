@@ -23,6 +23,7 @@ from .cni_ingestion import write_cni_json
 from .cni_preprocessing import prepare_cni_source, preprocess_cni_image
 from .cni_schema import (
     build_cni_global_json,
+    build_cni_output_schema,
     build_cni_prompt,
     build_combined_cni_prompt,
     parse_cni_json_response,
@@ -49,6 +50,7 @@ def iter_cni_benchmark(
     fields: dict[str, list[dict[str, str]]] | None = None,
     prompt_instructions: str | None = None,
     system_prompt: str | None = None,
+    output_format_mode: str = "schema",
     preprocessing: dict[str, Any] | None = None,
 ) -> Iterator[dict[str, Any]]:
     """Émet des événements live et persiste un jeu d'artefacts par modèle/client.
@@ -148,6 +150,7 @@ def iter_cni_benchmark(
                     fields=fields,
                     prompt_instructions=prompt_instructions,
                     system_prompt=system_prompt,
+                    output_format_mode=output_format_mode,
                 )
                 completed += 1
                 results.append(result)
@@ -262,6 +265,7 @@ def _extract_one_cni_client(
     fields: dict[str, list[dict[str, str]]] | None,
     prompt_instructions: str | None,
     system_prompt: str | None,
+    output_format_mode: str,
 ) -> dict[str, Any]:
     """Exécute une stratégie et écrit les JSON recto, verso et global."""
     artefacts_dir = Path(prepared["recto_crop"]["image_path"]).parent
@@ -276,6 +280,8 @@ def _extract_one_cni_client(
             artefacts_dir,
             "combined",
             system_prompt,
+            output_format_mode,
+            build_cni_output_schema("combined", fields),
         )
         recto, verso, parse_error = parse_combined_cni_json_response(inference.text, fields)
         recto_inference = verso_inference = inference
@@ -291,6 +297,8 @@ def _extract_one_cni_client(
             artefacts_dir,
             "recto",
             system_prompt,
+            output_format_mode,
+            build_cni_output_schema("recto", fields),
         )
         verso_inference = _perform_cni_call(
             model,
@@ -300,6 +308,8 @@ def _extract_one_cni_client(
             artefacts_dir,
             "verso",
             system_prompt,
+            output_format_mode,
+            build_cni_output_schema("verso", fields),
         )
         recto, recto_parse_error = parse_cni_json_response(recto_inference.text, "recto", fields)
         verso, verso_parse_error = parse_cni_json_response(verso_inference.text, "verso", fields)
@@ -376,6 +386,8 @@ def _perform_cni_call(
     artefacts_dir: Path,
     side: str,
     system_prompt: str | None,
+    output_format_mode: str,
+    output_schema: dict[str, Any],
 ) -> InferenceResult:
     """Appelle une image et conserve sortie brute ou sortie tardive."""
     def save_late(raw: Any | None, error: str | None) -> None:
@@ -393,7 +405,9 @@ def _perform_cni_call(
     # Le prompt exact reste dans le run, même si l'appel échoue. C'est le
     # point de départ indispensable pour comprendre une réponse invalide.
     (artefacts_dir / f"prompt_{side}.txt").write_text(
-        "--- SYSTEM ---\n" + (system_prompt or "") + "\n\n--- USER ---\n" + prompt,
+        f"--- OUTPUT FORMAT ---\n{output_format_mode}\n\n"
+        + "--- SYSTEM ---\n" + (system_prompt or "")
+        + "\n\n--- USER ---\n" + prompt,
         encoding="utf-8",
     )
     raw = BenchmarkRunner._perform_with_timeout(
@@ -402,6 +416,8 @@ def _perform_cni_call(
         timeout_seconds,
         prompt=prompt,
         system_prompt=system_prompt,
+        output_format=output_format_mode,
+        output_schema=output_schema,
         late_result=save_late,
     )
     inference = raw if isinstance(raw, InferenceResult) else InferenceResult.from_legacy_dict(raw)

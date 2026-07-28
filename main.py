@@ -30,10 +30,8 @@ from ocr_benchmark.application.cni_service import (
     scan_cni_documents,
 )
 from ocr_benchmark.application.cni_settings_service import (
-    cni_settings_from_ui,
     default_cni_settings,
     load_cni_settings,
-    save_cni_settings,
 )
 from ocr_benchmark.application.qlicker_api_service import (
     download_qlicker_file,
@@ -70,6 +68,11 @@ from ocr_benchmark.cni import (
 from ocr_benchmark.dataset_repository import DatasetRepository
 from ocr_benchmark.reporting import RunCheckpoint
 from ocr_benchmark.runner import summarize_results
+from ocr_benchmark.ui.cni.handlers import (
+    create_persist_settings_handler,
+    request_cancel as request_cni_cancel_handler,
+)
+from ocr_benchmark.ui.cni.settings_view import build_cni_core_settings
 from ocr_benchmark.visualization import (
     category_quality_chart,
     cni_accuracy_chart,
@@ -1552,103 +1555,28 @@ def build_ui() -> gr.Blocks:
                     with gr.Tab("4. Paramètres", render_children=True):
                         gr.Markdown("### Paramètres CNI\n\nLes réglages sont appliqués au prochain lancement.")
                         with gr.Tabs(elem_id="cni-settings-tabs"):
-                            with gr.Tab("Exécution"):
-                                with gr.Row():
-                                    cni_strategy = gr.Radio(
-                                [
-                                    ("Deux appels : recto puis verso — recommandé", "separate_calls"),
-                                    ("Une image : recto en haut, verso en bas", "combined_vertical"),
-                                ],
-                                value=cni_settings["strategy"],
-                                label="Stratégie d'envoi au modèle",
+                            cni_settings_view = build_cni_core_settings(
+                                cni_settings,
+                                _cni_prompt_preview,
                             )
-                                    cni_dpi = gr.Slider(150, 450, value=cni_settings["dpi"], step=25, label="Résolution PDF (DPI)")
-                                    cni_timeout = gr.Number(value=cni_settings["timeout_seconds"], minimum=1, maximum=7200, precision=0, label="Temps maximum par appel (s)")
-                                with gr.Row():
-                                    cni_cpu_threads = gr.Number(value=min(cni_settings["cpu_threads"], max(1, os.cpu_count() or 1)), minimum=1, maximum=max(1, os.cpu_count() or 1), precision=0, label="Threads CPU Ollama")
-                                    cni_unload = gr.Checkbox(value=cni_settings["unload_after_task"], label="Décharger le modèle après chaque appel")
-                                with gr.Row():
-                                    cni_recto_suffix = gr.Textbox(
-                                        value=cni_settings["recto_suffix"],
-                                        label="Suffixe recto",
-                                        info="Ex. _CIN_Recto ou CIN_recto. L'extension PDF/JPG/PNG est ignorée.",
-                                    )
-                                    cni_verso_suffix = gr.Textbox(
-                                        value=cni_settings["verso_suffix"],
-                                        label="Suffixe verso",
-                                        info="Ex. _CIN_Verso ou CIN_verso. L'extension PDF/JPG/PNG est ignorée.",
-                                    )
-                            with gr.Tab("Prétraitement"):
-                                cni_crop_method = gr.Radio(
-                                    [
-                                        ("Smart Crop V4 · recommandé", "smart_crop_v4"),
-                                        ("OpenCV historique · comparaison", "legacy_opencv"),
-                                        ("Aucun crop · image entière", "original"),
-                                    ],
-                                    value=cni_settings["crop_method"],
-                                    label="Méthode de détection et de recadrage",
-                                    info=(
-                                        "V4 combine contours, lignes, texture et premier plan. "
-                                        "Si son score est insuffisant, l'image entière est envoyée au modèle."
-                                    ),
-                                )
-                                with gr.Row():
-                                    cni_smart_crop_min_score = gr.Slider(
-                                        0.30,
-                                        0.90,
-                                        value=cni_settings["smart_crop_min_score"],
-                                        step=0.01,
-                                        label="Score minimum V4",
-                                        info="Plus le seuil est élevé, plus le crop est prudent. Défaut : 0,55.",
-                                    )
-                                    cni_smart_crop_margin = gr.Slider(
-                                        0.0,
-                                        0.05,
-                                        value=cni_settings["smart_crop_margin"],
-                                        step=0.002,
-                                        label="Marge autour de la carte",
-                                        info="Proportion ajoutée autour du quadrilatère retenu. Défaut : 0,012.",
-                                    )
-                                gr.Markdown(
-                                    "La détection peut travailler sur une copie réduite pour être rapide, "
-                                    "mais les coins sont remis à l’échelle et le crop final utilise les pixels "
-                                    "du rendu original. Le DPI de sortie n’est pas diminué."
-                                )
-                                with gr.Row():
-                                    cni_rotation_method = gr.Radio(
-                                [("Aucune rotation automatique", "none"), ("Pillow · recherche par ratio", "pillow"), ("OpenCV · rectangle orienté", "opencv")],
-                                value=cni_settings["rotation_method"], label="Rotation automatique",
-                                info="Post-traitement avancé après un crop fiable. Laissez « Aucune » avec Smart Crop V4, qui redresse déjà la carte.",
-                            )
-                                    cni_perspective_correction = gr.Checkbox(
-                                value=cni_settings["perspective_correction"], label="Seconde correction de perspective",
-                                info="Déconseillée avec Smart Crop V4. Utile uniquement pour comparer ou corriger une sortie héritée.",
-                            )
-                                cni_preprocessing = gr.CheckboxGroup(
-                            [("Améliorer le contraste", "contrast"), ("Réduire le bruit", "denoise")],
-                            value=cni_settings["preprocessing"], label="Améliorations complémentaires",
-                            info="Appliquées après la détection/correction robuste. En cas de doute de crop, aucune option ne modifie la page/photo envoyée au modèle.",
-                        )
-                            with gr.Tab("Prompt et champs"):
-                                cni_system_prompt = gr.Textbox(
-                            value=cni_settings["system_prompt"],
-                            label="Prompt système",
-                            lines=5,
-                            info="Règle de plus haute priorité. Trop long ou contradictoire réduit la stabilité des réponses.",
-                        )
-                                cni_prompt_instructions = gr.Textbox(
-                            value=cni_settings["prompt_instructions"],
-                            label="Prompt utilisateur / consignes d'extraction",
-                            lines=4,
-                            info="Demande appliquée à chaque image. Les clés JSON doivent rester stables pour comparer les modèles.",
-                        )
-                                cni_prompt_preview = gr.Code(
-                            value=_cni_prompt_preview(cni_settings["strategy"], cni_settings["system_prompt"], cni_settings["prompt_instructions"]),
-                            label="Prompts réellement envoyés (système + utilisateur)",
-                            lines=18,
-                            interactive=False,
-                        )
-                                cni_refresh_prompt = gr.Button("Actualiser l’aperçu du prompt")
+                            cni_strategy = cni_settings_view.strategy
+                            cni_dpi = cni_settings_view.dpi
+                            cni_timeout = cni_settings_view.timeout
+                            cni_cpu_threads = cni_settings_view.cpu_threads
+                            cni_unload = cni_settings_view.unload
+                            cni_recto_suffix = cni_settings_view.recto_suffix
+                            cni_verso_suffix = cni_settings_view.verso_suffix
+                            cni_crop_method = cni_settings_view.crop_method
+                            cni_smart_crop_min_score = cni_settings_view.smart_crop_min_score
+                            cni_smart_crop_margin = cni_settings_view.smart_crop_margin
+                            cni_rotation_method = cni_settings_view.rotation_method
+                            cni_perspective_correction = cni_settings_view.perspective_correction
+                            cni_preprocessing = cni_settings_view.preprocessing
+                            cni_output_format_mode = cni_settings_view.output_format_mode
+                            cni_system_prompt = cni_settings_view.system_prompt
+                            cni_prompt_instructions = cni_settings_view.prompt_instructions
+                            cni_prompt_preview = cni_settings_view.prompt_preview
+                            cni_refresh_prompt = cni_settings_view.refresh_prompt
                             with gr.Tab("API QlickEER"):
                                 gr.Markdown(
                                     "La configuration est enregistrée localement dans `config/qlickeer_api.local.json` "
@@ -2856,57 +2784,19 @@ def build_ui() -> gr.Blocks:
             """Passe à la paire CNI suivante."""
             return show_cni_detail(index, results, 1)
 
-        def persist_cni_settings(
-            models, strategy, dpi, timeout, threads, unload, continue_without_label,
-            recto_suffix, verso_suffix, crop_method, smart_crop_min_score,
-            smart_crop_margin, rotation_method, perspective_correction, preprocessing,
-            system_prompt, prompt_instructions,
-        ):
-            """Sauvegarde automatiquement les réglages CNI, sans bouton dédié."""
-            value = cni_settings_from_ui(
-                models=models,
-                strategy=strategy,
-                dpi=dpi,
-                timeout_seconds=timeout,
-                cpu_threads=threads,
-                unload_after_task=unload,
-                continue_without_label=continue_without_label,
-                recto_suffix=recto_suffix,
-                verso_suffix=verso_suffix,
-                crop_method=crop_method,
-                smart_crop_min_score=smart_crop_min_score,
-                smart_crop_margin=smart_crop_margin,
-                rotation_method=rotation_method,
-                perspective_correction=perspective_correction,
-                preprocessing=preprocessing,
-                system_prompt=system_prompt,
-                prompt_instructions=prompt_instructions,
-            )
-            try:
-                save_cni_settings(CNI_SETTINGS_CONFIG_PATH, value, defaults=cni_settings_defaults)
-                LOGGER.info("CNI settings saved automatically | strategy=%s | preprocessing=%s", value["strategy"], value["preprocessing"])
-            except OSError:
-                LOGGER.exception("CNI settings auto-save failed")
+        persist_cni_settings = create_persist_settings_handler(
+            CNI_SETTINGS_CONFIG_PATH,
+            cni_settings_defaults,
+        )
 
         def request_cni_cancel(client_records):
-            """Annule le run sans supprimer la sélection déjà préparée."""
-            ready = sum(record.get("status") == "ready" for record in (client_records or []))
-            message = (
-                f"Annulation demandée. La sélection est conservée ({ready} paire(s) prête(s)). "
-                "Cliquez sur Relancer pour reprendre ; ne préparez pas à nouveau les documents."
-            )
-            return (
-                gr.update(visible=True, value="Relancer"),
-                gr.update(visible=False),
-                _cni_alert_html("warning", message),
-                "Annulation demandée ; sélection conservée.",
-            )
+            return request_cni_cancel_handler(client_records, _cni_alert_html)
 
         def on_cni_run(
             model_specs, client_records, strategy, dpi, timeout, threads, unload,
             crop_method, smart_crop_min_score, smart_crop_margin, rotation_method,
             perspective_correction, preprocessing, system_prompt,
-            prompt_instructions, continue_without_label,
+            prompt_instructions, output_format_mode, continue_without_label,
         ):
             """Valide le lancement puis diffuse l'avancement CNI document par document."""
             empty = empty_figure()
@@ -2978,6 +2868,7 @@ def build_ui() -> gr.Blocks:
                     strategy=str(strategy), dpi=int(dpi), timeout_seconds=float(timeout or 0),
                     cpu_threads=int(threads or 1), unload_after_task=bool(unload),
                     fields=fields, prompt_instructions=prompt_instructions, system_prompt=system_prompt,
+                    output_format_mode=output_format_mode,
                     preprocessing={
                         **{str(value): True for value in (preprocessing or [])},
                         "crop_method": crop_method,
@@ -3405,16 +3296,16 @@ def build_ui() -> gr.Blocks:
             cni_unload, cni_continue_without_label, cni_recto_suffix,
             cni_verso_suffix, cni_crop_method, cni_smart_crop_min_score,
             cni_smart_crop_margin, cni_rotation_method,
-            cni_perspective_correction, cni_preprocessing, cni_system_prompt,
-            cni_prompt_instructions,
+            cni_perspective_correction, cni_preprocessing,
+            cni_output_format_mode, cni_system_prompt, cni_prompt_instructions,
         ]
         for setting_component in (
             cni_models, cni_strategy, cni_dpi, cni_timeout, cni_cpu_threads,
             cni_unload, cni_continue_without_label, cni_recto_suffix,
             cni_verso_suffix, cni_crop_method, cni_smart_crop_min_score,
             cni_smart_crop_margin, cni_rotation_method,
-            cni_perspective_correction, cni_preprocessing, cni_system_prompt,
-            cni_prompt_instructions,
+            cni_perspective_correction, cni_preprocessing,
+            cni_output_format_mode, cni_system_prompt, cni_prompt_instructions,
         ):
             setting_component.change(
                 persist_cni_settings,
@@ -3429,7 +3320,8 @@ def build_ui() -> gr.Blocks:
                 cni_smart_crop_min_score, cni_smart_crop_margin,
                 cni_rotation_method, cni_perspective_correction,
                 cni_preprocessing, cni_system_prompt,
-                cni_prompt_instructions, cni_continue_without_label,
+                cni_prompt_instructions, cni_output_format_mode,
+                cni_continue_without_label,
             ],
             outputs=[
                 cni_launch_feedback,

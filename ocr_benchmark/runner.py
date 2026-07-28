@@ -192,13 +192,26 @@ class BenchmarkRunner:
         *,
         prompt: str | None = None,
         system_prompt: str | None = None,
+        output_format: str = "prompt",
+        output_schema: dict[str, Any] | None = None,
         late_result: Callable[[Any | None, str | None], None] | None = None,
     ):
         if timeout_seconds is None or timeout_seconds <= 0:
-            return _perform_model_call(model, image_path, prompt, system_prompt)
+            return _perform_model_call(
+                model, image_path, prompt, system_prompt,
+                output_format=output_format, output_schema=output_schema,
+            )
 
         executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
-        future = executor.submit(_perform_model_call, model, image_path, prompt, system_prompt)
+        future = executor.submit(
+            _perform_model_call,
+            model,
+            image_path,
+            prompt,
+            system_prompt,
+            output_format=output_format,
+            output_schema=output_schema,
+        )
         try:
             return future.result(timeout=timeout_seconds)
         except concurrent.futures.TimeoutError:
@@ -368,12 +381,28 @@ def _unique_join(values: pd.Series) -> str:
     return ", ".join(sorted({str(value) for value in values if value}))
 
 
-def _perform_model_call(model: Any, image_path: str, prompt: str | None, system_prompt: str | None = None) -> Any:
+def _perform_model_call(
+    model: Any,
+    image_path: str,
+    prompt: str | None,
+    system_prompt: str | None = None,
+    *,
+    output_format: str = "prompt",
+    output_schema: dict[str, Any] | None = None,
+) -> Any:
     """Keep existing adapters compatible unless a structured prompt is supplied."""
     if prompt is None:
         return model.perform_ocr(image_path)
     parameters = inspect.signature(model.perform_ocr).parameters.values()
-    accepts_system = any(parameter.name == "system_prompt" or parameter.kind is inspect.Parameter.VAR_KEYWORD for parameter in parameters)
-    if system_prompt and accepts_system:
-        return model.perform_ocr(image_path, prompt=prompt, system_prompt=system_prompt)
-    return model.perform_ocr(image_path, prompt=prompt)
+    names = {parameter.name for parameter in parameters}
+    accepts_kwargs = any(
+        parameter.kind is inspect.Parameter.VAR_KEYWORD for parameter in parameters
+    )
+    options: dict[str, Any] = {"prompt": prompt}
+    if system_prompt and ("system_prompt" in names or accepts_kwargs):
+        options["system_prompt"] = system_prompt
+    if "output_format" in names or accepts_kwargs:
+        options["output_format"] = output_format
+    if output_schema is not None and ("output_schema" in names or accepts_kwargs):
+        options["output_schema"] = output_schema
+    return model.perform_ocr(image_path, **options)

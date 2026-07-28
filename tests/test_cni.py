@@ -8,6 +8,7 @@ from PIL import Image, ImageDraw
 
 from ocr_benchmark.cni import (
     build_cni_global_json,
+    build_cni_output_schema,
     build_cni_prompt,
     crop_cni_from_a4,
     import_cni_zip,
@@ -154,6 +155,18 @@ def test_cni_prompt_prevents_parent_name_and_identifier_confusion():
     assert "names after 'Fils de'/'Et de' are parents" in verso_prompt
     assert "top-left/top repeated number" in verso_prompt
     assert "multi-line address" in verso_prompt
+
+
+def test_cni_output_schema_is_strict_and_nullable():
+    """Le schéma fournisseur impose les clés sans inventer les valeurs."""
+    recto = build_cni_output_schema("recto")
+    combined = build_cni_output_schema("combined")
+
+    assert recto["additionalProperties"] is False
+    assert set(recto["required"]) == set(recto["properties"])
+    assert recto["properties"]["cin"]["type"] == ["string", "null"]
+    assert combined["required"] == ["recto", "verso"]
+    assert combined["properties"]["verso"]["additionalProperties"] is False
 
 
 def test_zip_import_rejects_path_traversal(tmp_path: Path):
