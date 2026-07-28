@@ -12,7 +12,7 @@ import json
 import math
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Iterable, Sequence
+from typing import Any, Iterable, Sequence
 
 import cv2
 import numpy as np
@@ -147,8 +147,94 @@ def auto_canny(gray: np.ndarray, sigma: float = 0.33) -> np.ndarray:
     return cv2.Canny(gray, lower, upper, L2gradient=True)
 
 
-def preprocess(image: np.ndarray, config: DetectorConfig) -> dict[str, np.ndarray]:
+def detect_dark_frame_bands(
+    image: np.ndarray,
+) -> tuple[int, int, int, int, np.ndarray]:
+    """Détecte uniquement les bandes sombres continues attachées au cadre.
+
+    Une ligne ou colonne est considérée comme une bande de scanner lorsque
+    82 % au moins de ses pixels ont une luminance inférieure à 55. La recherche
+    part du bord et s'arrête au premier rang non conforme ; un objet sombre
+    isolé dans un coin ne suffit donc pas à être supprimé.
+    """
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    height, width = gray.shape
+    dark = gray < 55
+    row_ratio = dark.mean(axis=1)
+    col_ratio = dark.mean(axis=0)
+
+    def leading(values: np.ndarray, max_count: int) -> int:
+        count = 0
+        for value in values[:max_count]:
+            if float(value) < 0.82:
+                break
+            count += 1
+        return count
+
+    def trailing(values: np.ndarray, max_count: int) -> int:
+        count = 0
+        for value in values[::-1][:max_count]:
+            if float(value) < 0.82:
+                break
+            count += 1
+        return count
+
+    top = leading(row_ratio, max(1, int(round(height * 0.08))))
+    bottom = trailing(row_ratio, max(1, int(round(height * 0.08))))
+    left = leading(col_ratio, max(1, int(round(width * 0.08))))
+    right = trailing(col_ratio, max(1, int(round(width * 0.08))))
+
+    mask = np.zeros((height, width), dtype=np.uint8)
+    if top:
+        mask[:top, :] = 255
+    if bottom:
+        mask[height - bottom :, :] = 255
+    if left:
+        mask[:, :left] = 255
+    if right:
+        mask[:, width - right :] = 255
+    return top, bottom, left, right, mask
+
+
+def replace_detected_frame(
+    image: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray, dict[str, int]]:
+    """Remplace le cadre détecté dans une copie par la couleur de fond voisine."""
+    top, bottom, left, right, mask = detect_dark_frame_bands(image)
+    cleaned = image.copy()
+    height, width = image.shape[:2]
+
+    y0 = min(height - 1, top + 2)
+    y1 = max(0, height - bottom - 3)
+    x0 = min(width - 1, left + 2)
+    x1 = max(0, width - right - 3)
+    samples: list[np.ndarray] = []
+    if y0 < height:
+        samples.append(image[y0 : min(height, y0 + 5), max(0, x0) : min(width, x1 + 1)])
+    if y1 >= 0:
+        samples.append(image[max(0, y1 - 4) : y1 + 1, max(0, x0) : min(width, x1 + 1)])
+    if x0 < width:
+        samples.append(image[max(0, y0) : min(height, y1 + 1), x0 : min(width, x0 + 5)])
+    if x1 >= 0:
+        samples.append(image[max(0, y0) : min(height, y1 + 1), max(0, x1 - 4) : x1 + 1])
+    valid = [sample.reshape(-1, 3) for sample in samples if sample.size]
+    fill = (
+        np.median(np.concatenate(valid, axis=0), axis=0).astype(np.uint8)
+        if valid
+        else np.array([255, 255, 255], dtype=np.uint8)
+    )
+    cleaned[mask > 0] = fill
+    return cleaned, mask, {
+        "top": top,
+        "bottom": bottom,
+        "left": left,
+        "right": right,
+    }
+
+
+def preprocess(image: np.ndarray, config: DetectorConfig) -> dict[str, Any]:
+    analysis_image, frame_artifact_mask, frame_bands = replace_detected_frame(image)
+    gray = cv2.cvtColor(analysis_image, cv2.COLOR_BGR2GRAY)
     clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8)).apply(gray)
     smooth = cv2.bilateralFilter(clahe, 7, 40, 40)
 
@@ -216,7 +302,7 @@ def preprocess(image: np.ndarray, config: DetectorConfig) -> dict[str, np.ndarra
     # It does not assume A4 and it does not require an intact outer border.
     height, width = image.shape[:2]
     strip = max(4, int(round(min(height, width) * 0.025)))
-    lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB).astype(np.float32)
+    lab = cv2.cvtColor(analysis_image, cv2.COLOR_BGR2LAB).astype(np.float32)
     border_pixels = np.concatenate(
         [
             lab[:strip].reshape(-1, 3),
@@ -268,6 +354,9 @@ def preprocess(image: np.ndarray, config: DetectorConfig) -> dict[str, np.ndarra
     )
 
     return {
+        "analysis_image": analysis_image,
+        "frame_artifact_mask": frame_artifact_mask,
+        "frame_bands": frame_bands,
         "gray": gray,
         "smooth": smooth,
         "gradient": gradient_u8,
@@ -807,6 +896,34 @@ def foreground_distribution_scores(
     return float(combined), fill_ratio, float(occupancy)
 
 
+def foreground_leakage_penalty(
+    quad: np.ndarray,
+    foreground_mask: np.ndarray,
+    expansion_ratio: float = 0.18,
+) -> tuple[float, float]:
+    """Pénalise un quadrilatère qui laisse du document juste à l'extérieur.
+
+    Le candidat est agrandi localement. Les pixels de premier plan présents
+    dans la couronne indiquent qu'une ligne interne a probablement été choisie
+    comme bord. Le bruit éloigné n'intervient pas car il reste hors couronne.
+    """
+    points = order_quad(quad)
+    center = points.mean(axis=0)
+    expanded = center + (points - center) * (1.0 + 2.0 * expansion_ratio)
+    height, width = foreground_mask.shape[:2]
+    expanded[:, 0] = np.clip(expanded[:, 0], 0, width - 1)
+    expanded[:, 1] = np.clip(expanded[:, 1], 0, height - 1)
+
+    inside = quad_mask(foreground_mask.shape, points) > 0
+    outer = quad_mask(foreground_mask.shape, expanded) > 0
+    ring = outer & (~inside)
+    inside_foreground = int(np.count_nonzero((foreground_mask > 0) & inside))
+    ring_foreground = int(np.count_nonzero((foreground_mask > 0) & ring))
+    leakage_ratio = float(ring_foreground / max(1, inside_foreground))
+    penalty = float(np.clip((leakage_ratio - 0.025) / 0.22, 0.0, 1.0))
+    return penalty, leakage_ratio
+
+
 def score_candidate(
     candidate: Candidate,
     maps: dict[str, np.ndarray],
@@ -835,6 +952,10 @@ def score_candidate(
         quad,
         maps["foreground_mask"],
     )
+    leakage_penalty, leakage_ratio = foreground_leakage_penalty(
+        quad,
+        maps["foreground_mask"],
+    )
 
     source_bonus = {
         "contours": 0.025,
@@ -860,6 +981,7 @@ def score_candidate(
         + source_bonus
         - 0.08 * border
         - 0.34 * frame_side
+        - 0.18 * leakage_penalty
     )
 
     candidate.quad = quad
@@ -881,6 +1003,8 @@ def score_candidate(
         "foreground_score": foreground,
         "foreground_fill_ratio": foreground_fill,
         "foreground_grid_occupancy": foreground_occupancy,
+        "foreground_leakage_ratio": leakage_ratio,
+        "foreground_leakage_penalty": leakage_penalty,
     }
     return candidate
 
@@ -1016,6 +1140,8 @@ def run_pipeline(
     save_image(output_dir / "debug_candidates.jpg", debug)
 
     debug_maps = {
+        "00_frame_artifact_mask.png": maps["frame_artifact_mask"],
+        "00_analysis_image.png": maps["analysis_image"],
         "01_gray.png": maps["gray"],
         "02_gradient.png": maps["gradient"],
         "03_edges.png": maps["edge_union"],
@@ -1035,6 +1161,7 @@ def run_pipeline(
         "working_scale": scale,
         "status": "NO_CARD_FOUND",
         "candidate_count": len(candidates),
+        "detected_frame_bands_px": maps.get("frame_bands", {}),
         "candidates": [candidate.to_json() for candidate in candidates[:20]],
     }
 

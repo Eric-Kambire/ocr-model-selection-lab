@@ -48,17 +48,25 @@ Le flux CNI n’est pas concentré dans un seul gros fichier :
 ocr_benchmark/cni_ingestion.py  # scan client, import ZIP, JSONB externe → JSON local
 ocr_benchmark/cni_images.py     # rendu PDF/image et opérations d'image réutilisables
 ocr_benchmark/cni_preprocessing.py # source unique : rotation, contour et crop CNI
+ocr_benchmark/cni_smart_crop.py # détecteur hybride V4, cadre noir et fuite locale
+ocr_benchmark/cni_crop_methods.py # méthodes comparables et fallback vers l'original
 ocr_benchmark/cni_schema.py     # champs configurables, prompt, parsing et fusion JSON
 ocr_benchmark/cni_runner.py     # exécution séquentielle, live events, artefacts de run
 ocr_benchmark/cni.py            # façade d'import compatible pour le reste de l'application
 config/cni_fields.json          # champs d'extraction modifiables sans changer le code
 docs/CNI_BENCHMARK_IMPLEMENTATION_PLAN.md # contrat de données et décisions métier
+scripts/cni_crop_methods_lab.py # comparaison visuelle des méthodes de crop
+scripts/cni_crop_stepper_app.py # parcours V4 compact en six étapes
+scripts/smart_crop_lab_v4/      # laboratoire complet et cas dégradés reproductibles
 ```
 
 Chaque module a une seule responsabilité. La préparation CNI n'est notamment
 implémentée qu'une fois dans `cni_preprocessing.py`; `cni_images.py` l'utilise
 au lieu de dupliquer la logique. Un problème de fichier, crop, réponse JSON ou
 exécution peut donc être retrouvé dans le bon module, sans modifier l'interface.
+Le détecteur V4 neutralise les bandes noires continues dans une copie de travail
+et pénalise un quadrilatère lorsque du contenu reste juste à l'extérieur. Si
+aucun candidat n'est assez fiable, l'image normalisée entière est conservée.
 
 La description détaillée des frontières, de la réutilisation future et des
 choix de stockage est disponible dans `docs/ARCHITECTURE_INTERNE.md`.
