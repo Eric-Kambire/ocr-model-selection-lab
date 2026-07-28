@@ -1,0 +1,229 @@
+{
+  "input": "/mnt/data/degraded.png",
+  "config": {
+    "expected_aspect_ratio": 1.586,
+    "min_area_ratio": 0.035,
+    "max_area_ratio": 0.92,
+    "max_working_side": 1800,
+    "edge_tolerance_ratio": 0.004,
+    "density_window_ratio": 0.035,
+    "max_candidates_per_detector": 30,
+    "final_margin_ratio": 0.012,
+    "frame_ignore_ratio": 0.008
+  },
+  "working_scale": 1.0,
+  "status": "SUCCESS",
+  "candidate_count": 4,
+  "candidates": [
+    {
+      "source": "foreground",
+      "score": 0.770146,
+      "quad_working": [
+        [
+          33.0,
+          29.0
+        ],
+        [
+          271.0,
+          29.0
+        ],
+        [
+          271.0,
+          181.0
+        ],
+        [
+          33.0,
+          181.0
+        ]
+      ],
+      "metrics": {
+        "edge_continuity": 0.142308,
+        "boundary_gradient": 0.081362,
+        "aspect_score": 0.99757,
+        "measured_aspect_ratio": 1.565789,
+        "density_score": 1.0,
+        "inside_edge_density": 0.157574,
+        "outside_edge_density": 0.0,
+        "angle_score": 1.0,
+        "rectangularity": 1.0,
+        "area_ratio": 0.159108,
+        "area_score": 1.0,
+        "border_penalty": 0.0,
+        "frame_side_penalty": 0.0,
+        "foreground_score": 1.0,
+        "foreground_fill_ratio": 0.840806,
+        "foreground_grid_occupancy": 1.0,
+        "foreground_leakage_ratio": 0.0,
+        "foreground_leakage_penalty": 0.0
+      }
+    },
+    {
+      "source": "contours",
+      "score": 0.528168,
+      "quad_working": [
+        [
+          55.529998779296875,
+          122.80000305175781
+        ],
+        [
+          164.1999969482422,
+          63.529998779296875
+        ],
+        [
+          203.2899932861328,
+          135.1999969482422
+        ],
+        [
+          94.62000274658203,
+          194.47999572753906
+        ]
+      ],
+      "metrics": {
+        "edge_continuity": 0.296569,
+        "boundary_gradient": 0.175952,
+        "aspect_score": 0.970418,
+        "measured_aspect_ratio": 1.516129,
+        "density_score": 0.939943,
+        "inside_edge_density": 0.232338,
+        "outside_edge_density": 0.055249,
+        "angle_score": 1.0,
+        "rectangularity": 1.0,
+        "area_ratio": 0.044449,
+        "area_score": 0.216096,
+        "border_penalty": 0.0,
+        "frame_side_penalty": 0.0,
+        "foreground_score": 1.0,
+        "foreground_fill_ratio": 0.954639,
+        "foreground_grid_occupancy": 1.0,
+        "foreground_leakage_ratio": 0.635951,
+        "foreground_leakage_penalty": 1.0
+      }
+    },
+    {
+      "source": "line_quad",
+      "score": 0.389564,
+      "quad_working": [
+        [
+          202.88999938964844,
+          36.5099983215332
+        ],
+        [
+          249.25,
+          36.15999984741211
+        ],
+        [
+          268.5199890136719,
+          179.9199981689453
+        ],
+        [
+          195.9600067138672,
+          180.27999877929688
+        ]
+      ],
+      "metrics": {
+        "edge_continuity": 0.618227,
+        "boundary_gradient": 0.339381,
+        "aspect_score": 0.06772,
+        "measured_aspect_ratio": 2.429862,
+        "density_score": 0.753095,
+        "inside_edge_density": 0.168935,
+        "outside_edge_density": 0.142726,
+        "angle_score": 0.863189,
+        "rectangularity": 0.8191,
+        "area_ratio": 0.037606,
+        "area_score": 0.140063,
+        "border_penalty": 0.0,
+        "frame_side_penalty": 0.0,
+        "foreground_score": 1.0,
+        "foreground_fill_ratio": 0.968444,
+        "foreground_grid_occupancy": 1.0,
+        "foreground_leakage_ratio": 0.28452,
+        "foreground_leakage_penalty": 1.0
+      }
+    },
+    {
+      "source": "blackhat",
+      "score": 0.381421,
+      "quad_working": [
+        [
+          29.18000030517578,
+          86.41000366210938
+        ],
+        [
+          261.5,
+          55.689998626708984
+        ],
+        [
+          274.6199951171875,
+          154.8800048828125
+        ],
+        [
+          42.290000915527344,
+          185.60000610351562
+        ]
+      ],
+      "metrics": {
+        "edge_continuity": 0.169162,
+        "boundary_gradient": 0.11118,
+        "aspect_score": 0.105449,
+        "measured_aspect_ratio": 2.342396,
+        "density_score": 1.0,
+        "inside_edge_density": 0.166137,
+        "outside_edge_density": 0.030014,
+        "angle_score": 1.0,
+        "rectangularity": 1.0,
+        "area_ratio": 0.103118,
+        "area_score": 0.867978,
+        "border_penalty": 0.0,
+        "frame_side_penalty": 0.0,
+        "foreground_score": 1.0,
+        "foreground_fill_ratio": 0.904194,
+        "foreground_grid_occupancy": 0.975,
+        "foreground_leakage_ratio": 0.253968,
+        "foreground_leakage_penalty": 1.0
+      }
+    }
+  ],
+  "confidence": 0.770146,
+  "source": "foreground",
+  "quad_original": [
+    [
+      33.0,
+      29.0
+    ],
+    [
+      271.0,
+      29.0
+    ],
+    [
+      271.0,
+      181.0
+    ],
+    [
+      33.0,
+      181.0
+    ]
+  ],
+  "metrics": {
+    "edge_continuity": 0.1423076923076923,
+    "boundary_gradient": 0.0813617438158217,
+    "aspect_score": 0.9975698331848917,
+    "measured_aspect_ratio": 1.5657894611358643,
+    "density_score": 1.0,
+    "inside_edge_density": 0.15757376869855333,
+    "outside_edge_density": 0.0,
+    "angle_score": 1.0,
+    "rectangularity": 1.0,
+    "area_ratio": 0.1591077020513001,
+    "area_score": 1.0,
+    "border_penalty": 0.0,
+    "frame_side_penalty": 0.0,
+    "foreground_score": 1.0,
+    "foreground_fill_ratio": 0.8408055555555556,
+    "foreground_grid_occupancy": 1.0,
+    "foreground_leakage_ratio": 0.0,
+    "foreground_leakage_penalty": 0.0
+  },
+  "crop_strict": "/mnt/data/smart_crop_lab_v4/test_degraded/crop_strict.png",
+  "crop_margin": "/mnt/data/smart_crop_lab_v4/test_degraded/crop_margin.png"
+}

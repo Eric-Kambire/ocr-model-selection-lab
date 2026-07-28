@@ -3,7 +3,7 @@ setlocal
 cd /d "%~dp0"
 
 echo =============================================
-echo Smart Crop ^& Degradation Lab - installation
+echo Smart Crop ^& Degradation Lab V4 - installation
 echo =============================================
 
 where python >nul 2>nul

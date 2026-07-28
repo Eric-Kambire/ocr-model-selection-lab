@@ -57,7 +57,7 @@ def method_visibility(method: str) -> tuple[Any, ...]:
         gr.update(visible=method == "canny_contours"),
         gr.update(visible=method == "min_area_rect"),
         gr.update(visible=method == "pillow_ratio"),
-        gr.update(visible=method == "hybrid_v3"),
+        gr.update(visible=method == "hybrid_v4"),
     )
 
 

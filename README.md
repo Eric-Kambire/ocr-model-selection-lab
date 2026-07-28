@@ -9,6 +9,21 @@ paramètres d'exécution et à explorer les résultats. Le traitement est
 séquentiel : un modèle et une tâche à la fois, afin de limiter la mémoire CPU ou
 GPU.
 
+## Smart Crop V4
+
+Le moteur partagé `ocr_benchmark/cni_smart_crop.py` neutralise les bandes
+noires continues attachées au cadre dans une copie de travail. Il pénalise
+également un quadrilatère lorsque du contenu reste juste à l'extérieur, ce qui
+évite de prendre une ligne interne pour le bord droit de la CNI.
+
+- `scripts/cni_crop_methods_lab.py` compare les différentes méthodes ;
+- `scripts/cni_crop_stepper_app.py` explique le parcours V4 en six étapes ;
+- `scripts/smart_crop_lab_v4/` contient le laboratoire complet et les artefacts
+  du cas dégradé fourni avec V4.
+
+Si aucun candidat n'atteint le score minimal, l'image normalisée entière est
+conservée sans crop forcé.
+
 ## Démarrage rapide
 
 Prérequis : Python 3.10 à 3.14 et `pip`. Installez Ollama séparément seulement

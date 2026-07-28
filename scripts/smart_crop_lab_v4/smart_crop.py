@@ -11,8 +11,8 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from ocr_benchmark.cni_smart_crop_v3 import *  # noqa: F401,F403
-from ocr_benchmark.cni_smart_crop_v3 import main
+from ocr_benchmark.cni_smart_crop import *  # noqa: F401,F403
+from ocr_benchmark.cni_smart_crop import main
 
 
 if __name__ == "__main__":

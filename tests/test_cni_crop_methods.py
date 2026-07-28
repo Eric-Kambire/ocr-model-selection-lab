@@ -8,6 +8,10 @@ from ocr_benchmark.cni_crop_methods import (
     normalise_crop_lab_source,
     run_crop_method,
 )
+from ocr_benchmark.cni_smart_crop import (
+    detect_dark_frame_bands,
+    foreground_leakage_penalty,
+)
 
 
 def _noisy_card_scan(path: Path) -> None:
@@ -72,15 +76,15 @@ def test_image_source_is_normalised_without_changing_dimensions(tmp_path: Path):
     assert output.is_file()
 
 
-def test_hybrid_v3_exposes_candidates_and_keeps_a_safe_fallback(tmp_path: Path):
-    """Le moteur V3 doit toujours produire des étapes et un fichier exploitable."""
+def test_hybrid_v4_exposes_candidates_and_keeps_a_safe_fallback(tmp_path: Path):
+    """Le moteur V4 doit toujours produire des étapes et un fichier exploitable."""
     source = tmp_path / "scan.png"
     _noisy_card_scan(source)
 
     result = run_crop_method(
         source,
         tmp_path / "hybrid",
-        method="hybrid_v3",
+        method="hybrid_v4",
         parameters={"hybrid_min_score": 0.40},
     )
 
@@ -90,7 +94,7 @@ def test_hybrid_v3_exposes_candidates_and_keeps_a_safe_fallback(tmp_path: Path):
     assert any(stage["name"] == "Décision du détecteur" for stage in result["stages"])
 
 
-def test_hybrid_v3_returns_original_when_confidence_is_insufficient(tmp_path: Path):
+def test_hybrid_v4_returns_original_when_confidence_is_insufficient(tmp_path: Path):
     """Une page vide ne doit jamais produire un crop artificiel."""
     source = tmp_path / "empty.png"
     Image.new("RGB", (900, 1200), "white").save(source)
@@ -98,10 +102,41 @@ def test_hybrid_v3_returns_original_when_confidence_is_insufficient(tmp_path: Pa
     result = run_crop_method(
         source,
         tmp_path / "empty_hybrid",
-        method="hybrid_v3",
+        method="hybrid_v4",
         parameters={"hybrid_min_score": 0.90},
     )
 
     assert result["status"] == "fallback_original"
     assert result["source_sent_unchanged"] is True
     assert Path(result["final_path"]) == source
+
+
+def test_v4_detects_only_continuous_dark_frame_bands():
+    """Une bordure continue est neutralisée, pas un simple objet sombre isolé."""
+    import numpy as np
+
+    image = np.full((500, 700, 3), 235, dtype=np.uint8)
+    image[:12, :] = 10
+    image[:, :9] = 10
+    image[80:120, 620:660] = 5
+
+    top, bottom, left, right, mask = detect_dark_frame_bands(image)
+
+    assert (top, bottom, left, right) == (12, 0, 9, 0)
+    assert int(mask[5, 300]) == 255
+    assert int(mask[100, 640]) == 0
+
+
+def test_v4_penalises_a_candidate_that_cuts_nearby_content():
+    """Un bord interne doit perdre plus de points que le contour complet."""
+    import numpy as np
+
+    foreground = np.zeros((500, 700), dtype=np.uint8)
+    foreground[140:360, 170:530] = 255
+    full = np.array([[170, 140], [530, 140], [530, 360], [170, 360]], dtype=np.float32)
+    truncated = np.array([[170, 140], [420, 140], [420, 360], [170, 360]], dtype=np.float32)
+
+    full_penalty, _ = foreground_leakage_penalty(full, foreground)
+    truncated_penalty, _ = foreground_leakage_penalty(truncated, foreground)
+
+    assert truncated_penalty > full_penalty
