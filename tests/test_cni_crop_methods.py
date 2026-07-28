@@ -70,3 +70,38 @@ def test_image_source_is_normalised_without_changing_dimensions(tmp_path: Path):
     assert metadata["source_kind"] == "jpg"
     assert (metadata["width"], metadata["height"]) == (640, 480)
     assert output.is_file()
+
+
+def test_hybrid_v3_exposes_candidates_and_keeps_a_safe_fallback(tmp_path: Path):
+    """Le moteur V3 doit toujours produire des étapes et un fichier exploitable."""
+    source = tmp_path / "scan.png"
+    _noisy_card_scan(source)
+
+    result = run_crop_method(
+        source,
+        tmp_path / "hybrid",
+        method="hybrid_v3",
+        parameters={"hybrid_min_score": 0.40},
+    )
+
+    assert result["status"] in {"crop_detected", "fallback_original"}
+    assert Path(result["final_path"]).is_file()
+    assert any(stage["name"] == "Candidats classés" for stage in result["stages"])
+    assert any(stage["name"] == "Décision du détecteur" for stage in result["stages"])
+
+
+def test_hybrid_v3_returns_original_when_confidence_is_insufficient(tmp_path: Path):
+    """Une page vide ne doit jamais produire un crop artificiel."""
+    source = tmp_path / "empty.png"
+    Image.new("RGB", (900, 1200), "white").save(source)
+
+    result = run_crop_method(
+        source,
+        tmp_path / "empty_hybrid",
+        method="hybrid_v3",
+        parameters={"hybrid_min_score": 0.90},
+    )
+
+    assert result["status"] == "fallback_original"
+    assert result["source_sent_unchanged"] is True
+    assert Path(result["final_path"]) == source

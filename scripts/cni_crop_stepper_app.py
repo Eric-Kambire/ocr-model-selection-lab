@@ -29,13 +29,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from ocr_benchmark.cni_images import render_single_page_pdf
-from ocr_benchmark.cni_document_cropper import (
-    _detect_dark_edge_bands,
-    _find_card_candidates,
-    _order_corners,
-    _resize_for_detection,
-    crop_cni_document,
-)
+from ocr_benchmark.cni_crop_methods import run_crop_method
 
 
 APP_CSS = """
@@ -569,71 +563,63 @@ def _prepare_source(
     return _prepare_direct_source(input_path, output_dir, dpi)
 
 
-def _robust_detection_artifacts(source_path: Path, output_dir: Path) -> tuple[list[str], dict[str, Any]]:
-    """Produit les visuels à partir des mêmes primitives que le crop de production."""
-    try:
-        import cv2
-        import numpy as np
-    except ImportError as exc:
-        raise gr.Error("OpenCV est requis : installez opencv-python-headless.") from exc
+def _robust_detection_artifacts(
+    source_path: Path,
+    output_dir: Path,
+) -> tuple[list[str], dict[str, Any], dict[str, Any]]:
+    """Exécute le moteur hybride partagé et sélectionne six vues pédagogiques.
 
-    with Image.open(source_path) as file:
-        source = ImageOps.exif_transpose(file).convert("RGB")
-    original = cv2.cvtColor(np.asarray(source), cv2.COLOR_RGB2BGR)
-    gray = cv2.cvtColor(original, cv2.COLOR_BGR2GRAY)
-    gray_path = _write_image(Image.fromarray(gray), output_dir / "02_grayscale_clahe_input.png")
-
-    left, top, right, bottom = _detect_dark_edge_bands(original, cv2, np)
-    working = original[top:bottom, left:right]
-    local_gray = cv2.cvtColor(working, cv2.COLOR_BGR2GRAY)
-    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8)).apply(local_gray)
-    edges = cv2.Canny(cv2.GaussianBlur(clahe, (5, 5), 0), 45, 135)
-    closed = cv2.morphologyEx(edges, cv2.MORPH_CLOSE, cv2.getStructuringElement(cv2.MORPH_RECT, (7, 7)))
-    edge_canvas = np.zeros_like(gray)
-    edge_canvas[top:bottom, left:right] = closed
-    edge_path = _write_image(Image.fromarray(edge_canvas), output_dir / "03_edges_and_noise_mask.png")
-
-    preview, scale = _resize_for_detection(working, cv2)
-    candidates = _find_card_candidates(preview, cv2, np)
-    selected = next((candidate for candidate in candidates if candidate["accepted"]), None)
-    all_candidates = original.copy()
-    cv2.rectangle(all_candidates, (left, top), (right - 1, bottom - 1), (0, 180, 180), 2)
-    selected_points = None
-    for candidate in candidates[:15]:
-        points = candidate["points"] / scale
-        points[:, 0] += left
-        points[:, 1] += top
-        color = (0, 165, 255) if candidate["accepted"] else (0, 0, 220)
-        cv2.polylines(all_candidates, [points.astype("int32")], True, color, 2)
-    candidates_path = _write_image(
-        Image.fromarray(cv2.cvtColor(all_candidates, cv2.COLOR_BGR2RGB)),
-        output_dir / "04_candidates.png",
+    Le rapport complet conserve toutes les étapes. Le stepper n'en affiche que
+    six afin de garder un parcours court : source, gris, bords, candidats,
+    décision puis fichier réellement envoyé au modèle.
+    """
+    result = run_crop_method(
+        source_path,
+        output_dir / "hybrid_v3",
+        method="hybrid_v3",
+        parameters={"hybrid_min_score": 0.55},
     )
+    stages = result.get("stages", [])
+    by_name = {str(stage.get("name")): stage for stage in stages}
 
-    selected_overlay = all_candidates.copy()
-    if selected is not None:
-        selected_points = selected["points"] / scale
-        selected_points[:, 0] += left
-        selected_points[:, 1] += top
-        selected_points = _order_corners(selected_points, np)
-        cv2.polylines(selected_overlay, [selected_points.astype("int32")], True, (0, 180, 0), 4)
-        cv2.putText(selected_overlay, f"score={selected['score']:.3f}", tuple(selected_points[0].astype(int)), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 120, 0), 2)
-    else:
-        cv2.putText(selected_overlay, "Aucune CNI suffisamment fiable : source complete", (18, 34), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (0, 0, 190), 2)
-    selected_path = _write_image(
-        Image.fromarray(cv2.cvtColor(selected_overlay, cv2.COLOR_BGR2RGB)),
-        output_dir / "05_selected_candidate.png",
-    )
-    return [str(source_path), gray_path, edge_path, candidates_path, selected_path], {
-        "edge_trim": [left, top, right, bottom],
-        "candidates_found": len(candidates),
-        "candidates_accepted": sum(bool(item["accepted"]) for item in candidates),
-        "selected": {
-            key: round(float(selected[key]), 4)
-            for key in ("score", "ratio", "rectangularity")
-        } if selected else None,
-        "selected_points": selected_points.astype(int).tolist() if selected_points is not None else None,
+    def stage_path(name: str, fallback_index: int) -> str:
+        stage = by_name.get(name)
+        if stage:
+            return str(stage["image_path"])
+        if stages:
+            return str(stages[min(fallback_index, len(stages) - 1)]["image_path"])
+        return str(source_path)
+
+    paths = [
+        stage_path("Source normalisée", 0),
+        stage_path("Niveaux de gris", 1),
+        stage_path("Bords reconnectés", 3),
+        stage_path("Candidats classés", max(0, len(stages) - 3)),
+        stage_path("Décision du détecteur", max(0, len(stages) - 2)),
+        str(result.get("final_path") or source_path),
+    ]
+    summary = dict(result.get("summary") or {})
+    crop_detected = result.get("status") == "crop_detected"
+    detection = {
+        "edge_trim": "non applicable : le cadre est pénalisé par le score",
+        "candidates_found": int(summary.get("candidate_count") or 0),
+        "candidates_accepted": int(crop_detected),
+        "selected": (
+            {
+                "score": summary.get("score"),
+                "detector": summary.get("detector"),
+                "metrics": summary.get("metrics"),
+            }
+            if crop_detected
+            else summary.get("best")
+        ),
+        "selected_points": (
+            summary.get("metrics", {}).get("quad_original")
+            if isinstance(summary.get("metrics"), dict)
+            else None
+        ),
     }
+    return paths, detection, result
 
 
 def build_robust_pipeline(
@@ -654,13 +640,15 @@ def build_robust_pipeline(
     )
     source_elapsed = time.perf_counter() - started
     started = time.perf_counter()
-    paths, detection = _robust_detection_artifacts(source_path, output_dir)
+    paths, detection, crop_result = _robust_detection_artifacts(source_path, output_dir)
     detection_elapsed = time.perf_counter() - started
-    started = time.perf_counter()
-    crop = crop_cni_document(source_path, output_dir / "06_model_input.png", debug_path=output_dir / "06_crop_debug.png")
-    final_path = crop["image_path"]
-    crop_elapsed = time.perf_counter() - started
-    paths.append(final_path)
+    crop = {
+        **dict(crop_result.get("summary") or {}),
+        "image_path": crop_result.get("final_path"),
+        "status": crop_result.get("status"),
+        "source_sent_unchanged": bool(crop_result.get("source_sent_unchanged")),
+    }
+    crop_elapsed = float(crop_result.get("elapsed_ms") or 0.0) / 1000.0
     metrics = [
         _stage_metric(STEPS[0][0], paths[0], source_elapsed, {"dpi": int(dpi), **source_preparation}),
         _stage_metric(STEPS[1][0], paths[1], detection_elapsed, {"operation": "grayscale + CLAHE pour la détection"}),
@@ -670,7 +658,7 @@ def build_robust_pipeline(
         _stage_metric(STEPS[5][0], paths[5], crop_elapsed, crop),
     ]
     state = {
-        "pipeline": "robust_opencv",
+        "pipeline": "hybrid_v3",
         "paths": paths,
         "metrics": metrics,
         "crop": crop,
@@ -806,12 +794,12 @@ def build_pipeline(
 def _stage_markdown(index: int, state: dict[str, Any]) -> str:
     """Construit l'explication affichée à côté de l'image de l'étape."""
     title, explanation = STEPS[index]
-    if state.get("pipeline") == "robust_opencv":
+    if state.get("pipeline") in {"robust_opencv", "hybrid_v3"}:
         if index == 2:
             trim = state["detection"]["edge_trim"]
             explanation += (
-                f"\n\nZone analysée après retrait logique des bords noirs : `{trim}`. "
-                "Ce retrait n'altère jamais l'image source envoyée si la détection échoue."
+                f"\n\nGestion du cadre : `{trim}`. "
+                "Cette étape n'altère jamais l'image source envoyée si la détection échoue."
             )
         if index == 3:
             explanation += (
@@ -929,10 +917,11 @@ def build_ui() -> gr.Blocks:
                 gr.HTML("<div class='crop-section-title'>2. Rendu</div><div class='crop-section-copy'>Le DPI n'est utile que pour rendre un PDF. Une image téléphone conserve ses pixels.</div>")
                 dpi = gr.Slider(72, 600, value=300, step=1, label="DPI de rendu")
             with gr.Column(scale=3, elem_id="crop-rotation"):
-                gr.HTML("<div class='crop-section-title'>3. Détection robuste</div><div class='crop-section-copy'>Bords noirs exclus, contours classés, puis correction de perspective seulement si le score est fiable.</div>")
+                gr.HTML("<div class='crop-section-title'>3. Détection hybride V3</div><div class='crop-section-copy'>Contours, lignes, texture et premier plan proposent des candidats comparables.</div>")
                 gr.Markdown(
-                    "**Mode actif :** OpenCV robuste. Il ne fait pas tourner toute la page pour deviner une carte. "
-                    "Il transforme uniquement le quadrilatère retenu ; sinon il conserve la source complète."
+                    "**Mode actif :** score multi-détecteurs. Le moteur pénalise le cadre de l'image et "
+                    "les objets dispersés. Il redresse uniquement un quadrilatère assez fiable ; sinon "
+                    "il conserve la source complète."
                 )
             with gr.Column(scale=2, elem_id="crop-action"):
                 gr.HTML("<div class='crop-section-title'>4. Générer</div><div class='crop-section-copy'>Crée les six artefacts réels et leur journal.</div>")
@@ -949,10 +938,10 @@ def build_ui() -> gr.Blocks:
             dpi_impact = gr.Markdown(dpi_impact_markdown(300, DEFAULT_CARD_WIDTH_MM))
         with gr.Accordion("Comprendre la méthode sélectionnée", open=False):
             gr.Markdown(
-                "Le détecteur cherche des contours, score les rectangles avec le ratio d'une carte comme préférence, "
-                "puis détermine quatre coins. Une homographie OpenCV redresse seulement cette zone. "
-                "Une bordure noire qui touche le bord de l'image est ignorée pour la recherche ; elle ne peut pas "
-                "devenir le crop final. Sans candidat fiable, la source est transmise telle quelle."
+                "Cinq familles d'indices sont combinées : contours reconnectés, segments Hough/LSD, "
+                "distance au fond en LAB, densité de texture et géométrie. Le ratio CNI est une préférence, "
+                "pas une hypothèse sur la page source. Une homographie OpenCV redresse seulement le meilleur "
+                "quadrilatère au-dessus du seuil ; sinon la source est transmise telle quelle."
             )
         with gr.Row(elem_id="crop-workspace"):
             with gr.Column(scale=6, elem_id="crop-canvas"):

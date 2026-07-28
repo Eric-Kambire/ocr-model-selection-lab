@@ -57,6 +57,7 @@ def method_visibility(method: str) -> tuple[Any, ...]:
         gr.update(visible=method == "canny_contours"),
         gr.update(visible=method == "min_area_rect"),
         gr.update(visible=method == "pillow_ratio"),
+        gr.update(visible=method == "hybrid_v3"),
     )
 
 
@@ -81,6 +82,11 @@ def analyse_document(
     pillow_threshold: int,
     pillow_coarse_step: int,
     pillow_fine_radius: int,
+    hybrid_min_score: float,
+    hybrid_min_area: float,
+    hybrid_max_area: float,
+    hybrid_edge_tolerance: float,
+    hybrid_margin: float,
 ) -> tuple[Any, ...]:
     """Prépare la source, exécute la méthode et ouvre sa première étape."""
     if not source_value:
@@ -113,6 +119,11 @@ def analyse_document(
         "pillow_threshold": int(pillow_threshold),
         "pillow_coarse_step": int(pillow_coarse_step),
         "pillow_fine_radius": int(pillow_fine_radius),
+        "hybrid_min_score": float(hybrid_min_score),
+        "hybrid_min_area": float(hybrid_min_area),
+        "hybrid_max_area": float(hybrid_max_area),
+        "hybrid_edge_tolerance": float(hybrid_edge_tolerance),
+        "hybrid_margin": float(hybrid_margin),
     }
     result = run_crop_method(
         Path(normalised["image_path"]),
@@ -281,6 +292,23 @@ def build_ui() -> gr.Blocks:
                     pillow_threshold = gr.Slider(170, 252, value=235, step=1, label="Seuil blanc")
                     pillow_coarse_step = gr.Slider(3, 15, value=9, step=2, label="Pas recherche large (°)")
                     pillow_fine_radius = gr.Slider(1, 8, value=3, step=1, label="Rayon affinage (°)")
+            with gr.Group(visible=False) as hybrid_group:
+                with gr.Row():
+                    hybrid_min_score = gr.Slider(
+                        0.0, 1.0, value=0.55, step=0.01, label="Score minimal"
+                    )
+                    hybrid_min_area = gr.Slider(
+                        0.005, 0.30, value=0.035, step=0.005, label="Surface minimale"
+                    )
+                    hybrid_max_area = gr.Slider(
+                        0.40, 0.99, value=0.92, step=0.01, label="Surface maximale"
+                    )
+                    hybrid_edge_tolerance = gr.Slider(
+                        0.001, 0.02, value=0.004, step=0.001, label="Tolérance des bords"
+                    )
+                    hybrid_margin = gr.Slider(
+                        0.0, 0.08, value=0.012, step=0.002, label="Marge du crop"
+                    )
 
         with gr.Row(elem_id="lab-workspace"):
             with gr.Column(scale=7):
@@ -314,7 +342,14 @@ def build_ui() -> gr.Blocks:
         method.change(
             method_visibility,
             inputs=[method],
-            outputs=[method_copy, component_group, contour_group, minrect_group, pillow_group],
+            outputs=[
+                method_copy,
+                component_group,
+                contour_group,
+                minrect_group,
+                pillow_group,
+                hybrid_group,
+            ],
             queue=False,
         )
         analyse.click(
@@ -326,6 +361,8 @@ def build_ui() -> gr.Blocks:
                 canny_low, canny_high, contour_kernel, contour_min_area_pct,
                 contour_min_score, global_threshold, ignore_border_pct,
                 pillow_threshold, pillow_coarse_step, pillow_fine_radius,
+                hybrid_min_score, hybrid_min_area, hybrid_max_area,
+                hybrid_edge_tolerance, hybrid_margin,
             ],
             outputs=[
                 state, stage_index, stage_selector, stage_image, stage_title,
