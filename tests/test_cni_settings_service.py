@@ -24,6 +24,7 @@ def test_cni_settings_round_trip_keeps_preprocessing_and_execution(tmp_path):
         rotation_method="opencv",
         perspective_correction=True, preprocessing=["contrast", "denoise"],
         output_format_mode="json",
+        model_output_modes={"ollama:lightonocr": "prompt", "": "json", "bad": "xml"},
         system_prompt="system personnalisé", prompt_instructions="user personnalisé",
     )
     path = tmp_path / "cni_settings.local.json"
@@ -40,6 +41,7 @@ def test_cni_settings_round_trip_keeps_preprocessing_and_execution(tmp_path):
     assert loaded["perspective_correction"] is True
     assert loaded["preprocessing"] == ["contrast", "denoise"]
     assert loaded["output_format_mode"] == "json"
+    assert loaded["model_output_modes"] == {"ollama:lightonocr": "prompt"}
     assert loaded["models"] == ["ollama:test"]
 
 

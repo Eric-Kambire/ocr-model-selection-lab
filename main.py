@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import html
 import json
 import logging
@@ -37,6 +38,7 @@ from ocr_benchmark.application.qlicker_api_service import (
     download_qlicker_file,
     editable_rows_to_query_pairs,
     execute_qlicker_get,
+    find_cni_documents,
     merge_query_params,
     parse_qlicker_url,
     parse_extra_query_params,
@@ -46,6 +48,7 @@ from ocr_benchmark.application.qlicker_cni_import_service import (
     find_completed_qlicker_batch,
     iter_prepare_qlicker_cni_clients,
     qlicker_preparation_fingerprint,
+    replace_route_parameters,
     write_qlicker_preparation_manifest,
 )
 from ocr_benchmark.application.qlicker_config_service import (
@@ -892,6 +895,44 @@ def _cni_progress_html(value: float = 0, status: str = "Prêt.") -> str:
     )
 
 
+def _cni_subprogress_html(
+    substep: int = 0,
+    substeps: int = 0,
+    label: str = "En attente de la première paire.",
+) -> str:
+    """Affiche la face active sans modifier la progression globale par paire."""
+    total = max(0, int(substeps or 0))
+    current = max(0, min(total, int(substep or 0))) if total else 0
+    percent = current / total * 100 if total else 0
+    return (
+        "<div class='cni-progress-label'>"
+        f"<strong>Sous-progression de la paire</strong><span>{html.escape(label)}</span>"
+        "</div>"
+        "<div class='cni-progress-track cni-subprogress-track' role='progressbar' "
+        f"aria-valuemin='0' aria-valuemax='{total}' aria-valuenow='{current}'>"
+        f"<div class='cni-progress-fill' style='width:{percent:.1f}%'></div></div>"
+    )
+
+
+def _cni_model_overrides_summary(
+    models: list[str] | None,
+    overrides: dict[str, str] | None,
+) -> str:
+    """Résume uniquement les exceptions au format global."""
+    selected = set(models or [])
+    active = {
+        str(model): str(mode)
+        for model, mode in (overrides or {}).items()
+        if model in selected and mode in {"schema", "json", "prompt"}
+    }
+    if not active:
+        return "Aucune exception : tous les modèles utilisent le format global."
+    labels = {"schema": "schéma strict", "json": "JSON", "prompt": "prompt seul"}
+    return "**Exceptions :** " + " · ".join(
+        f"`{model}` → {labels[mode]}" for model, mode in sorted(active.items())
+    )
+
+
 def _cni_context_html(
     mode: str,
     models: list[str] | None,
@@ -1606,6 +1647,44 @@ def build_ui() -> gr.Blocks:
                                     cni_api_load_customers = gr.Button("Rechercher les clients", variant="primary")
                                     cni_api_source_customers_state = gr.State([])
                                     gr.Markdown("Les résultats de recherche apparaissent dans **Diagnostic de la source**. Sélectionnez ensuite les clients à préparer.")
+                                    with gr.Accordion("Aperçu rapide avant préparation du lot", open=False):
+                                        gr.Markdown(
+                                            "Télécharge temporairement une seule face via `get_signed_documents_list` "
+                                            "puis `view_file`. Cette action ne prépare ni label ni lot."
+                                        )
+                                        with gr.Row():
+                                            cni_api_preview_client = gr.Dropdown(
+                                                choices=[],
+                                                label="Client",
+                                                filterable=True,
+                                                scale=3,
+                                            )
+                                            cni_api_preview_side = gr.Radio(
+                                                [("Recto", "recto"), ("Verso", "verso")],
+                                                value="recto",
+                                                label="Face",
+                                                scale=1,
+                                            )
+                                            cni_api_preview_button = gr.Button(
+                                                "Prévisualiser",
+                                                variant="secondary",
+                                                scale=1,
+                                            )
+                                        cni_api_preview_feedback = gr.HTML(
+                                            _cni_alert_html("ready", "Recherchez les clients puis choisissez une face.")
+                                        )
+                                        with gr.Row():
+                                            cni_api_preview_image = gr.Image(
+                                                label="Aperçu QlickEER",
+                                                type="filepath",
+                                                height=220,
+                                                visible=False,
+                                            )
+                                            cni_api_preview_file = gr.File(
+                                                label="Fichier reçu",
+                                                interactive=False,
+                                                visible=False,
+                                            )
                                 cni_scan_status = gr.Markdown("Indiquez un dossier clients, puis scannez-le.")
                                 with gr.Accordion(
                                     "Aperçu des documents préparés · local, ZIP ou API",
@@ -1636,6 +1715,12 @@ def build_ui() -> gr.Blocks:
                                     elem_id="cni-refresh-models",
                                     render=False,
                                 )
+                                cni_model_output_settings_button = gr.Button(
+                                    value="⚙",
+                                    size="sm",
+                                    elem_id="cni-model-output-settings",
+                                    render=False,
+                                )
                                 cni_models = gr.Dropdown(
                                     [choice for choice in model_choices if choice.startswith("ollama:")],
                                     value=[model for model in cni_settings["models"] if model in model_choices],
@@ -1643,8 +1728,11 @@ def build_ui() -> gr.Blocks:
                                     filterable=True,
                                     label="Modèles Ollama",
                                     info="Recherchez un modèle puis sélectionnez-en un ou plusieurs. Les tags sont supprimables avec × ; l’exécution reste strictement séquentielle.",
-                                    buttons=[cni_refresh_models],
+                                    buttons=[cni_refresh_models, cni_model_output_settings_button],
                                     elem_id="cni-model-selector",
+                                )
+                                cni_model_output_modes_state = gr.State(
+                                    cni_settings.get("model_output_modes", {})
                                 )
                                 cni_output_format_mode = gr.Dropdown(
                                     [
@@ -1665,6 +1753,52 @@ def build_ui() -> gr.Blocks:
                                         "Le retour brut est toujours conservé, même si le JSON est invalide."
                                     ),
                                 )
+                                with gr.Group(visible=False) as cni_model_output_settings:
+                                    with gr.Row():
+                                        gr.Markdown(
+                                            "**Exception par modèle** — laissez « Hériter » pour utiliser "
+                                            "le format global ci-dessus. Cette option ne change ni le modèle "
+                                            "sélectionné ni le prompt."
+                                        )
+                                        cni_close_model_output_settings = gr.Button(
+                                            "Fermer",
+                                            size="sm",
+                                            scale=0,
+                                        )
+                                    with gr.Row():
+                                        cni_model_override_target = gr.Dropdown(
+                                            choices=cni_settings["models"],
+                                            value=(
+                                                cni_settings["models"][0]
+                                                if cni_settings["models"]
+                                                else None
+                                            ),
+                                            label="Modèle à personnaliser",
+                                            filterable=True,
+                                            scale=3,
+                                        )
+                                        cni_model_override_mode = gr.Dropdown(
+                                            [
+                                                ("Hériter du format global", "inherit"),
+                                                ("Schéma JSON strict", "schema"),
+                                                ("Objet JSON", "json"),
+                                                ("Prompt uniquement", "prompt"),
+                                            ],
+                                            value="inherit",
+                                            label="Format pour ce modèle",
+                                            scale=2,
+                                        )
+                                        cni_apply_model_override = gr.Button(
+                                            "Appliquer",
+                                            size="sm",
+                                            scale=1,
+                                        )
+                                    cni_model_overrides_summary = gr.Markdown(
+                                        _cni_model_overrides_summary(
+                                            cni_settings["models"],
+                                            cni_settings.get("model_output_modes", {}),
+                                        )
+                                    )
                                 with gr.Accordion("Diagnostic de la source", open=False):
                                     gr.Markdown("Un seul inventaire pour tous les candidats. L’origine indique si la paire vient d’un dossier local, d’un ZIP ou de l’API.")
                                     with gr.Group(visible=False) as cni_api_inventory_actions:
@@ -1700,6 +1834,7 @@ def build_ui() -> gr.Blocks:
                     with gr.Tab("2. Suivi en direct", render_children=True):
                         cni_run_status = gr.Textbox(label="État CNI", value="Prêt.", interactive=False)
                         cni_progress = gr.HTML(_cni_progress_html())
+                        cni_live_subprogress = gr.HTML(_cni_subprogress_html())
                         cni_live_counters = gr.Markdown("**Traité :** 0 / 0 · **Succès :** 0 · **Erreurs :** 0")
                         with gr.Row(elem_id="cni-live-workspace"):
                             cni_live_image = gr.Image(label="Face en cours", type="filepath", height=400)
@@ -2403,13 +2538,130 @@ def build_ui() -> gr.Blocks:
             )
             candidates = _qlicker_cni_candidates(records)
             table = _cni_api_table(candidates)
+            client_choices = [
+                (
+                    " · ".join(
+                        part
+                        for part in (
+                            str(candidate.get("customer", {}).get("last_name") or "").strip(),
+                            str(candidate.get("customer", {}).get("first_name") or "").strip(),
+                            str(candidate.get("client_id") or "").strip(),
+                        )
+                        if part
+                    ),
+                    str(candidate.get("client_id") or ""),
+                )
+                for candidate in candidates
+            ]
             return (
                 feedback,
                 trace,
                 table,
                 candidates,
                 api_inventory_summary(table, candidates),
+                gr.update(
+                    choices=client_choices,
+                    value=(client_choices[0][1] if client_choices else None),
+                ),
             )
+
+        def preview_configured_qlicker_document(
+            client_id, side, candidates, base_url,
+            documents_endpoint, documents_rows, file_endpoint, file_rows,
+            timeout, proxy_url, use_system_proxy, verify_ssl,
+        ):
+            """Prévisualise une face sans matérialiser le lot ni demander le label."""
+            selected_id = str(client_id or "").strip()
+            known_ids = {
+                str(candidate.get("client_id") or "")
+                for candidate in (candidates or [])
+                if isinstance(candidate, dict)
+            }
+            if not selected_id or selected_id not in known_ids:
+                return (
+                    _cni_alert_html("warning", "Choisissez un client issu de la dernière recherche."),
+                    gr.update(value=None, visible=False),
+                    gr.update(value=None, visible=False),
+                )
+            selected_side = "verso" if str(side) == "verso" else "recto"
+            try:
+                document_pairs = replace_route_parameters(
+                    editable_rows_to_query_pairs(documents_rows),
+                    {"customerID": selected_id},
+                )
+                LOGGER.info(
+                    "QlickEER preview | api=get_signed_documents_list | side=%s",
+                    selected_side,
+                )
+                payload = execute_qlicker_get(
+                    base_url,
+                    documents_endpoint,
+                    document_pairs,
+                    timeout_seconds=float(timeout or 30),
+                    proxy_url=proxy_url,
+                    use_system_proxy=bool(use_system_proxy),
+                    verify_ssl=bool(verify_ssl),
+                )
+                response = payload.get("response", {})
+                status_code = int(response.get("status_code") or 0)
+                if not 200 <= status_code < 300:
+                    raise RuntimeError(f"get_signed_documents_list : HTTP {status_code}.")
+                body = response.get("body", {})
+                response_data = body.get("response_data", {}) if isinstance(body, dict) else {}
+                documents = response_data.get("documents_list", []) if isinstance(response_data, dict) else []
+                detected = find_cni_documents(documents if isinstance(documents, list) else [])
+                remote_filename = detected.get(selected_side)
+                if not remote_filename:
+                    raise ValueError(
+                        f"Aucun document CIN_{selected_side} détecté dans la liste du client."
+                    )
+
+                file_pairs = replace_route_parameters(
+                    editable_rows_to_query_pairs(file_rows),
+                    {"customerID": selected_id, "file": str(remote_filename)},
+                )
+                anonymous_id = hashlib.sha256(selected_id.encode("utf-8")).hexdigest()[:16]
+                output_stem = (
+                    RUNS_DIR
+                    / "qlickeer_api_previews"
+                    / f"{anonymous_id}-{selected_side}-{uuid4().hex[:8]}"
+                )
+                LOGGER.info(
+                    "QlickEER preview | api=view_file | side=%s | file=%s",
+                    selected_side,
+                    Path(str(remote_filename)).name,
+                )
+                downloaded = download_qlicker_file(
+                    base_url,
+                    file_endpoint,
+                    file_pairs,
+                    output_stem,
+                    timeout_seconds=float(timeout or 30),
+                    proxy_url=proxy_url,
+                    use_system_proxy=bool(use_system_proxy),
+                    verify_ssl=bool(verify_ssl),
+                )
+                local_path = str(downloaded["path"])
+                preview_update, preview_info = _preview_cni_source(local_path)
+                return (
+                    _cni_alert_html(
+                        "success",
+                        f"{selected_side.title()} reçu : {downloaded['bytes']} octets · "
+                        f"{downloaded['detected_format'].upper()}. {preview_info}",
+                    ),
+                    preview_update,
+                    gr.update(value=local_path, visible=True),
+                )
+            except Exception as exc:
+                LOGGER.exception("QlickEER one-client preview failed | side=%s", selected_side)
+                return (
+                    _cni_alert_html(
+                        "error",
+                        f"Aperçu impossible : {type(exc).__name__}: {exc}",
+                    ),
+                    gr.update(value=None, visible=False),
+                    gr.update(value=None, visible=False),
+                )
 
         def parse_qlicker_url_for_ui(raw_url):
             """Remplit l'espace de travail éditable à partir d'une URL collée.
@@ -2946,6 +3198,45 @@ def build_ui() -> gr.Blocks:
             choices = [f"ollama:{name}" for name in get_installed_ollama_models()]
             return gr.update(choices=choices, value=[name for name in (selected_models or []) if name in choices])
 
+        def sync_model_output_settings(selected_models, overrides):
+            """Retire les exceptions orphelines et actualise la liste cible."""
+            selected = [str(model) for model in (selected_models or [])]
+            cleaned = {
+                str(model): str(mode)
+                for model, mode in (overrides or {}).items()
+                if model in selected and mode in {"schema", "json", "prompt"}
+            }
+            return (
+                cleaned,
+                gr.update(
+                    choices=selected,
+                    value=(selected[0] if selected else None),
+                ),
+                _cni_model_overrides_summary(selected, cleaned),
+            )
+
+        def select_model_output_override(model, overrides):
+            """Affiche la valeur effective de l'exception choisie."""
+            value = (overrides or {}).get(str(model), "inherit")
+            return gr.update(value=value)
+
+        def apply_model_output_override(model, mode, selected_models, overrides):
+            """Ajoute ou retire une exception sans modifier le défaut global."""
+            selected = [str(value) for value in (selected_models or [])]
+            target = str(model or "")
+            current = {
+                str(key): str(value)
+                for key, value in (overrides or {}).items()
+                if key in selected and value in {"schema", "json", "prompt"}
+            }
+            if target not in selected:
+                return current, _cni_model_overrides_summary(selected, current)
+            if mode in {"schema", "json", "prompt"}:
+                current[target] = str(mode)
+            else:
+                current.pop(target, None)
+            return current, _cni_model_overrides_summary(selected, current)
+
         def cni_choices(results):
             """Construit des libellés stables liés aux index des résultats."""
             return [
@@ -3054,7 +3345,8 @@ def build_ui() -> gr.Blocks:
             model_specs, client_records, strategy, dpi, timeout, threads, unload,
             crop_method, smart_crop_min_score, smart_crop_margin, rotation_method,
             perspective_correction, preprocessing, system_prompt,
-            prompt_instructions, output_format_mode, continue_without_label,
+            prompt_instructions, output_format_mode, model_output_modes,
+            continue_without_label,
         ):
             """Valide le lancement puis diffuse l'avancement CNI document par document."""
             empty = empty_figure()
@@ -3065,7 +3357,21 @@ def build_ui() -> gr.Blocks:
                 failures = len(results) - successes
                 return f"**Traité :** {len(results)} / {total} · **Succès :** {successes} · **Erreurs :** {failures}"
 
-            def view(feedback: str, status: str, progress: float, image_path, live_text: str, total: int, *, running: bool = False, alert_level: str = "ready", select_last: bool = False):
+            def view(
+                feedback: str,
+                status: str,
+                progress: float,
+                image_path,
+                live_text: str,
+                total: int,
+                *,
+                running: bool = False,
+                alert_level: str = "ready",
+                select_last: bool = False,
+                substep: int = 0,
+                substeps: int = 0,
+                substep_label: str = "En attente de la première paire.",
+            ):
                 result_table = _cni_result_table(results)
                 live_table = _cni_live_event_table(results)
                 field_table = _cni_field_analysis_table(results)
@@ -3077,6 +3383,7 @@ def build_ui() -> gr.Blocks:
                     _cni_alert_html(alert_level, feedback),
                     gr.update(visible=not running, value="Lancer"), gr.update(visible=running),
                     status, _cni_progress_html(progress, status), image_path, live_text,
+                    _cni_subprogress_html(substep, substeps, substep_label),
                     counters(total), live_table, results, result_table, field_table, selector,
                     cni_accuracy_chart(results), cni_latency_chart(results),
                 )
@@ -3120,7 +3427,7 @@ def build_ui() -> gr.Blocks:
                 "dpi=%s | timeout=%s | cpu_threads=%s | unload=%s | "
                 "crop_method=%s | smart_crop_min_score=%s | smart_crop_margin=%s | "
                 "rotation=%s | perspective=%s | preprocessing=%s | "
-                "output_format=%s | unlabeled=%d | invalid=%d",
+                "output_format=%s | model_output_overrides=%s | unlabeled=%d | invalid=%d",
                 len(ready_records),
                 len(model_specs),
                 strategy,
@@ -3135,6 +3442,7 @@ def build_ui() -> gr.Blocks:
                 bool(perspective_correction),
                 list(preprocessing or []),
                 output_format_mode,
+                dict(model_output_modes or {}),
                 len(unlabeled),
                 invalid_count,
             )
@@ -3148,6 +3456,7 @@ def build_ui() -> gr.Blocks:
                     cpu_threads=int(threads or 1), unload_after_task=bool(unload),
                     fields=fields, prompt_instructions=prompt_instructions, system_prompt=system_prompt,
                     output_format_mode=output_format_mode,
+                    model_output_modes=dict(model_output_modes or {}),
                     preprocessing={
                         **{str(value): True for value in (preprocessing or [])},
                         "crop_method": crop_method,
@@ -3164,15 +3473,35 @@ def build_ui() -> gr.Blocks:
                     model = event.get("model", "—")
                     if event.get("stage") == "processing":
                         side = event.get("side", "document")
-                        LOGGER.info("CNI processing | client=%s | model=%s | side=%s | completed=%d/%d", client_id, model, side, completed, total)
+                        substep = int(event.get("substep") or 1)
+                        substeps = int(event.get("substeps") or 1)
+                        side_label = (
+                            "Image combinée"
+                            if side == "recto_verso"
+                            else str(side).title()
+                        )
+                        substep_label = f"{side_label} {substep}/{substeps}"
+                        LOGGER.info(
+                            "CNI processing | client=%s | model=%s | side=%s | substep=%d/%d | completed=%d/%d",
+                            client_id, model, side, substep, substeps, completed, total,
+                        )
                         live_text = (
                             "### Analyse CNI en direct\n\n"
-                            f"- **Client :** `{client_id}`\n- **Modèle :** `{model}`\n- **Face :** `{side}`\n"
+                            f"- **Client :** `{client_id}`\n- **Modèle :** `{model}`\n"
+                            f"- **Étape de la paire :** `{substep_label}`\n"
                             "- La sortie brute et le JSON seront conservés dès la réponse."
                         )
                         yield view(
                             "Lancement actif : consultez l’onglet 2. Suivi en direct.",
-                            f"Analyse en cours : {client_id} ({side})", progress, event.get("image_path"), live_text, total, running=True,
+                            f"Analyse en cours : {client_id} ({substep_label})",
+                            progress,
+                            event.get("image_path"),
+                            live_text,
+                            total,
+                            running=True,
+                            substep=substep,
+                            substeps=substeps,
+                            substep_label=substep_label,
                         )
                         continue
 
@@ -3191,7 +3520,12 @@ def build_ui() -> gr.Blocks:
                         "Benchmark terminé." if finished else "Lancement actif : consultez l’onglet 2. Suivi en direct.",
                         f"Résultat reçu : {client_id} ({status_value})", progress,
                         (result or {}).get("recto_image_path"), live_text, total,
-                        running=not finished, alert_level="success" if finished else "ready", select_last=True,
+                        running=not finished,
+                        alert_level="success" if finished else "ready",
+                        select_last=True,
+                        substep=1,
+                        substeps=1,
+                        substep_label="Paire terminée",
                     )
             except Exception as exc:
                 LOGGER.exception("CNI benchmark interrupted")
@@ -3429,7 +3763,32 @@ def build_ui() -> gr.Blocks:
             outputs=[
                 cni_api_source_feedback, cni_api_source_trace, cni_source_inventory_table,
                 cni_api_source_customers_state, cni_source_selection_summary,
+                cni_api_preview_client,
             ], queue=False,
+        )
+        cni_api_preview_button.click(
+            preview_configured_qlicker_document,
+            inputs=[
+                cni_api_preview_client,
+                cni_api_preview_side,
+                cni_api_source_customers_state,
+                cni_api_settings_base_url,
+                cni_api_documents_endpoint_setting,
+                cni_api_documents_params_setting,
+                cni_api_view_endpoint_setting,
+                cni_api_view_params_setting,
+                cni_api_settings_timeout,
+                cni_api_settings_proxy,
+                cni_api_settings_use_system_proxy,
+                cni_api_settings_verify_ssl,
+            ],
+            outputs=[
+                cni_api_preview_feedback,
+                cni_api_preview_image,
+                cni_api_preview_file,
+            ],
+            concurrency_limit=1,
+            concurrency_id="qlickeer-cni-preview",
         )
         cni_api_prepare_selected.click(
             prepare_selected_qlicker_clients,
@@ -3566,6 +3925,46 @@ def build_ui() -> gr.Blocks:
             queue=False,
         )
         cni_refresh_models.click(refresh_cni_models, inputs=[cni_models], outputs=[cni_models], queue=False)
+        cni_model_output_settings_button.click(
+            lambda: gr.update(visible=True),
+            outputs=[cni_model_output_settings],
+            queue=False,
+        )
+        cni_close_model_output_settings.click(
+            lambda: gr.update(visible=False),
+            outputs=[cni_model_output_settings],
+            queue=False,
+        )
+        cni_models.change(
+            sync_model_output_settings,
+            inputs=[cni_models, cni_model_output_modes_state],
+            outputs=[
+                cni_model_output_modes_state,
+                cni_model_override_target,
+                cni_model_overrides_summary,
+            ],
+            queue=False,
+        )
+        cni_model_override_target.change(
+            select_model_output_override,
+            inputs=[cni_model_override_target, cni_model_output_modes_state],
+            outputs=[cni_model_override_mode],
+            queue=False,
+        )
+        cni_apply_model_override.click(
+            apply_model_output_override,
+            inputs=[
+                cni_model_override_target,
+                cni_model_override_mode,
+                cni_models,
+                cni_model_output_modes_state,
+            ],
+            outputs=[
+                cni_model_output_modes_state,
+                cni_model_overrides_summary,
+            ],
+            queue=False,
+        )
         cni_refresh_prompt.click(
             _cni_prompt_preview,
             inputs=[cni_strategy, cni_system_prompt, cni_prompt_instructions],
@@ -3615,7 +4014,8 @@ def build_ui() -> gr.Blocks:
             cni_verso_suffix, cni_crop_method, cni_smart_crop_min_score,
             cni_smart_crop_margin, cni_rotation_method,
             cni_perspective_correction, cni_preprocessing,
-            cni_output_format_mode, cni_system_prompt, cni_prompt_instructions,
+            cni_output_format_mode, cni_model_output_modes_state,
+            cni_system_prompt, cni_prompt_instructions,
         ]
         for setting_component in (
             cni_models, cni_strategy, cni_dpi, cni_timeout, cni_cpu_threads,
@@ -3623,7 +4023,8 @@ def build_ui() -> gr.Blocks:
             cni_verso_suffix, cni_crop_method, cni_smart_crop_min_score,
             cni_smart_crop_margin, cni_rotation_method,
             cni_perspective_correction, cni_preprocessing,
-            cni_output_format_mode, cni_system_prompt, cni_prompt_instructions,
+            cni_output_format_mode, cni_model_output_modes_state,
+            cni_system_prompt, cni_prompt_instructions,
         ):
             setting_component.change(
                 persist_cni_settings,
@@ -3639,12 +4040,14 @@ def build_ui() -> gr.Blocks:
                 cni_rotation_method, cni_perspective_correction,
                 cni_preprocessing, cni_system_prompt,
                 cni_prompt_instructions, cni_output_format_mode,
+                cni_model_output_modes_state,
                 cni_continue_without_label,
             ],
             outputs=[
                 cni_launch_feedback,
                 cni_launch, cni_stop,
                 cni_run_status, cni_progress, cni_live_image, cni_live_result,
+                cni_live_subprogress,
                 cni_live_counters, cni_live_table,
                 cni_results_state, cni_results_table, cni_field_analysis_table,
                 cni_result_selector,

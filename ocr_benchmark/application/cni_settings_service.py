@@ -37,6 +37,7 @@ def default_cni_settings(*, cpu_threads: int, system_prompt: str, prompt_instruc
         "perspective_correction": False,
         "preprocessing": [],
         "output_format_mode": "schema",
+        "model_output_modes": {},
         "system_prompt": system_prompt,
         "prompt_instructions": prompt_instructions,
     }
@@ -81,6 +82,7 @@ def cni_settings_from_ui(
     perspective_correction: Any,
     preprocessing: Any,
     output_format_mode: Any,
+    model_output_modes: Any,
     system_prompt: Any,
     prompt_instructions: Any,
 ) -> dict[str, Any]:
@@ -107,6 +109,7 @@ def cni_settings_from_ui(
         "perspective_correction": bool(perspective_correction),
         "preprocessing": [str(name) for name in (preprocessing or []) if str(name).strip()],
         "output_format_mode": str(output_format_mode or ""),
+        "model_output_modes": _model_output_modes(model_output_modes),
         "system_prompt": str(system_prompt or "").strip(),
         "prompt_instructions": str(prompt_instructions or "").strip(),
     }
@@ -133,6 +136,7 @@ def _normalise(value: Any, defaults: Mapping[str, Any]) -> dict[str, Any]:
         perspective_correction=raw.get("perspective_correction", fallback["perspective_correction"]),
         preprocessing=raw.get("preprocessing", fallback["preprocessing"]),
         output_format_mode=raw.get("output_format_mode", fallback["output_format_mode"]),
+        model_output_modes=raw.get("model_output_modes", fallback["model_output_modes"]),
         system_prompt=raw.get("system_prompt", fallback["system_prompt"]),
         prompt_instructions=raw.get("prompt_instructions", fallback["prompt_instructions"]),
     )
@@ -154,6 +158,18 @@ def _normalise(value: Any, defaults: Mapping[str, Any]) -> dict[str, Any]:
     result["system_prompt"] = result["system_prompt"] or fallback["system_prompt"]
     result["prompt_instructions"] = result["prompt_instructions"] or fallback["prompt_instructions"]
     return result
+
+
+def _model_output_modes(value: Any) -> dict[str, str]:
+    """Conserve uniquement les exceptions explicites et reconnues."""
+    if not isinstance(value, Mapping):
+        return {}
+    valid_modes = {"prompt", "json", "schema"}
+    return {
+        str(model).strip(): str(mode)
+        for model, mode in value.items()
+        if str(model).strip() and str(mode) in valid_modes
+    }
 
 
 def _positive_integer(value: Any, fallback: int) -> int:

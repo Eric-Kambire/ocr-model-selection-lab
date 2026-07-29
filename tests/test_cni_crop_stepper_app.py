@@ -5,7 +5,7 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw
 
-from scripts.cni_crop_stepper_app import _mm_to_px, build_pipeline
+from scripts.cni_crop_stepper_app import _mm_to_px, build_robust_pipeline
 
 
 def _write_card(path: Path) -> None:
@@ -22,11 +22,12 @@ def test_simulation_a4_creates_pdf_metrics_and_reusable_log(tmp_path: Path):
     card = tmp_path / "carte.png"
     _write_card(card)
 
-    result = build_pipeline(str(card), "simulate_a4", 150, 242, False, "pillow", False, "rectangle", 7.5, 120)
+    # L'interface utilise désormais directement la pipeline hybride V4.
+    result = build_robust_pipeline(str(card), "simulate_a4", 150, 7.5, 120)
     state = result[0]
 
-    assert len(state["paths"]) == 7
-    assert len(state["metrics"]) == 7
+    assert len(state["paths"]) == 6
+    assert len(state["metrics"]) == 6
     assert Path(state["prepared_pdf"]).is_file()
     assert Path(state["report_path"]).is_file()
     assert state["source_preparation"]["mode"] == "simulate_a4"
@@ -36,4 +37,4 @@ def test_simulation_a4_creates_pdf_metrics_and_reusable_log(tmp_path: Path):
 
     report = json.loads(Path(state["report_path"]).read_text(encoding="utf-8"))
     assert report["dpi"] == 150
-    assert report["metrics"][6]["step"] == "7. Crop final"
+    assert report["metrics"][5]["step"] == "6. Image envoyée au modèle"

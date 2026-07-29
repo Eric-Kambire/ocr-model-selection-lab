@@ -410,6 +410,14 @@ def _replace_route_parameters(template: Sequence[tuple[str, str]], overrides: Ma
     return output
 
 
+def replace_route_parameters(
+    template: Sequence[tuple[str, str]],
+    overrides: Mapping[str, str],
+) -> list[tuple[str, str]]:
+    """Expose le remplacement sûr pour l'aperçu unitaire de l'interface."""
+    return _replace_route_parameters(template, overrides)
+
+
 def _response_data(payload: Mapping[str, Any], route_name: str) -> Mapping[str, Any]:
     """Valide le statut HTTP puis retourne ``body.response_data``."""
     response = payload.get("response", {}) if isinstance(payload, Mapping) else {}

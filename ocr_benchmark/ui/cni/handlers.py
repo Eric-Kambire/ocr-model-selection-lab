@@ -31,7 +31,7 @@ def create_persist_settings_handler(
         models, strategy, dpi, timeout, threads, unload, continue_without_label,
         recto_suffix, verso_suffix, crop_method, smart_crop_min_score,
         smart_crop_margin, rotation_method, perspective_correction, preprocessing,
-        output_format_mode, system_prompt, prompt_instructions,
+        output_format_mode, model_output_modes, system_prompt, prompt_instructions,
     ) -> None:
         value = cni_settings_from_ui(
             models=models,
@@ -50,15 +50,17 @@ def create_persist_settings_handler(
             perspective_correction=perspective_correction,
             preprocessing=preprocessing,
             output_format_mode=output_format_mode,
+            model_output_modes=model_output_modes,
             system_prompt=system_prompt,
             prompt_instructions=prompt_instructions,
         )
         try:
             save_cni_settings(config_path, value, defaults=defaults)
             LOGGER.info(
-                "CNI settings saved | strategy=%s | output_format=%s",
+                "CNI settings saved | strategy=%s | output_format=%s | model_overrides=%d",
                 value["strategy"],
                 value["output_format_mode"],
+                len(value["model_output_modes"]),
             )
         except OSError:
             LOGGER.exception("CNI settings auto-save failed")

@@ -274,6 +274,11 @@ def test_cni_strategies_send_expected_images_and_keep_pair_progress(tmp_path: Pa
     assert len(separate.model.calls) == 2
     assert separate.model.calls[0][0].endswith("crop_recto.png")
     assert separate.model.calls[1][0].endswith("crop_verso.png")
+    processing = [event for event in separate_events if event["stage"] == "processing"]
+    assert [(event["side"], event["substep"], event["substeps"]) for event in processing] == [
+        ("recto", 1, 2),
+        ("verso", 2, 2),
+    ]
     assert separate_events[-1]["completed"] == 1
     assert separate_events[-1]["total"] == 1  # Une paire client/modèle, malgré deux appels.
 
@@ -281,8 +286,39 @@ def test_cni_strategies_send_expected_images_and_keep_pair_progress(tmp_path: Pa
     combined_events = list(iter_cni_benchmark(combined, ["fake:vision"], records, tmp_path / "runs-combined", strategy="combined_vertical"))
     assert len(combined.model.calls) == 1
     assert combined.model.calls[0][0].endswith("recto_verso_composite.png")
+    combined_processing = [
+        event for event in combined_events if event["stage"] == "processing"
+    ]
+    assert [
+        (event["side"], event["substep"], event["substeps"])
+        for event in combined_processing
+    ] == [("recto_verso", 1, 1)]
     assert combined_events[-1]["completed"] == 1
     assert combined_events[-1]["total"] == 1
+
+
+def test_runner_applies_output_format_exception_to_one_model(tmp_path: Path):
+    """Une exception cible un seul spec sans remplacer le défaut global."""
+    client = tmp_path / "clients" / "folder-client"
+    client.mkdir(parents=True)
+    _write_pdf(client / "source_CIN_Recto.pdf")
+    _write_pdf(client / "source_CIN_Verso.pdf")
+    records = scan_cni_clients(tmp_path / "clients")
+
+    events = list(
+        iter_cni_benchmark(
+            _RecordingRegistry(),
+            ["fake:vision"],
+            records,
+            tmp_path / "runs",
+            output_format_mode="schema",
+            model_output_modes={"fake:vision": "prompt"},
+        )
+    )
+
+    result = events[-1]["result"]
+    recto_prompt = Path(result["recto_prompt_path"]).read_text(encoding="utf-8")
+    assert recto_prompt.startswith("--- OUTPUT FORMAT ---\nprompt")
 
 
 def test_runner_sends_the_full_normalized_source_when_crop_is_uncertain(tmp_path: Path):

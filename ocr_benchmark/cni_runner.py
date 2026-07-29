@@ -12,7 +12,7 @@ import re
 import time
 import uuid
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any, Generator, Iterator, Mapping
 
 # Le runner orchestre les modules spécialisés ; il ne contient ni logique de
 # scan de dossiers, ni règle de crop, ni définition du contrat JSON.
@@ -56,6 +56,7 @@ def iter_cni_benchmark(
     prompt_instructions: str | None = None,
     system_prompt: str | None = None,
     output_format_mode: str = "schema",
+    model_output_modes: Mapping[str, str] | None = None,
     preprocessing: dict[str, Any] | None = None,
 ) -> Iterator[dict[str, Any]]:
     """Émet des événements live et persiste un jeu d'artefacts par modèle/client.
@@ -107,6 +108,12 @@ def iter_cni_benchmark(
     for model_spec in model_specs:
         model = None
         model_name = model_spec.split(":", 1)[-1]
+        effective_output_format = _model_output_format(
+            model_spec,
+            model_name,
+            output_format_mode,
+            model_output_modes,
+        )
         try:
             # Une erreur de chargement est produite pour chaque client afin que
             # l'interface conserve la matrice complète modèle × client.
@@ -117,6 +124,18 @@ def iter_cni_benchmark(
                 timeout_seconds=timeout_seconds,
             )
             model_name = model.model_name
+            effective_output_format = _model_output_format(
+                model_spec,
+                model_name,
+                output_format_mode,
+                model_output_modes,
+            )
+            LOGGER.info(
+                "CNI model output contract | spec=%s | model=%s | format=%s",
+                model_spec,
+                model_name,
+                effective_output_format,
+            )
         except Exception as exc:
             LOGGER.exception("CNI model initialization failed | spec=%s", model_spec)
             for client in valid_clients:
@@ -141,10 +160,10 @@ def iter_cni_benchmark(
                     yield _completed_event(run_id, completed, total, result, started_at)
                     continue
 
-                # L'événement est émis avant l'appel modèle : l'interface peut
-                # afficher l'image en cours pendant que l'inférence travaille.
-                yield _processing_event(run_id, completed, total, model_name, client, "recto" if strategy == "separate_calls" else "recto_verso", prepared, started_at)
-                result = _extract_one_cni_client(
+                # Le générateur interne rend la main juste avant chaque appel.
+                # L'UI affiche donc réellement Recto 1/2 puis Verso 2/2 sans
+                # compter deux fois la même paire dans la progression globale.
+                extraction = _iter_extract_one_cni_client(
                     model,
                     run_id,
                     model_name,
@@ -155,8 +174,26 @@ def iter_cni_benchmark(
                     fields=fields,
                     prompt_instructions=prompt_instructions,
                     system_prompt=system_prompt,
-                    output_format_mode=output_format_mode,
+                    output_format_mode=effective_output_format,
                 )
+                while True:
+                    try:
+                        step = next(extraction)
+                    except StopIteration as finished:
+                        result = finished.value
+                        break
+                    yield _processing_event(
+                        run_id,
+                        completed,
+                        total,
+                        model_name,
+                        client,
+                        str(step["side"]),
+                        prepared,
+                        started_at,
+                        substep=int(step["substep"]),
+                        substeps=int(step["substeps"]),
+                    )
                 completed += 1
                 results.append(result)
                 _write_results_index(run_dir, results)
@@ -278,7 +315,7 @@ def _preprocess_only_reliable_crop(
     return preprocess_cni_image(Path(crop["image_path"]), output_path, options)
 
 
-def _extract_one_cni_client(
+def _iter_extract_one_cni_client(
     model: Any,
     run_id: str,
     model_name: str,
@@ -291,12 +328,18 @@ def _extract_one_cni_client(
     prompt_instructions: str | None,
     system_prompt: str | None,
     output_format_mode: str,
-) -> dict[str, Any]:
-    """Exécute une stratégie et écrit les JSON recto, verso et global."""
+) -> Generator[dict[str, Any], None, dict[str, Any]]:
+    """Exécute une paire et signale chaque face juste avant son inférence.
+
+    La valeur retournée par le générateur est le résultat final de la paire.
+    Les valeurs produites par ``yield`` sont seulement des étapes live ; elles
+    ne modifient donc pas le compteur principal modèle × client.
+    """
     artefacts_dir = Path(prepared["recto_crop"]["image_path"]).parent
     if strategy == "combined_vertical":
         # Un seul appel reçoit le composite, mais le parsing produit toujours
         # deux dictionnaires afin de préserver le contrat des artefacts.
+        yield {"side": "recto_verso", "substep": 1, "substeps": 1}
         inference = _perform_cni_call(
             model,
             Path(prepared["combined_image"]),
@@ -314,6 +357,7 @@ def _extract_one_cni_client(
     else:
         # Deux appels indépendants sont le mode de diagnostic recommandé : on
         # sait immédiatement quelle face a posé problème.
+        yield {"side": "recto", "substep": 1, "substeps": 2}
         recto_inference = _perform_cni_call(
             model,
             Path(prepared["recto_model_image"]),
@@ -325,6 +369,7 @@ def _extract_one_cni_client(
             output_format_mode,
             build_cni_output_schema("recto", fields),
         )
+        yield {"side": "verso", "substep": 2, "substeps": 2}
         verso_inference = _perform_cni_call(
             model,
             Path(prepared["verso_model_image"]),
@@ -360,9 +405,16 @@ def _extract_one_cni_client(
     )
     write_cni_json(artefacts_dir / "global.extraction.json", global_payload)
     status = _overall_status(recto_payload["status"], verso_payload["status"], recto_parse_error, verso_parse_error)
-    total_latency = recto_inference.latency_seconds + verso_inference.latency_seconds
-    output_tokens = _sum_optional(recto_inference.output_tokens, verso_inference.output_tokens)
-    input_tokens = _sum_optional(recto_inference.input_tokens, verso_inference.input_tokens)
+    if strategy == "combined_vertical":
+        # Le recto et le verso partagent la même inférence : ne pas doubler les
+        # métriques de l'appel combiné.
+        total_latency = recto_inference.latency_seconds
+        output_tokens = recto_inference.output_tokens
+        input_tokens = recto_inference.input_tokens
+    else:
+        total_latency = recto_inference.latency_seconds + verso_inference.latency_seconds
+        output_tokens = _sum_optional(recto_inference.output_tokens, verso_inference.output_tokens)
+        input_tokens = _sum_optional(recto_inference.input_tokens, verso_inference.input_tokens)
     return {
         "run_id": run_id,
         "model": model_name,
@@ -485,7 +537,19 @@ def _overall_status(recto_status: str, verso_status: str, recto_parse_error: str
     return "success"
 
 
-def _processing_event(run_id: str, completed: int, total: int, model_name: str, client: dict[str, Any], side: str, prepared: dict[str, Any], started_at: float) -> dict[str, Any]:
+def _processing_event(
+    run_id: str,
+    completed: int,
+    total: int,
+    model_name: str,
+    client: dict[str, Any],
+    side: str,
+    prepared: dict[str, Any],
+    started_at: float,
+    *,
+    substep: int,
+    substeps: int,
+) -> dict[str, Any]:
     """Construit l'événement léger consommé par la vue live Gradio."""
     image = prepared["combined_image"] if side == "recto_verso" else prepared[f"{side}_model_image"]
     return {
@@ -496,10 +560,31 @@ def _processing_event(run_id: str, completed: int, total: int, model_name: str, 
         "model": model_name,
         "folder_client_id": client["folder_client_id"],
         "side": side,
+        "substep": substep,
+        "substeps": substeps,
         "image_path": image,
         "elapsed_seconds": time.monotonic() - started_at,
         "result": None,
     }
+
+
+def _model_output_format(
+    model_spec: str,
+    model_name: str,
+    default_mode: str,
+    overrides: Mapping[str, str] | None,
+) -> str:
+    """Résout une exception par modèle sans modifier le réglage global.
+
+    La clé canonique est le spec complet (par exemple ``ollama:lightonocr``).
+    Le nom exposé par l'adaptateur est aussi accepté pour les configurations
+    historiques ou les adaptateurs de test.
+    """
+    valid_modes = {"schema", "json", "prompt"}
+    fallback = default_mode if default_mode in valid_modes else "schema"
+    values = overrides if isinstance(overrides, Mapping) else {}
+    requested = values.get(model_spec, values.get(model_name))
+    return str(requested) if requested in valid_modes else fallback
 
 
 def _completed_event(run_id: str, completed: int, total: int, result: dict[str, Any], started_at: float) -> dict[str, Any]:
