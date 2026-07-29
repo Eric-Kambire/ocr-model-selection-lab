@@ -10,13 +10,13 @@ import gradio as gr
 class PromptSettings:
     system_prompt: Any
     prompt_instructions: Any
+    prompt_preview_side: Any
     prompt_preview: Any
-    refresh_prompt: Any
 
 
 def build_prompt_settings(
     settings: dict[str, Any],
-    prompt_preview_builder: Callable[[str, str | None, str | None], str],
+    prompt_preview_builder: Callable[[str, str, str | None, str | None], str],
 ) -> PromptSettings:
     """Construit l'éditeur de prompt.
 
@@ -26,33 +26,69 @@ def build_prompt_settings(
     """
     with gr.Tab("Prompt et sortie"):
         gr.Markdown(
-            "Le **mode de sortie JSON** se choisit dans `1. Préparer`, juste "
-            "sous les modèles. Cette page ne contient que les consignes métier "
-            "et l'aperçu exact des prompts."
+            "Construisez les consignes en deux niveaux, puis contrôlez le message "
+            "exact envoyé pour chaque face. Le format JSON du fournisseur reste "
+            "accessible avec ⚙ à côté des modèles dans `1. Préparer`."
         )
-        system_prompt = gr.Textbox(
-            value=settings["system_prompt"], label="Prompt système", lines=5,
-            info="Règle prioritaire commune aux deux faces.",
-        )
-        prompt_instructions = gr.Textbox(
-            value=settings["prompt_instructions"],
-            label="Consignes utilisateur complémentaires", lines=4,
-            info="Ces consignes ne doivent pas modifier les clés du schéma.",
-        )
-        prompt_preview = gr.Code(
-            value=prompt_preview_builder(
-                settings["strategy"],
-                settings["system_prompt"],
-                settings["prompt_instructions"],
-            ),
-            label="Prompts réellement envoyés",
-            lines=14,
-            interactive=False,
-        )
-        refresh_prompt = gr.Button("Recalculer l’aperçu", size="sm")
+        with gr.Tabs(elem_id="cni-prompt-tabs"):
+            with gr.Tab("1. Prompt système"):
+                gr.Markdown(
+                    "Instruction prioritaire commune au recto, au verso et au mode combiné. "
+                    "Elle fixe le rôle du modèle et les règles qu’il ne doit jamais contourner."
+                )
+                system_prompt = gr.Textbox(
+                    value=settings["system_prompt"],
+                    label="Prompt système",
+                    lines=7,
+                    info="Une modification s’applique à tous les modèles du prochain run.",
+                )
+            with gr.Tab("2. Consignes utilisateur"):
+                gr.Markdown(
+                    "Ajoutez ici les règles métier propres aux CNI. Le code complète ensuite "
+                    "automatiquement ces consignes avec les champs attendus de la face."
+                )
+                prompt_instructions = gr.Textbox(
+                    value=settings["prompt_instructions"],
+                    label="Consignes utilisateur complémentaires",
+                    lines=7,
+                    info="N’ajoutez pas de nouvelles clés JSON ici ; modifiez la configuration des champs.",
+                )
+            with gr.Tab("3. Prompt final envoyé"):
+                gr.Markdown(
+                    "Cet aperçu est recalculé automatiquement. Le sélecteur ne change pas la "
+                    "stratégie d’exécution : il permet seulement d’inspecter chaque message."
+                )
+                prompt_preview_side = gr.Radio(
+                    [
+                        ("Recto", "recto"),
+                        ("Verso", "verso"),
+                        ("Image combinée", "combined"),
+                    ],
+                    value=(
+                        "combined"
+                        if settings["strategy"] == "combined_vertical"
+                        else "recto"
+                    ),
+                    label="Message à inspecter",
+                )
+                prompt_preview = gr.Code(
+                    value=prompt_preview_builder(
+                        settings["strategy"],
+                        (
+                            "combined"
+                            if settings["strategy"] == "combined_vertical"
+                            else "recto"
+                        ),
+                        settings["system_prompt"],
+                        settings["prompt_instructions"],
+                    ),
+                    label="Prompt réellement envoyé pour cette entrée",
+                    lines=18,
+                    interactive=False,
+                )
     return PromptSettings(
         system_prompt,
         prompt_instructions,
+        prompt_preview_side,
         prompt_preview,
-        refresh_prompt,
     )

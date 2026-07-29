@@ -772,16 +772,35 @@ def _qlicker_trace_preview(payload: dict[str, Any], limit: int = 50_000) -> str:
     )
 
 
-def _cni_prompt_preview(strategy: str, system_prompt: str | None, instructions: str | None) -> str:
-    """Affiche exactement les prompts CNI qui seront envoyés au modèle."""
+def _cni_prompt_preview(
+    strategy: str,
+    preview_side: str,
+    system_prompt: str | None,
+    instructions: str | None,
+) -> str:
+    """Affiche le prompt exact d'une face, indépendamment des autres aperçus."""
     fields = load_cni_field_config(ROOT_DIR / "config" / "cni_fields.json")
-    if strategy == "combined_vertical":
-        return f"--- SYSTEM ---\n{system_prompt or ''}\n\n--- USER ---\n" + build_combined_cni_prompt(fields, instructions=instructions)
+    selected_side = (
+        preview_side
+        if preview_side in {"recto", "verso", "combined"}
+        else ("combined" if strategy == "combined_vertical" else "recto")
+    )
+    strategy_label = (
+        "un appel avec image combinée"
+        if strategy == "combined_vertical"
+        else "deux appels séparés"
+    )
+    if selected_side == "combined":
+        user_prompt = build_combined_cni_prompt(fields, instructions=instructions)
+        title = "IMAGE COMBINÉE"
+    else:
+        user_prompt = build_cni_prompt(selected_side, fields, instructions=instructions)
+        title = selected_side.upper()
     return (
-        f"--- SYSTEM ---\n{system_prompt or ''}\n\n--- USER RECTO ---\n"
-        + build_cni_prompt("recto", fields, instructions=instructions)
-        + "\n\n--- PROMPT VERSO ---\n"
-        + build_cni_prompt("verso", fields, instructions=instructions)
+        f"--- STRATÉGIE ACTIVE : {strategy_label} ---\n"
+        f"--- APERÇU : {title} ---\n\n"
+        f"--- SYSTEM ---\n{system_prompt or ''}\n\n"
+        f"--- USER ---\n{user_prompt}"
     )
 
 
@@ -1944,8 +1963,8 @@ def build_ui() -> gr.Blocks:
                             cni_preprocessing = cni_settings_view.preprocessing
                             cni_system_prompt = cni_settings_view.system_prompt
                             cni_prompt_instructions = cni_settings_view.prompt_instructions
+                            cni_prompt_preview_side = cni_settings_view.prompt_preview_side
                             cni_prompt_preview = cni_settings_view.prompt_preview
-                            cni_refresh_prompt = cni_settings_view.refresh_prompt
                             with gr.Tab("API QlickEER"):
                                 gr.Markdown(
                                     "La configuration est enregistrée localement dans `config/qlickeer_api.local.json` "
@@ -3979,24 +3998,30 @@ def build_ui() -> gr.Blocks:
             ],
             queue=False,
         )
-        cni_refresh_prompt.click(
+        # L'aperçu suit automatiquement la stratégie, la face inspectée et les
+        # deux niveaux de prompt. Aucun bouton de recalcul manuel n'est requis.
+        cni_prompt_preview_inputs = [
+            cni_strategy,
+            cni_prompt_preview_side,
+            cni_system_prompt,
+            cni_prompt_instructions,
+        ]
+        cni_strategy.change(
             _cni_prompt_preview,
-            inputs=[cni_strategy, cni_system_prompt, cni_prompt_instructions],
+            inputs=cni_prompt_preview_inputs,
             outputs=[cni_prompt_preview],
             queue=False,
         )
-        # L'aperçu suit automatiquement toute modification du prompt ou de la
-        # stratégie. Le petit bouton reste seulement un recalcul manuel de secours.
-        cni_strategy.change(
+        cni_prompt_preview_side.change(
             _cni_prompt_preview,
-            inputs=[cni_strategy, cni_system_prompt, cni_prompt_instructions],
+            inputs=cni_prompt_preview_inputs,
             outputs=[cni_prompt_preview],
             queue=False,
         )
         for prompt_component in (cni_system_prompt, cni_prompt_instructions):
             prompt_component.input(
                 _cni_prompt_preview,
-                inputs=[cni_strategy, cni_system_prompt, cni_prompt_instructions],
+                inputs=cni_prompt_preview_inputs,
                 outputs=[cni_prompt_preview],
                 queue=False,
             )
