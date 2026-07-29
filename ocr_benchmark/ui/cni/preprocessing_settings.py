@@ -29,12 +29,23 @@ def build_preprocessing_settings(settings: dict[str, Any]) -> PreprocessingSetti
         crop_method = gr.Radio(
             [
                 ("Smart Crop V4 · recommandé", "smart_crop_v4"),
+                (
+                    "Composants connectés · objets dominants",
+                    "connected_components",
+                ),
+                (
+                    "Canny + contours quadrilatères · bords visibles",
+                    "canny_contours",
+                ),
                 ("OpenCV historique · comparaison", "legacy_opencv"),
                 ("Aucun crop · image entière", "original"),
             ],
             value=settings["crop_method"],
             label="Méthode de détection et de recadrage",
-            info="Un score V4 insuffisant provoque l'envoi sûr de l'image entière.",
+            info=(
+                "Chaque méthode refuse un candidat incohérent et transmet alors "
+                "l’image entière."
+            ),
         )
         with gr.Group(
             visible=settings["crop_method"] == "smart_crop_v4"
@@ -60,6 +71,12 @@ def build_preprocessing_settings(settings: dict[str, Any]) -> PreprocessingSetti
                 "La détection peut utiliser une copie réduite, mais le redressement "
                 "final conserve les pixels et le DPI du rendu original."
             )
+        gr.Markdown(
+            "**Aide au choix :** Composants connectés sépare les objets isolés et "
+            "tente de casser les ponts fins causés par une ligne ou une ombre. "
+            "Canny recherche principalement quatre bords. V4 compare ces indices "
+            "avec les lignes, la texture et le premier plan."
+        )
 
         gr.Markdown("**2 · Améliorer l'image envoyée au modèle**")
         preprocessing = gr.CheckboxGroup(

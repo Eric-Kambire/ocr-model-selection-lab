@@ -14,6 +14,7 @@ from ..cni_crop_service import (
     DEFAULT_SMART_CROP_MARGIN,
     DEFAULT_SMART_CROP_MIN_SCORE,
     SMART_CROP_V4,
+    SUPPORTED_CROP_METHODS,
 )
 
 
@@ -151,7 +152,7 @@ def _normalise(value: Any, defaults: Mapping[str, Any]) -> dict[str, Any]:
     result["strategy"] = result["strategy"] if result["strategy"] in {"separate_calls", "combined_vertical"} else fallback["strategy"]
     result["crop_method"] = (
         result["crop_method"]
-        if result["crop_method"] in {"smart_crop_v4", "legacy_opencv", "original"}
+        if result["crop_method"] in SUPPORTED_CROP_METHODS
         else fallback["crop_method"]
     )
     result["rotation_method"] = result["rotation_method"] if result["rotation_method"] in {"none", "pillow", "opencv"} else fallback["rotation_method"]

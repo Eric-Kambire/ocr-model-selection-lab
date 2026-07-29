@@ -447,52 +447,106 @@ def _connected_components_pipeline(
         metrics={"kernel_size": kernel_size},
     )
 
-    count, labels, stats, _ = cv2.connectedComponentsWithStats(mask, connectivity=8)
     image_area = float(mask.shape[0] * mask.shape[1])
     minimum_area = image_area * float(parameters.get("component_min_area_pct") or 0.15) / 100.0
     components: list[dict[str, Any]] = []
-    component_map = np.zeros((*mask.shape, 3), dtype=np.uint8)
     palette = (
         (64, 126, 201), (68, 170, 112), (203, 133, 61), (156, 94, 196),
         (185, 77, 93), (74, 166, 178), (112, 132, 149),
     )
     height, width = mask.shape
-    for label_id in range(1, count):
-        x, y, component_width, component_height, area = [
-            int(value) for value in stats[label_id]
-        ]
-        if area < minimum_area:
-            continue
-        long_side = max(component_width, component_height)
-        short_side = max(1, min(component_width, component_height))
-        ratio = long_side / short_side
-        coverage = area / image_area
-        touches = sum(
-            (
-                x <= 1,
-                y <= 1,
-                x + component_width >= width - 1,
-                y + component_height >= height - 1,
+    mask_variants: list[tuple[str, Any]] = [("base", mask)]
+
+    # Une ligne fine, une ombre étroite ou une rayure peut relier la carte à un
+    # objet extérieur et les transformer en un seul composant. Une ouverture
+    # morphologique (érosion puis dilatation) casse ces ponts fins. Le masque
+    # original reste aussi candidat : si l'ouverture fragmente la carte, son
+    # mauvais candidat perdra simplement face à celui du masque de base.
+    bridge_break_enabled = bool(parameters.get("component_break_bridges", True))
+    bridge_size = max(3, min(15, int(round(min(height, width) * 0.005)) | 1))
+    if bridge_break_enabled:
+        bridge_broken = cv2.morphologyEx(
+            mask,
+            cv2.MORPH_OPEN,
+            cv2.getStructuringElement(
+                cv2.MORPH_ELLIPSE, (bridge_size, bridge_size)
+            ),
+            iterations=1,
+        )
+        remaining_ratio = float(
+            np.count_nonzero(bridge_broken) / max(1, np.count_nonzero(mask))
+        )
+        if remaining_ratio >= 0.15:
+            mask_variants.append(("ponts_casses", bridge_broken))
+        _save_stage(
+            stages,
+            output_dir,
+            bridge_broken,
+            name="Ponts fins supprimés",
+            explanation=(
+                "Une ouverture morphologique casse les connexions étroites. "
+                "Le masque original reste analysé en parallèle pour éviter de "
+                "perdre une carte elle-même fragmentée."
+            ),
+            metrics={
+                "kernel_size": bridge_size,
+                "foreground_remaining_ratio": remaining_ratio,
+            },
+        )
+
+    label_maps: dict[str, Any] = {}
+    component_counts: dict[str, int] = {}
+    for variant_name, candidate_mask in mask_variants:
+        count, labels, stats, _ = cv2.connectedComponentsWithStats(
+            candidate_mask, connectivity=8
+        )
+        label_maps[variant_name] = labels
+        component_counts[variant_name] = max(0, count - 1)
+        for label_id in range(1, count):
+            x, y, component_width, component_height, area = [
+                int(value) for value in stats[label_id]
+            ]
+            if area < minimum_area:
+                continue
+            long_side = max(component_width, component_height)
+            short_side = max(1, min(component_width, component_height))
+            ratio = long_side / short_side
+            coverage = area / image_area
+            touches = sum(
+                (
+                    x <= 1,
+                    y <= 1,
+                    x + component_width >= width - 1,
+                    y + component_height >= height - 1,
+                )
             )
-        )
-        ratio_fit = max(0.0, 1.0 - abs(ratio - CARD_RATIO) / 0.65)
-        fill_ratio = area / max(1.0, component_width * component_height)
-        score = 0.55 * ratio_fit + 0.30 * min(1.0, fill_ratio / 0.65) + 0.15 * min(1.0, coverage / 0.08)
-        if touches >= 2:
-            score -= 0.35
-        components.append(
-            {
-                "label": label_id,
-                "area": area,
-                "box": [x, y, x + component_width, y + component_height],
-                "ratio": ratio,
-                "coverage": coverage,
-                "fill_ratio": fill_ratio,
-                "touches_borders": touches,
-                "score": score,
-            }
-        )
-        component_map[labels == label_id] = palette[(label_id - 1) % len(palette)]
+            ratio_fit = max(0.0, 1.0 - abs(ratio - CARD_RATIO) / 0.65)
+            fill_ratio = area / max(1.0, component_width * component_height)
+            score = (
+                0.55 * ratio_fit
+                + 0.30 * min(1.0, fill_ratio / 0.65)
+                + 0.15 * min(1.0, coverage / 0.08)
+            )
+            if touches >= 2:
+                score -= 0.35
+            components.append(
+                {
+                    "label": label_id,
+                    "mask_variant": variant_name,
+                    "area": area,
+                    "box": [x, y, x + component_width, y + component_height],
+                    "ratio": ratio,
+                    "coverage": coverage,
+                    "fill_ratio": fill_ratio,
+                    "touches_borders": touches,
+                    "score": score,
+                }
+            )
+
+    component_map = np.zeros((*mask.shape, 3), dtype=np.uint8)
+    for position, component in enumerate(components):
+        labels = label_maps[component["mask_variant"]]
+        component_map[labels == component["label"]] = palette[position % len(palette)]
 
     _save_stage(
         stages,
@@ -504,9 +558,11 @@ def _connected_components_pipeline(
             "doivent apparaître comme des objets distincts de la CNI."
         ),
         metrics={
-            "components_total": max(0, count - 1),
+            "components_total_by_mask": component_counts,
             "components_after_area_filter": len(components),
             "minimum_area_px": round(minimum_area),
+            "bridge_break_enabled": bridge_break_enabled,
+            "bridge_kernel_size": bridge_size if bridge_break_enabled else None,
         },
     )
     selection_mode = str(parameters.get("component_selection") or "scored")
@@ -523,7 +579,10 @@ def _connected_components_pipeline(
             method_metrics={"components": components},
         )
 
-    selected_mask = np.where(labels == selected["label"], 255, 0).astype(np.uint8)
+    selected_labels = label_maps[selected["mask_variant"]]
+    selected_mask = np.where(
+        selected_labels == selected["label"], 255, 0
+    ).astype(np.uint8)
     contours, _ = cv2.findContours(selected_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     if not contours:
         return _fallback_result(

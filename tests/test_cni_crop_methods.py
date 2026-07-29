@@ -47,6 +47,7 @@ def test_connected_components_separates_distant_noise(tmp_path: Path):
     assert result["source_sent_unchanged"] is False
     assert Path(result["final_path"]).is_file()
     assert any(stage["name"] == "Composants séparés" for stage in result["stages"])
+    assert any(stage["name"] == "Ponts fins supprimés" for stage in result["stages"])
 
 
 def test_global_rectangle_exposes_noise_without_forcing_bad_crop(tmp_path: Path):

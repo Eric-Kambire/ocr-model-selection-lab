@@ -19,7 +19,7 @@ def test_cni_settings_round_trip_keeps_preprocessing_and_execution(tmp_path):
         models=["ollama:test"], strategy="combined_vertical", dpi=350,
         timeout_seconds=600, cpu_threads=2, unload_after_task=False,
         continue_without_label=True, recto_suffix="_CIN_recto",
-        verso_suffix="_CIN_verso", crop_method="smart_crop_v4",
+        verso_suffix="_CIN_verso", crop_method="connected_components",
         smart_crop_min_score=0.62, smart_crop_margin=0.018,
         rotation_method="opencv",
         perspective_correction=True, preprocessing=["contrast", "denoise"],
@@ -35,7 +35,7 @@ def test_cni_settings_round_trip_keeps_preprocessing_and_execution(tmp_path):
 
     assert loaded["strategy"] == "combined_vertical"
     assert loaded["dpi"] == 350
-    assert loaded["crop_method"] == "smart_crop_v4"
+    assert loaded["crop_method"] == "connected_components"
     assert loaded["smart_crop_min_score"] == 0.62
     assert loaded["smart_crop_margin"] == 0.018
     assert loaded["rotation_method"] == "opencv"

@@ -67,3 +67,44 @@ def test_smart_v4_parameters_and_result_are_adapted_for_the_runner(
     assert result["crop_status"] == "crop_detected_smart_v4"
     assert result["score"] == 0.81
     assert result["report_path"] == str(report)
+
+
+def test_benchmark_dispatches_connected_components_and_canny(
+    tmp_path: Path, monkeypatch
+):
+    """Les méthodes du laboratoire sont réellement appelées par le benchmark."""
+    source = tmp_path / "source.png"
+    final = tmp_path / "final.png"
+    Image.new("RGB", (1200, 1800), "white").save(source)
+    Image.new("RGB", (856, 540), "white").save(final)
+    calls: list[tuple[str, dict]] = []
+
+    def fake_run_crop_method(source_path, output_dir, *, method, parameters):
+        calls.append((method, parameters))
+        return {
+            "status": "crop_detected",
+            "final_path": str(final),
+            "source_sent_unchanged": False,
+            "stages": [],
+            "summary": {"score": 0.75},
+            "report_path": None,
+        }
+
+    monkeypatch.setattr(cni_crop_service, "run_crop_method", fake_run_crop_method)
+
+    connected = cni_crop_service.crop_cni_for_benchmark(
+        source,
+        tmp_path / "connected",
+        method="connected_components",
+    )
+    canny = cni_crop_service.crop_cni_for_benchmark(
+        source,
+        tmp_path / "canny",
+        method="canny_contours",
+    )
+
+    assert calls[0][0] == "connected_components"
+    assert calls[0][1]["component_break_bridges"] is True
+    assert calls[1][0] == "canny_contours"
+    assert connected["crop_status"] == "crop_detected_connected_components"
+    assert canny["crop_status"] == "crop_detected_canny_contours"

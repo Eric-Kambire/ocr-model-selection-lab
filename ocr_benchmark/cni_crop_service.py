@@ -18,11 +18,19 @@ from .cni_images import crop_cni_from_a4
 
 
 SMART_CROP_V4 = "smart_crop_v4"
+CONNECTED_COMPONENTS = "connected_components"
+CANNY_CONTOURS = "canny_contours"
 LEGACY_OPENCV = "legacy_opencv"
 ORIGINAL_IMAGE = "original"
 DEFAULT_SMART_CROP_MIN_SCORE = 0.55
 DEFAULT_SMART_CROP_MARGIN = 0.012
-SUPPORTED_CROP_METHODS = {SMART_CROP_V4, LEGACY_OPENCV, ORIGINAL_IMAGE}
+SUPPORTED_CROP_METHODS = {
+    SMART_CROP_V4,
+    CONNECTED_COMPONENTS,
+    CANNY_CONTOURS,
+    LEGACY_OPENCV,
+    ORIGINAL_IMAGE,
+}
 
 
 def crop_cni_for_benchmark(
@@ -39,7 +47,8 @@ def crop_cni_for_benchmark(
     Entrées :
     - ``source_path`` : PNG pleine résolution créé à partir du PDF ou de l'image.
     - ``output_dir`` : dossier d'artefacts propre à une face et à un run.
-    - ``method`` : Smart Crop V4, ancien OpenCV ou aucun crop.
+    - ``method`` : Smart Crop V4, composants connectés, Canny, ancien OpenCV
+      ou aucun crop.
 
     Sortie :
     - ``image_path`` désigne toujours une image réellement lisible ;
@@ -76,18 +85,44 @@ def crop_cni_for_benchmark(
             "report_path": legacy.get("report_path"),
         }
 
-    result = run_crop_method(
-        source_path,
-        output_dir,
-        method="hybrid_v4",
-        parameters={
+    registered_method = {
+        SMART_CROP_V4: "hybrid_v4",
+        CONNECTED_COMPONENTS: "connected_components",
+        CANNY_CONTOURS: "canny_contours",
+    }[selected_method]
+    parameters: dict[str, Any]
+    if selected_method == SMART_CROP_V4:
+        parameters = {
             "hybrid_min_score": _bounded(
                 minimum_score, DEFAULT_SMART_CROP_MIN_SCORE, 0.0, 1.0
             ),
             "hybrid_margin": _bounded(
                 margin_ratio, DEFAULT_SMART_CROP_MARGIN, 0.0, 0.08
             ),
-        },
+        }
+    elif selected_method == CONNECTED_COMPONENTS:
+        parameters = {
+            "component_mask_mode": "adaptive",
+            "component_selection": "scored",
+            "component_min_area_pct": 0.15,
+            # Analyse le masque brut et une variante où les ponts fins ont été
+            # cassés. Le meilleur candidat géométrique gagne.
+            "component_break_bridges": True,
+        }
+    else:
+        parameters = {
+            "canny_low": 45,
+            "canny_high": 135,
+            "contour_kernel": 7,
+            "contour_min_area_pct": 0.2,
+            "contour_min_score": 0.64,
+        }
+
+    result = run_crop_method(
+        source_path,
+        output_dir,
+        method=registered_method,
+        parameters=parameters,
     )
     unchanged = bool(result.get("source_sent_unchanged"))
     summary = result.get("summary") if isinstance(result.get("summary"), dict) else {}
@@ -96,10 +131,17 @@ def crop_cni_for_benchmark(
         requested_output.parent.mkdir(parents=True, exist_ok=True)
         copyfile(final_path, requested_output)
         final_path = requested_output
+    # Conserver le nom historique ``smart_v4`` dans les résultats existants.
+    # Les deux nouvelles méthodes utilisent leur identifiant public directement.
+    status_method = (
+        "smart_v4" if selected_method == SMART_CROP_V4 else selected_method
+    )
     return {
         "image_path": str(final_path),
         "crop_status": (
-            "crop_fallback_original_smart_v4" if unchanged else "crop_detected_smart_v4"
+            f"crop_fallback_original_{status_method}"
+            if unchanged
+            else f"crop_detected_{status_method}"
         ),
         "crop_method": selected_method,
         "source_sent_unchanged": unchanged,
