@@ -40,6 +40,9 @@ def default_cni_settings(*, cpu_threads: int, system_prompt: str, prompt_instruc
         "model_output_modes": {},
         "system_prompt": system_prompt,
         "prompt_instructions": prompt_instructions,
+        # Ce seuil sert uniquement à surveiller la taille du prompt dans l'UI.
+        # Il ne modifie pas le contexte réellement alloué par Ollama.
+        "prompt_context_budget": 8192,
     }
 
 
@@ -85,6 +88,7 @@ def cni_settings_from_ui(
     model_output_modes: Any,
     system_prompt: Any,
     prompt_instructions: Any,
+    prompt_context_budget: Any,
 ) -> dict[str, Any]:
     """Convertit les composants Gradio en données JSON simples."""
     return {
@@ -112,6 +116,7 @@ def cni_settings_from_ui(
         "model_output_modes": _model_output_modes(model_output_modes),
         "system_prompt": str(system_prompt or "").strip(),
         "prompt_instructions": str(prompt_instructions or "").strip(),
+        "prompt_context_budget": _positive_integer(prompt_context_budget, 8192),
     }
 
 
@@ -139,6 +144,9 @@ def _normalise(value: Any, defaults: Mapping[str, Any]) -> dict[str, Any]:
         model_output_modes=raw.get("model_output_modes", fallback["model_output_modes"]),
         system_prompt=raw.get("system_prompt", fallback["system_prompt"]),
         prompt_instructions=raw.get("prompt_instructions", fallback["prompt_instructions"]),
+        prompt_context_budget=raw.get(
+            "prompt_context_budget", fallback["prompt_context_budget"]
+        ),
     )
     result["strategy"] = result["strategy"] if result["strategy"] in {"separate_calls", "combined_vertical"} else fallback["strategy"]
     result["crop_method"] = (

@@ -11,12 +11,17 @@ class PromptSettings:
     system_prompt: Any
     prompt_instructions: Any
     prompt_preview_side: Any
+    prompt_context_budget: Any
+    prompt_token_indicator: Any
     prompt_preview: Any
 
 
 def build_prompt_settings(
     settings: dict[str, Any],
     prompt_preview_builder: Callable[[str, str, str | None, str | None], str],
+    token_indicator_builder: Callable[
+        [str, str, str | None, str | None, int | float | None], str
+    ],
 ) -> PromptSettings:
     """Construit l'éditeur de prompt.
 
@@ -55,30 +60,50 @@ def build_prompt_settings(
                 )
             with gr.Tab("3. Prompt final envoyé"):
                 gr.Markdown(
-                    "Cet aperçu est recalculé automatiquement. Le sélecteur ne change pas la "
-                    "stratégie d’exécution : il permet seulement d’inspecter chaque message."
+                    "Cet aperçu est recalculé automatiquement. Le sélecteur sert uniquement "
+                    "à inspecter le message : il ne change ni la stratégie ni la face envoyée. "
+                    "En mode séparé, le scan associe les fichiers aux rôles avec les suffixes "
+                    "configurés, puis le runner impose **Recto → prompt recto** et "
+                    "**Verso → prompt verso**. Le prompt système reste commun aux deux appels."
                 )
-                prompt_preview_side = gr.Radio(
-                    [
-                        ("Recto", "recto"),
-                        ("Verso", "verso"),
-                        ("Image combinée", "combined"),
-                    ],
-                    value=(
-                        "combined"
-                        if settings["strategy"] == "combined_vertical"
-                        else "recto"
-                    ),
-                    label="Message à inspecter",
+                initial_side = (
+                    "combined"
+                    if settings["strategy"] == "combined_vertical"
+                    else "recto"
+                )
+                with gr.Row():
+                    prompt_preview_side = gr.Radio(
+                        [
+                            ("Recto", "recto"),
+                            ("Verso", "verso"),
+                            ("Image combinée", "combined"),
+                        ],
+                        value=initial_side,
+                        label="Message à inspecter",
+                    )
+                    prompt_context_budget = gr.Number(
+                        value=settings.get("prompt_context_budget", 8192),
+                        minimum=256,
+                        precision=0,
+                        label="Budget de contexte surveillé",
+                        info=(
+                            "Seuil d’alerte en tokens. Il ne modifie pas le paramètre "
+                            "num_ctx d’Ollama."
+                        ),
+                    )
+                prompt_token_indicator = gr.HTML(
+                    token_indicator_builder(
+                        settings["strategy"],
+                        initial_side,
+                        settings["system_prompt"],
+                        settings["prompt_instructions"],
+                        settings.get("prompt_context_budget", 8192),
+                    )
                 )
                 prompt_preview = gr.Code(
                     value=prompt_preview_builder(
                         settings["strategy"],
-                        (
-                            "combined"
-                            if settings["strategy"] == "combined_vertical"
-                            else "recto"
-                        ),
+                        initial_side,
                         settings["system_prompt"],
                         settings["prompt_instructions"],
                     ),
@@ -90,5 +115,7 @@ def build_prompt_settings(
         system_prompt,
         prompt_instructions,
         prompt_preview_side,
+        prompt_context_budget,
+        prompt_token_indicator,
         prompt_preview,
     )

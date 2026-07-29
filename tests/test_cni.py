@@ -274,6 +274,10 @@ def test_cni_strategies_send_expected_images_and_keep_pair_progress(tmp_path: Pa
     assert len(separate.model.calls) == 2
     assert separate.model.calls[0][0].endswith("crop_recto.png")
     assert separate.model.calls[1][0].endswith("crop_verso.png")
+    assert "RECTO side" in separate.model.calls[0][1]
+    assert "VERSO side" in separate.model.calls[1][1]
+    assert "VERSO side" not in separate.model.calls[0][1]
+    assert "RECTO side" not in separate.model.calls[1][1]
     processing = [event for event in separate_events if event["stage"] == "processing"]
     assert [(event["side"], event["substep"], event["substeps"]) for event in processing] == [
         ("recto", 1, 2),
@@ -286,6 +290,7 @@ def test_cni_strategies_send_expected_images_and_keep_pair_progress(tmp_path: Pa
     combined_events = list(iter_cni_benchmark(combined, ["fake:vision"], records, tmp_path / "runs-combined", strategy="combined_vertical"))
     assert len(combined.model.calls) == 1
     assert combined.model.calls[0][0].endswith("recto_verso_composite.png")
+    assert "RECTO at the top" in combined.model.calls[0][1]
     combined_processing = [
         event for event in combined_events if event["stage"] == "processing"
     ]

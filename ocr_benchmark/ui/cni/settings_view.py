@@ -29,17 +29,26 @@ class CniSettingsView:
     system_prompt: Any
     prompt_instructions: Any
     prompt_preview_side: Any
+    prompt_context_budget: Any
+    prompt_token_indicator: Any
     prompt_preview: Any
 
 
 def build_cni_core_settings(
     settings: dict[str, Any],
     prompt_preview_builder: Callable[[str, str, str | None, str | None], str],
+    token_indicator_builder: Callable[
+        [str, str, str | None, str | None, int | float | None], str
+    ],
 ) -> CniSettingsView:
     """Assemble les vues spécialisées sans y placer de logique métier."""
     execution = build_execution_settings(settings)
     preprocessing = build_preprocessing_settings(settings)
-    prompt = build_prompt_settings(settings, prompt_preview_builder)
+    prompt = build_prompt_settings(
+        settings,
+        prompt_preview_builder,
+        token_indicator_builder,
+    )
     return CniSettingsView(
         strategy=execution.strategy,
         dpi=execution.dpi,
@@ -58,5 +67,7 @@ def build_cni_core_settings(
         system_prompt=prompt.system_prompt,
         prompt_instructions=prompt.prompt_instructions,
         prompt_preview_side=prompt.prompt_preview_side,
+        prompt_context_budget=prompt.prompt_context_budget,
+        prompt_token_indicator=prompt.prompt_token_indicator,
         prompt_preview=prompt.prompt_preview,
     )

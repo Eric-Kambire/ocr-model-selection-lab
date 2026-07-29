@@ -804,6 +804,73 @@ def _cni_prompt_preview(
     )
 
 
+def _cni_prompt_token_indicator(
+    strategy: str,
+    preview_side: str,
+    system_prompt: str | None,
+    instructions: str | None,
+    context_budget: int | float | None,
+) -> str:
+    """Estime le texte d'entrée avant l'appel, avec une marge explicite.
+
+    Ollama ne fournit ``prompt_eval_count`` qu'après l'inférence. Cette
+    estimation préventive ne tente donc pas d'inventer le coût visuel de
+    l'image, qui dépend du tokenizer et de l'encodeur de chaque modèle.
+    """
+    preview = _cni_prompt_preview(
+        strategy,
+        preview_side,
+        system_prompt,
+        instructions,
+    )
+    # Les en-têtes d'aperçu ne sont pas envoyés. On extrait seulement le contenu
+    # SYSTEM + USER et on réserve quelques tokens au template de chat.
+    payload = preview.split("--- SYSTEM ---\n", 1)[-1]
+    payload = payload.replace("\n\n--- USER ---\n", "\n", 1)
+    estimated_text = max(1, (len(payload.encode("utf-8")) + 3) // 4 + 32)
+    conservative = (estimated_text * 5 + 3) // 4
+    try:
+        budget = max(256, int(context_budget or 8192))
+    except (TypeError, ValueError):
+        budget = 8192
+    usage = conservative / budget * 100
+    if usage >= 90:
+        level, color, background = "Risque élevé", "#b42318", "#fcebea"
+    elif usage >= 70:
+        level, color, background = "À surveiller", "#9a5b00", "#fff5df"
+    else:
+        level, color, background = "Marge confortable", "#167c46", "#e8f7ee"
+    return (
+        f"<div style='padding:12px;border-radius:8px;background:{background};color:{color}'>"
+        f"<strong>{level}</strong> · texte estimé : <strong>≈ {estimated_text:,} tokens</strong> · "
+        f"avec marge de sécurité 25 % : <strong>≈ {conservative:,}</strong> / {budget:,} "
+        f"({usage:.1f} %)"
+        "<br><small>Prévision avant appel : le coût des tokens visuels n’est pas inclus. "
+        "Après la réponse, la mesure réelle Ollama <code>prompt_eval_count</code> est "
+        "enregistrée dans <code>input_tokens</code>. Gardez une marge importante.</small></div>"
+    )
+
+
+def _cni_prompt_preview_outputs(
+    strategy: str,
+    preview_side: str,
+    system_prompt: str | None,
+    instructions: str | None,
+    context_budget: int | float | None,
+) -> tuple[str, str]:
+    """Recalcule ensemble l'aperçu exact et son estimation de tokens."""
+    return (
+        _cni_prompt_preview(strategy, preview_side, system_prompt, instructions),
+        _cni_prompt_token_indicator(
+            strategy,
+            preview_side,
+            system_prompt,
+            instructions,
+            context_budget,
+        ),
+    )
+
+
 def _cni_alert_html(level: str, message: str) -> str:
     """Affiche un état CNI avec une couleur et un symbole lisibles."""
     styles = {
@@ -1946,6 +2013,7 @@ def build_ui() -> gr.Blocks:
                             cni_settings_view = build_cni_core_settings(
                                 cni_settings,
                                 _cni_prompt_preview,
+                                _cni_prompt_token_indicator,
                             )
                             cni_strategy = cni_settings_view.strategy
                             cni_dpi = cni_settings_view.dpi
@@ -1964,6 +2032,8 @@ def build_ui() -> gr.Blocks:
                             cni_system_prompt = cni_settings_view.system_prompt
                             cni_prompt_instructions = cni_settings_view.prompt_instructions
                             cni_prompt_preview_side = cni_settings_view.prompt_preview_side
+                            cni_prompt_context_budget = cni_settings_view.prompt_context_budget
+                            cni_prompt_token_indicator = cni_settings_view.prompt_token_indicator
                             cni_prompt_preview = cni_settings_view.prompt_preview
                             with gr.Tab("API QlickEER"):
                                 gr.Markdown(
@@ -4005,24 +4075,29 @@ def build_ui() -> gr.Blocks:
             cni_prompt_preview_side,
             cni_system_prompt,
             cni_prompt_instructions,
+            cni_prompt_context_budget,
         ]
         cni_strategy.change(
-            _cni_prompt_preview,
+            _cni_prompt_preview_outputs,
             inputs=cni_prompt_preview_inputs,
-            outputs=[cni_prompt_preview],
+            outputs=[cni_prompt_preview, cni_prompt_token_indicator],
             queue=False,
         )
         cni_prompt_preview_side.change(
-            _cni_prompt_preview,
+            _cni_prompt_preview_outputs,
             inputs=cni_prompt_preview_inputs,
-            outputs=[cni_prompt_preview],
+            outputs=[cni_prompt_preview, cni_prompt_token_indicator],
             queue=False,
         )
-        for prompt_component in (cni_system_prompt, cni_prompt_instructions):
+        for prompt_component in (
+            cni_system_prompt,
+            cni_prompt_instructions,
+            cni_prompt_context_budget,
+        ):
             prompt_component.input(
-                _cni_prompt_preview,
+                _cni_prompt_preview_outputs,
                 inputs=cni_prompt_preview_inputs,
-                outputs=[cni_prompt_preview],
+                outputs=[cni_prompt_preview, cni_prompt_token_indicator],
                 queue=False,
             )
         cni_crop_method.change(
@@ -4055,6 +4130,7 @@ def build_ui() -> gr.Blocks:
             cni_perspective_correction, cni_preprocessing,
             cni_output_format_mode, cni_model_output_modes_state,
             cni_system_prompt, cni_prompt_instructions,
+            cni_prompt_context_budget,
         ]
         for setting_component in (
             cni_models, cni_strategy, cni_dpi, cni_timeout, cni_cpu_threads,
@@ -4064,6 +4140,7 @@ def build_ui() -> gr.Blocks:
             cni_perspective_correction, cni_preprocessing,
             cni_output_format_mode, cni_model_output_modes_state,
             cni_system_prompt, cni_prompt_instructions,
+            cni_prompt_context_budget,
         ):
             setting_component.change(
                 persist_cni_settings,
