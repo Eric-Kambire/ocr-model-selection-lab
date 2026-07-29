@@ -27,7 +27,9 @@ class CniSettingsView:
     perspective_correction: Any
     preprocessing: Any
     system_prompt: Any
+    system_token_indicator: Any
     prompt_instructions: Any
+    instructions_token_indicator: Any
     prompt_preview_side: Any
     prompt_context_budget: Any
     prompt_token_indicator: Any
@@ -65,7 +67,9 @@ def build_cni_core_settings(
         perspective_correction=preprocessing.perspective_correction,
         preprocessing=preprocessing.preprocessing,
         system_prompt=prompt.system_prompt,
+        system_token_indicator=prompt.system_token_indicator,
         prompt_instructions=prompt.prompt_instructions,
+        instructions_token_indicator=prompt.instructions_token_indicator,
         prompt_preview_side=prompt.prompt_preview_side,
         prompt_context_budget=prompt.prompt_context_budget,
         prompt_token_indicator=prompt.prompt_token_indicator,

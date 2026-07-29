@@ -76,6 +76,7 @@ from ocr_benchmark.ui.cni.handlers import (
     request_cancel as request_cni_cancel_handler,
 )
 from ocr_benchmark.ui.cni.settings_view import build_cni_core_settings
+from ocr_benchmark.ui.cni.prompt_settings import prompt_section_token_badge
 from ocr_benchmark.visualization import (
     category_quality_chart,
     cni_accuracy_chart,
@@ -841,13 +842,15 @@ def _cni_prompt_token_indicator(
     else:
         level, color, background = "Marge confortable", "#167c46", "#e8f7ee"
     return (
-        f"<div style='padding:12px;border-radius:8px;background:{background};color:{color}'>"
-        f"<strong>{level}</strong> · texte estimé : <strong>≈ {estimated_text:,} tokens</strong> · "
-        f"avec marge de sécurité 25 % : <strong>≈ {conservative:,}</strong> / {budget:,} "
-        f"({usage:.1f} %)"
-        "<br><small>Prévision avant appel : le coût des tokens visuels n’est pas inclus. "
-        "Après la réponse, la mesure réelle Ollama <code>prompt_eval_count</code> est "
-        "enregistrée dans <code>input_tokens</code>. Gardez une marge importante.</small></div>"
+        "<div style='margin:3px 0 8px'>"
+        f"<span style='display:inline-flex;align-items:center;gap:7px;padding:5px 10px;"
+        f"border:1px solid {color}55;border-radius:999px;background:{background};color:{color};"
+        "font-size:12px'>"
+        f"<strong>{level}</strong><span>≈ {estimated_text:,} tokens texte</span>"
+        f"<span>sécurisé : {conservative:,} / {budget:,} ({usage:.1f} %)</span></span>"
+        "<small style='display:block;margin-top:4px;color:var(--body-text-color-subdued)'>"
+        "Estimation avant appel, hors tokens visuels. La mesure Ollama réelle est conservée "
+        "après le run dans <code>input_tokens</code>.</small></div>"
     )
 
 
@@ -2030,7 +2033,9 @@ def build_ui() -> gr.Blocks:
                             cni_perspective_correction = cni_settings_view.perspective_correction
                             cni_preprocessing = cni_settings_view.preprocessing
                             cni_system_prompt = cni_settings_view.system_prompt
+                            cni_system_token_indicator = cni_settings_view.system_token_indicator
                             cni_prompt_instructions = cni_settings_view.prompt_instructions
+                            cni_instructions_token_indicator = cni_settings_view.instructions_token_indicator
                             cni_prompt_preview_side = cni_settings_view.prompt_preview_side
                             cni_prompt_context_budget = cni_settings_view.prompt_context_budget
                             cni_prompt_token_indicator = cni_settings_view.prompt_token_indicator
@@ -4100,6 +4105,20 @@ def build_ui() -> gr.Blocks:
                 outputs=[cni_prompt_preview, cni_prompt_token_indicator],
                 queue=False,
             )
+        # Chaque niveau possède aussi son compteur discret. Contrairement au
+        # compteur final, ces badges ne comptent que le texte édité dans la zone.
+        cni_system_prompt.input(
+            prompt_section_token_badge,
+            inputs=[cni_system_prompt],
+            outputs=[cni_system_token_indicator],
+            queue=False,
+        )
+        cni_prompt_instructions.input(
+            prompt_section_token_badge,
+            inputs=[cni_prompt_instructions],
+            outputs=[cni_instructions_token_indicator],
+            queue=False,
+        )
         cni_crop_method.change(
             _cni_smart_crop_visibility,
             inputs=[cni_crop_method],
