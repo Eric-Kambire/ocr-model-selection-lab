@@ -1,6 +1,10 @@
 """Tests de persistance locale des réglages CNI Gradio."""
 
+import json
+
 from ocr_benchmark.application.cni_settings_service import (
+    LEGACY_DEFAULT_SYSTEM_PROMPT,
+    LEGACY_DEFAULT_USER_INSTRUCTIONS,
     cni_settings_from_ui,
     default_cni_settings,
     load_cni_settings,
@@ -76,3 +80,46 @@ def test_invalid_crop_settings_fall_back_to_safe_v4_defaults(tmp_path):
     assert loaded["crop_method"] == "smart_crop_v4"
     assert loaded["smart_crop_min_score"] == 0.55
     assert loaded["smart_crop_margin"] == 0.012
+
+
+def test_legacy_default_prompts_are_migrated_without_overwriting_custom_text(
+    tmp_path,
+):
+    """Une mise à jour remplace les anciens défauts, jamais un prompt métier."""
+    defaults = default_cni_settings(
+        cpu_threads=4,
+        system_prompt="nouveau système",
+        prompt_instructions="",
+    )
+    legacy_path = tmp_path / "legacy.json"
+    legacy_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "system_prompt": LEGACY_DEFAULT_SYSTEM_PROMPT,
+                "prompt_instructions": LEGACY_DEFAULT_USER_INSTRUCTIONS,
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    custom_path = tmp_path / "custom.json"
+    custom_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "system_prompt": "système personnalisé",
+                "prompt_instructions": "règle personnalisée",
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    migrated = load_cni_settings(legacy_path, defaults=defaults)
+    custom = load_cni_settings(custom_path, defaults=defaults)
+
+    assert migrated["system_prompt"] == "nouveau système"
+    assert migrated["prompt_instructions"] == ""
+    assert custom["system_prompt"] == "système personnalisé"
+    assert custom["prompt_instructions"] == "règle personnalisée"

@@ -140,7 +140,9 @@ def test_cni_prompt_covers_old_new_layout_and_operator_instructions():
     assert "old or new layout" in prompt
     assert "Prioritize a sharp reading" in prompt
     assert '"cin": null' in prompt
-    assert "first line = prenom" in prompt
+    assert "upper large Latin line is usually prenom" in prompt
+    # Le contrat JSON doit rester la dernière information du prompt.
+    assert prompt.rstrip().endswith('"date_validite": null}')
 
 
 def test_cni_prompt_prevents_parent_name_and_identifier_confusion():
@@ -148,13 +150,16 @@ def test_cni_prompt_prevents_parent_name_and_identifier_confusion():
     recto_prompt = build_cni_prompt("recto")
     verso_prompt = build_cni_prompt("verso")
 
-    assert "holder-name lines near the portrait and before 'Né le'" in recto_prompt
-    assert "Never take a CAN" in recto_prompt
+    assert "main holder-name block is usually near the portrait" in recto_prompt
+    assert "Never use CAN" in recto_prompt
     assert "plain 'N°'" in recto_prompt
-    assert "old fronts it is often below/right of the photo" in recto_prompt
-    assert "names after 'Fils de'/'Et de' are parents" in verso_prompt
-    assert "top-left/top repeated number" in verso_prompt
-    assert "multi-line address" in verso_prompt
+    assert "old fronts it is often below or to the right" in recto_prompt
+    assert "'Fils de' or 'Et de' are parents" in verso_prompt
+    assert "top or top-left area" in verso_prompt
+    assert "join its visible lines with one space" in verso_prompt
+    # Garantie importante : aucune règle propre à l'autre face n'est injectée.
+    assert "Fils de" not in recto_prompt
+    assert "holder-name block" not in verso_prompt
 
 
 def test_cni_output_schema_is_strict_and_nullable():

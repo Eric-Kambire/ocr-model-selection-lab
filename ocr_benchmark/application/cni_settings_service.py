@@ -17,6 +17,17 @@ from ..cni_crop_service import (
     SUPPORTED_CROP_METHODS,
 )
 
+LEGACY_DEFAULT_SYSTEM_PROMPT = (
+    "Extract Moroccan CNI fields exactly. Return only one valid JSON object "
+    "matching the requested schema. Never guess; use null if unreadable. "
+    "Ignore QR, barcode and MRZ."
+)
+LEGACY_DEFAULT_USER_INSTRUCTIONS = (
+    "Read Latin values only. 'Né le' = birth date; nearby 'à' = birth city; "
+    "'Valable jusqu’au' = expiry. Do not confuse holder, parents, CAN or "
+    "civil-status number."
+)
+
 
 def default_cni_settings(*, cpu_threads: int, system_prompt: str, prompt_instructions: str) -> dict[str, Any]:
     """Retourne une configuration CNI sûre et sérialisable par défaut."""
@@ -164,6 +175,12 @@ def _normalise(value: Any, defaults: Mapping[str, Any]) -> dict[str, Any]:
     )
     result["recto_suffix"] = result["recto_suffix"] or fallback["recto_suffix"]
     result["verso_suffix"] = result["verso_suffix"] or fallback["verso_suffix"]
+    # Mettre à jour uniquement les anciens textes livrés par défaut. Un prompt
+    # réellement personnalisé par l'opérateur est conservé mot pour mot.
+    if result["system_prompt"] == LEGACY_DEFAULT_SYSTEM_PROMPT:
+        result["system_prompt"] = fallback["system_prompt"]
+    if result["prompt_instructions"] == LEGACY_DEFAULT_USER_INSTRUCTIONS:
+        result["prompt_instructions"] = fallback["prompt_instructions"]
     result["system_prompt"] = result["system_prompt"] or fallback["system_prompt"]
     result["prompt_instructions"] = result["prompt_instructions"] or fallback["prompt_instructions"]
     return result
