@@ -1734,37 +1734,41 @@ def build_ui() -> gr.Blocks:
                                 cni_model_output_modes_state = gr.State(
                                     cni_settings.get("model_output_modes", {})
                                 )
-                                cni_output_format_mode = gr.Dropdown(
-                                    [
-                                        (
-                                            "Schéma JSON strict · recommandé si le modèle le supporte",
-                                            "schema",
-                                        ),
-                                        ("Objet JSON · contrainte légère", "json"),
-                                        (
-                                            "Prompt uniquement · sortie Markdown tolérée puis JSON extrait",
-                                            "prompt",
-                                        ),
-                                    ],
-                                    value=cni_settings["output_format_mode"],
-                                    label="Sortie attendue des modèles sélectionnés",
-                                    info=(
-                                        "Cette option est appliquée à tous les modèles du prochain run. "
-                                        "Le retour brut est toujours conservé, même si le JSON est invalide."
-                                    ),
-                                )
+                                cni_model_output_settings_open = gr.State(False)
                                 with gr.Group(visible=False) as cni_model_output_settings:
                                     with gr.Row():
                                         gr.Markdown(
-                                            "**Exception par modèle** — laissez « Hériter » pour utiliser "
-                                            "le format global ci-dessus. Cette option ne change ni le modèle "
-                                            "sélectionné ni le prompt."
+                                            "**Configuration de sortie** — choisissez d’abord le comportement "
+                                            "commun, puis ajoutez seulement les exceptions nécessaires."
                                         )
                                         cni_close_model_output_settings = gr.Button(
                                             "Fermer",
                                             size="sm",
                                             scale=0,
                                         )
+                                    cni_output_format_mode = gr.Dropdown(
+                                        [
+                                            (
+                                                "Schéma JSON strict · recommandé si le modèle le supporte",
+                                                "schema",
+                                            ),
+                                            ("Objet JSON · contrainte légère", "json"),
+                                            (
+                                                "Prompt uniquement · sortie Markdown tolérée puis JSON extrait",
+                                                "prompt",
+                                            ),
+                                        ],
+                                        value=cni_settings["output_format_mode"],
+                                        label="Format par défaut pour tous les modèles",
+                                        info=(
+                                            "Utilisé sauf exception définie ci-dessous. Le retour brut est "
+                                            "toujours conservé, même si le JSON est invalide."
+                                        ),
+                                    )
+                                    gr.Markdown(
+                                        "**Exception par modèle** — « Hériter » conserve le format par défaut. "
+                                        "Cette option ne change ni le modèle sélectionné ni le prompt."
+                                    )
                                     with gr.Row():
                                         cni_model_override_target = gr.Dropdown(
                                             choices=cni_settings["models"],
@@ -3926,13 +3930,23 @@ def build_ui() -> gr.Blocks:
         )
         cni_refresh_models.click(refresh_cni_models, inputs=[cni_models], outputs=[cni_models], queue=False)
         cni_model_output_settings_button.click(
-            lambda: gr.update(visible=True),
-            outputs=[cni_model_output_settings],
+            lambda opened: (
+                not bool(opened),
+                gr.update(visible=not bool(opened)),
+            ),
+            inputs=[cni_model_output_settings_open],
+            outputs=[
+                cni_model_output_settings_open,
+                cni_model_output_settings,
+            ],
             queue=False,
         )
         cni_close_model_output_settings.click(
-            lambda: gr.update(visible=False),
-            outputs=[cni_model_output_settings],
+            lambda: (False, gr.update(visible=False)),
+            outputs=[
+                cni_model_output_settings_open,
+                cni_model_output_settings,
+            ],
             queue=False,
         )
         cni_models.change(
