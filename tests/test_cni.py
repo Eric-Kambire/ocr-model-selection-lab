@@ -153,13 +153,24 @@ def test_cni_prompt_prevents_parent_name_and_identifier_confusion():
     assert "main holder-name block is usually near the portrait" in recto_prompt
     assert "Never use CAN" in recto_prompt
     assert "plain 'N°'" in recto_prompt
-    assert "old fronts it is often below or to the right" in recto_prompt
-    assert "'Fils de' or 'Et de' are parents" in verso_prompt
+    assert "old fronts it is often below the photo" in recto_prompt
+    assert "'Fils de' or 'Et de' are the holder's parents" in verso_prompt
     assert "top or top-left area" in verso_prompt
-    assert "join its visible lines with one space" in verso_prompt
+    assert "join its lines with one space" in verso_prompt
     # Garantie importante : aucune règle propre à l'autre face n'est injectée.
     assert "Fils de" not in recto_prompt
     assert "holder-name block" not in verso_prompt
+
+
+def test_full_rule_prompt_keeps_both_contexts_but_current_face_schema():
+    """Le contexte complet ne doit pas transformer un appel recto en fusion."""
+    prompt = build_cni_prompt("recto", prompt_scope_mode="full_rules")
+
+    assert "RECTO rules:" in prompt
+    assert "VERSO rules:" in prompt
+    assert "current image is known to be the RECTO side" in prompt
+    assert '"prenom": null' in prompt
+    assert '"recto": {' not in prompt
 
 
 def test_cni_output_schema_is_strict_and_nullable():
@@ -251,7 +262,7 @@ class _RecordingModel:
                 '"date_naissance":"2000-01-01","ville_naissance":"CASA","date_validite":"2030-01-01"},'
                 '"verso":{"cin":"AA1","date_validite":"2030-01-01","adresse":"CASA"}}'
             )
-        elif "RECTO" in (prompt or ""):
+        elif "Analyze this RECTO" in (prompt or ""):
             content = '{"cin":"AA1","nom":"NOM","prenom":"PRENOM","date_naissance":"2000-01-01","ville_naissance":"CASA","date_validite":"2030-01-01"}'
         else:
             content = '{"cin":"AA1","date_validite":"2030-01-01","adresse":"CASA"}'
@@ -290,6 +301,25 @@ def test_cni_strategies_send_expected_images_and_keep_pair_progress(tmp_path: Pa
     ]
     assert separate_events[-1]["completed"] == 1
     assert separate_events[-1]["total"] == 1  # Une paire client/modèle, malgré deux appels.
+
+    full_context = _RecordingRegistry()
+    list(
+        iter_cni_benchmark(
+            full_context,
+            ["fake:vision"],
+            records,
+            tmp_path / "runs-full-context",
+            strategy="separate_calls",
+            prompt_scope_mode="full_rules",
+        )
+    )
+    assert len(full_context.model.calls) == 2
+    assert "RECTO rules:" in full_context.model.calls[0][1]
+    assert "VERSO rules:" in full_context.model.calls[0][1]
+    assert "RECTO rules:" in full_context.model.calls[1][1]
+    assert "VERSO rules:" in full_context.model.calls[1][1]
+    assert "Analyze this RECTO side" in full_context.model.calls[0][1]
+    assert "Analyze this VERSO side" in full_context.model.calls[1][1]
 
     combined = _RecordingRegistry()
     combined_events = list(iter_cni_benchmark(combined, ["fake:vision"], records, tmp_path / "runs-combined", strategy="combined_vertical"))

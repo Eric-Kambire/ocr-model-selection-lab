@@ -31,23 +31,26 @@ DEFAULT_CNI_FIELD_CONFIG = {
     ],
 }
 
-# Les règles sont séparées par face. Le recto ne doit jamais recevoir une règle
-# métier propre au verso, et inversement : cela réduit les tokens et empêche les
-# petits modèles de chercher des champs qui ne sont pas présents dans l'image.
+# Les règles sont séparées par face afin de permettre deux protocoles :
+# - n'envoyer que les repères utiles à la face connue ;
+# - envoyer les deux groupes de règles à chaque appel pour donner plus de
+#   contexte au modèle. Le schéma de sortie reste toujours celui de la face.
 RECTO_READING_RULES = """RECTO rules:
 - Extract only cin, prenom, nom, date_naissance, ville_naissance and date_validite.
-- The main holder-name block is usually near the portrait and before the birth information. Its upper large Latin line is usually prenom and the following line is usually nom; use position only as a clue and return null when ambiguous.
+- The holder's Latin first and last names are often large standalone lines without an explicit label; do not skip them only because no label is printed.
+- The main holder-name block is usually near the portrait and before the birth information. Its upper large Latin line is usually prenom and the following line is usually nom; use this ordering only as a clue and return null when ambiguous.
+- On an old upright front, the portrait is commonly on the right and the holder-name block is left or centre-left. On a new upright front, the portrait is commonly on the left and the names are near its upper or right area.
 - date_naissance is attached to 'Né le' or 'Née le'; ville_naissance is attached to the nearby 'à'.
 - date_validite is attached to 'Valable jusqu’au' or 'Valable jusqu'à'.
-- cin is the alphanumeric value attached to plain 'N°'. On old fronts it is often below or to the right of the photo; on new fronts it is often bottom-left.
+- cin is the alphanumeric value attached to plain 'N°'. On old fronts it is often below the photo or in its lower-right column; on new fronts it is often bottom-left after 'N°'.
 - Never use CAN or 'N° état civil' as cin."""
 
 VERSO_READING_RULES = """VERSO rules:
 - Extract only cin, date_validite and adresse.
-- cin may be the card number repeated in the top or top-left area, but never use a value attached to CAN or 'N° état civil'.
+- cin may be the card number repeated in the top or top-left area. Use it only when it is not attached to CAN or 'N° état civil'.
 - date_validite is attached to 'Valable jusqu’au' or 'Valable jusqu'à'.
-- adresse is the full holder address attached to 'Adresse'; join its visible lines with one space.
-- Names attached to 'Fils de' or 'Et de' are parents and must never populate a requested field.
+- adresse is the full holder address attached to 'Adresse'; preserve the visible reading order and join its lines with one space.
+- Names attached to 'Fils de' or 'Et de' are the holder's parents and must never populate a requested holder field.
 - Ignore sex and civil-status data because they are outside this schema."""
 
 COMMON_VALUE_RULES = """Common value rules:
@@ -89,7 +92,13 @@ def _prompt_user_instructions(instructions: str | None) -> str:
     )
 
 
-def build_cni_prompt(side: str, fields: dict[str, list[dict[str, str]]] | None = None, instructions: str | None = None) -> str:
+def build_cni_prompt(
+    side: str,
+    fields: dict[str, list[dict[str, str]]] | None = None,
+    instructions: str | None = None,
+    *,
+    prompt_scope_mode: str = "side_specific",
+) -> str:
     """Construit le message utilisateur JSON strict pour une seule face de CNI.
 
     Le message système est injecté séparément par l'adaptateur Ollama. Ici, on
@@ -98,14 +107,28 @@ def build_cni_prompt(side: str, fields: dict[str, list[dict[str, str]]] | None =
     """
     if side not in {"recto", "verso"}:
         raise ValueError("side must be 'recto' or 'verso'.")
+    if prompt_scope_mode not in {"side_specific", "full_rules"}:
+        raise ValueError(
+            "prompt_scope_mode must be 'side_specific' or 'full_rules'."
+        )
     config = fields or load_cni_field_config()
     schema = {str(item["key"]): None for item in config[side]}
-    side_rules = (
-        RECTO_READING_RULES if side == "recto" else VERSO_READING_RULES
-    )
+    if prompt_scope_mode == "full_rules":
+        reading_rules = (
+            f"The current image is known to be the {side.upper()} side. "
+            "The complete card rules are provided for context. Apply only the "
+            "rules relevant to this image and return only the requested "
+            f"{side.upper()} fields.\n"
+            + RECTO_READING_RULES + "\n"
+            + VERSO_READING_RULES
+        )
+    else:
+        reading_rules = (
+            RECTO_READING_RULES if side == "recto" else VERSO_READING_RULES
+        )
     return (
         f"Analyze this {side.upper()} side of a Moroccan national identity card.\n"
-        + side_rules + "\n"
+        + reading_rules + "\n"
         + COMMON_VALUE_RULES + "\n"
         + _prompt_user_instructions(instructions)
         + "Return exactly one valid JSON object. Do not add Markdown, prose, "

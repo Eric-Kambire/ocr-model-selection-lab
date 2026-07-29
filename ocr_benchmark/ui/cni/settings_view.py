@@ -30,6 +30,7 @@ class CniSettingsView:
     system_token_indicator: Any
     prompt_instructions: Any
     instructions_token_indicator: Any
+    prompt_scope_mode: Any
     prompt_preview_side: Any
     prompt_context_budget: Any
     prompt_token_indicator: Any
@@ -38,9 +39,11 @@ class CniSettingsView:
 
 def build_cni_core_settings(
     settings: dict[str, Any],
-    prompt_preview_builder: Callable[[str, str, str | None, str | None], str],
+    prompt_preview_builder: Callable[
+        [str, str, str | None, str | None, str], str
+    ],
     token_indicator_builder: Callable[
-        [str, str, str | None, str | None, int | float | None], str
+        [str, str, str | None, str | None, str, int | float | None], str
     ],
 ) -> CniSettingsView:
     """Assemble les vues spécialisées sans y placer de logique métier."""
@@ -70,6 +73,7 @@ def build_cni_core_settings(
         system_token_indicator=prompt.system_token_indicator,
         prompt_instructions=prompt.prompt_instructions,
         instructions_token_indicator=prompt.instructions_token_indicator,
+        prompt_scope_mode=prompt.prompt_scope_mode,
         prompt_preview_side=prompt.prompt_preview_side,
         prompt_context_budget=prompt.prompt_context_budget,
         prompt_token_indicator=prompt.prompt_token_indicator,

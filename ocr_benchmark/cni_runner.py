@@ -54,6 +54,7 @@ def iter_cni_benchmark(
     unload_after_task: bool = True,
     fields: dict[str, list[dict[str, str]]] | None = None,
     prompt_instructions: str | None = None,
+    prompt_scope_mode: str = "side_specific",
     system_prompt: str | None = None,
     output_format_mode: str = "schema",
     model_output_modes: Mapping[str, str] | None = None,
@@ -81,6 +82,10 @@ def iter_cni_benchmark(
     """
     if strategy not in {"separate_calls", "combined_vertical"}:
         raise ValueError("CNI strategy must be 'separate_calls' or 'combined_vertical'.")
+    if prompt_scope_mode not in {"side_specific", "full_rules"}:
+        raise ValueError(
+            "CNI prompt scope must be 'side_specific' or 'full_rules'."
+        )
     valid_clients = [client for client in clients if client.get("status") == "ready"]
     run_id = "cni-" + time.strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:8]
     run_dir = runs_root / run_id
@@ -91,8 +96,9 @@ def iter_cni_benchmark(
     started_at = time.monotonic()
 
     LOGGER.info(
-        "CNI benchmark starting | run=%s | models=%s | valid_clients=%d | strategy=%s | dpi=%d",
-        run_id, model_specs, len(valid_clients), strategy, dpi,
+        "CNI benchmark starting | run=%s | models=%s | valid_clients=%d | "
+        "strategy=%s | prompt_scope=%s | dpi=%d",
+        run_id, model_specs, len(valid_clients), strategy, prompt_scope_mode, dpi,
     )
     if not valid_clients:
         yield {
@@ -173,6 +179,7 @@ def iter_cni_benchmark(
                     timeout_seconds=timeout_seconds,
                     fields=fields,
                     prompt_instructions=prompt_instructions,
+                    prompt_scope_mode=prompt_scope_mode,
                     system_prompt=system_prompt,
                     output_format_mode=effective_output_format,
                 )
@@ -326,6 +333,7 @@ def _iter_extract_one_cni_client(
     timeout_seconds: float | None,
     fields: dict[str, list[dict[str, str]]] | None,
     prompt_instructions: str | None,
+    prompt_scope_mode: str,
     system_prompt: str | None,
     output_format_mode: str,
 ) -> Generator[dict[str, Any], None, dict[str, Any]]:
@@ -361,7 +369,12 @@ def _iter_extract_one_cni_client(
         recto_inference = _perform_cni_call(
             model,
             Path(prepared["recto_model_image"]),
-            build_cni_prompt("recto", fields, instructions=prompt_instructions),
+            build_cni_prompt(
+                "recto",
+                fields,
+                instructions=prompt_instructions,
+                prompt_scope_mode=prompt_scope_mode,
+            ),
             timeout_seconds,
             artefacts_dir,
             "recto",
@@ -373,7 +386,12 @@ def _iter_extract_one_cni_client(
         verso_inference = _perform_cni_call(
             model,
             Path(prepared["verso_model_image"]),
-            build_cni_prompt("verso", fields, instructions=prompt_instructions),
+            build_cni_prompt(
+                "verso",
+                fields,
+                instructions=prompt_instructions,
+                prompt_scope_mode=prompt_scope_mode,
+            ),
             timeout_seconds,
             artefacts_dir,
             "verso",

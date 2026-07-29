@@ -31,6 +31,7 @@ class PromptSettings:
     system_token_indicator: Any
     prompt_instructions: Any
     instructions_token_indicator: Any
+    prompt_scope_mode: Any
     prompt_preview_side: Any
     prompt_context_budget: Any
     prompt_token_indicator: Any
@@ -39,9 +40,11 @@ class PromptSettings:
 
 def build_prompt_settings(
     settings: dict[str, Any],
-    prompt_preview_builder: Callable[[str, str, str | None, str | None], str],
+    prompt_preview_builder: Callable[
+        [str, str, str | None, str | None, str], str
+    ],
     token_indicator_builder: Callable[
-        [str, str, str | None, str | None, int | float | None], str
+        [str, str, str | None, str | None, str, int | float | None], str
     ],
 ) -> PromptSettings:
     """Construit l'éditeur de prompt.
@@ -85,13 +88,28 @@ def build_prompt_settings(
                     lines=7,
                     info="N’ajoutez pas de nouvelles clés JSON ici ; modifiez la configuration des champs.",
                 )
+                prompt_scope_mode = gr.Radio(
+                    [
+                        ("Selon la face connue · recommandé", "side_specific"),
+                        ("Toutes les règles à chaque appel", "full_rules"),
+                    ],
+                    value=settings.get("prompt_scope_mode", "side_specific"),
+                    label="Routage des règles métier",
+                    info=(
+                        "Mode séparé : choisissez des règles spécialisées ou le "
+                        "contexte recto + verso à chaque appel. L’image combinée "
+                        "reçoit toujours les deux groupes de règles."
+                    ),
+                )
             with gr.Tab("③ Aperçu final"):
                 gr.Markdown(
                     "Cet aperçu est recalculé automatiquement. Le sélecteur sert uniquement "
                     "à inspecter le message : il ne change ni la stratégie ni la face envoyée. "
                     "En mode séparé, le scan associe les fichiers aux rôles avec les suffixes "
-                    "configurés, puis le runner impose **Recto → prompt recto** et "
-                    "**Verso → prompt verso**. Le prompt système reste commun aux deux appels."
+                    "configurés, puis le runner impose **Recto → schéma recto** et "
+                    "**Verso → schéma verso**. Selon le routage choisi, chaque appel reçoit "
+                    "les seules règles de sa face ou le contexte complet. Le prompt système "
+                    "reste commun aux deux appels."
                 )
                 initial_side = (
                     "combined"
@@ -124,6 +142,7 @@ def build_prompt_settings(
                         initial_side,
                         settings["system_prompt"],
                         settings["prompt_instructions"],
+                        settings.get("prompt_scope_mode", "side_specific"),
                         settings.get("prompt_context_budget", 8192),
                     )
                 )
@@ -133,6 +152,7 @@ def build_prompt_settings(
                         initial_side,
                         settings["system_prompt"],
                         settings["prompt_instructions"],
+                        settings.get("prompt_scope_mode", "side_specific"),
                     ),
                     label="Message complet inspecté",
                     lines=18,
@@ -143,6 +163,7 @@ def build_prompt_settings(
         system_token_indicator,
         prompt_instructions,
         instructions_token_indicator,
+        prompt_scope_mode,
         prompt_preview_side,
         prompt_context_budget,
         prompt_token_indicator,

@@ -789,6 +789,7 @@ def _cni_prompt_preview(
     preview_side: str,
     system_prompt: str | None,
     instructions: str | None,
+    prompt_scope_mode: str,
 ) -> str:
     """Affiche le prompt exact d'une face, indépendamment des autres aperçus."""
     fields = load_cni_field_config(ROOT_DIR / "config" / "cni_fields.json")
@@ -806,7 +807,12 @@ def _cni_prompt_preview(
         user_prompt = build_combined_cni_prompt(fields, instructions=instructions)
         title = "IMAGE COMBINÉE"
     else:
-        user_prompt = build_cni_prompt(selected_side, fields, instructions=instructions)
+        user_prompt = build_cni_prompt(
+            selected_side,
+            fields,
+            instructions=instructions,
+            prompt_scope_mode=prompt_scope_mode,
+        )
         title = selected_side.upper()
     return (
         f"--- STRATÉGIE ACTIVE : {strategy_label} ---\n"
@@ -821,6 +827,7 @@ def _cni_prompt_token_indicator(
     preview_side: str,
     system_prompt: str | None,
     instructions: str | None,
+    prompt_scope_mode: str,
     context_budget: int | float | None,
 ) -> str:
     """Estime le texte d'entrée avant l'appel, avec une marge explicite.
@@ -834,6 +841,7 @@ def _cni_prompt_token_indicator(
         preview_side,
         system_prompt,
         instructions,
+        prompt_scope_mode,
     )
     # Les en-têtes d'aperçu ne sont pas envoyés. On extrait seulement le contenu
     # SYSTEM + USER et on réserve quelques tokens au template de chat.
@@ -870,16 +878,24 @@ def _cni_prompt_preview_outputs(
     preview_side: str,
     system_prompt: str | None,
     instructions: str | None,
+    prompt_scope_mode: str,
     context_budget: int | float | None,
 ) -> tuple[str, str]:
     """Recalcule ensemble l'aperçu exact et son estimation de tokens."""
     return (
-        _cni_prompt_preview(strategy, preview_side, system_prompt, instructions),
+        _cni_prompt_preview(
+            strategy,
+            preview_side,
+            system_prompt,
+            instructions,
+            prompt_scope_mode,
+        ),
         _cni_prompt_token_indicator(
             strategy,
             preview_side,
             system_prompt,
             instructions,
+            prompt_scope_mode,
             context_budget,
         ),
     )
@@ -2047,6 +2063,7 @@ def build_ui() -> gr.Blocks:
                             cni_system_token_indicator = cni_settings_view.system_token_indicator
                             cni_prompt_instructions = cni_settings_view.prompt_instructions
                             cni_instructions_token_indicator = cni_settings_view.instructions_token_indicator
+                            cni_prompt_scope_mode = cni_settings_view.prompt_scope_mode
                             cni_prompt_preview_side = cni_settings_view.prompt_preview_side
                             cni_prompt_context_budget = cni_settings_view.prompt_context_budget
                             cni_prompt_token_indicator = cni_settings_view.prompt_token_indicator
@@ -3454,7 +3471,7 @@ def build_ui() -> gr.Blocks:
             model_specs, client_records, strategy, dpi, timeout, threads, unload,
             crop_method, smart_crop_min_score, smart_crop_margin, rotation_method,
             perspective_correction, preprocessing, system_prompt,
-            prompt_instructions, output_format_mode, model_output_modes,
+            prompt_instructions, prompt_scope_mode, output_format_mode, model_output_modes,
             continue_without_label,
         ):
             """Valide le lancement puis diffuse l'avancement CNI document par document."""
@@ -3536,7 +3553,8 @@ def build_ui() -> gr.Blocks:
                 "dpi=%s | timeout=%s | cpu_threads=%s | unload=%s | "
                 "crop_method=%s | smart_crop_min_score=%s | smart_crop_margin=%s | "
                 "rotation=%s | perspective=%s | preprocessing=%s | "
-                "output_format=%s | model_output_overrides=%s | unlabeled=%d | invalid=%d",
+                "prompt_scope=%s | output_format=%s | model_output_overrides=%s | "
+                "unlabeled=%d | invalid=%d",
                 len(ready_records),
                 len(model_specs),
                 strategy,
@@ -3550,6 +3568,7 @@ def build_ui() -> gr.Blocks:
                 rotation_method,
                 bool(perspective_correction),
                 list(preprocessing or []),
+                prompt_scope_mode,
                 output_format_mode,
                 dict(model_output_modes or {}),
                 len(unlabeled),
@@ -3564,6 +3583,7 @@ def build_ui() -> gr.Blocks:
                     strategy=str(strategy), dpi=int(dpi), timeout_seconds=float(timeout or 0),
                     cpu_threads=int(threads or 1), unload_after_task=bool(unload),
                     fields=fields, prompt_instructions=prompt_instructions, system_prompt=system_prompt,
+                    prompt_scope_mode=str(prompt_scope_mode or "side_specific"),
                     output_format_mode=output_format_mode,
                     model_output_modes=dict(model_output_modes or {}),
                     preprocessing={
@@ -4091,6 +4111,7 @@ def build_ui() -> gr.Blocks:
             cni_prompt_preview_side,
             cni_system_prompt,
             cni_prompt_instructions,
+            cni_prompt_scope_mode,
             cni_prompt_context_budget,
         ]
         cni_strategy.change(
@@ -4100,6 +4121,12 @@ def build_ui() -> gr.Blocks:
             queue=False,
         )
         cni_prompt_preview_side.change(
+            _cni_prompt_preview_outputs,
+            inputs=cni_prompt_preview_inputs,
+            outputs=[cni_prompt_preview, cni_prompt_token_indicator],
+            queue=False,
+        )
+        cni_prompt_scope_mode.change(
             _cni_prompt_preview_outputs,
             inputs=cni_prompt_preview_inputs,
             outputs=[cni_prompt_preview, cni_prompt_token_indicator],
@@ -4160,6 +4187,7 @@ def build_ui() -> gr.Blocks:
             cni_perspective_correction, cni_preprocessing,
             cni_output_format_mode, cni_model_output_modes_state,
             cni_system_prompt, cni_prompt_instructions,
+            cni_prompt_scope_mode,
             cni_prompt_context_budget,
         ]
         for setting_component in (
@@ -4170,6 +4198,7 @@ def build_ui() -> gr.Blocks:
             cni_perspective_correction, cni_preprocessing,
             cni_output_format_mode, cni_model_output_modes_state,
             cni_system_prompt, cni_prompt_instructions,
+            cni_prompt_scope_mode,
             cni_prompt_context_budget,
         ):
             setting_component.change(
@@ -4185,7 +4214,8 @@ def build_ui() -> gr.Blocks:
                 cni_smart_crop_min_score, cni_smart_crop_margin,
                 cni_rotation_method, cni_perspective_correction,
                 cni_preprocessing, cni_system_prompt,
-                cni_prompt_instructions, cni_output_format_mode,
+                cni_prompt_instructions, cni_prompt_scope_mode,
+                cni_output_format_mode,
                 cni_model_output_modes_state,
                 cni_continue_without_label,
             ],
