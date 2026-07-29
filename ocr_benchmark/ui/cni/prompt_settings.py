@@ -8,7 +8,6 @@ import gradio as gr
 
 @dataclass(frozen=True)
 class PromptSettings:
-    output_format_mode: Any
     system_prompt: Any
     prompt_instructions: Any
     prompt_preview: Any
@@ -19,20 +18,17 @@ def build_prompt_settings(
     settings: dict[str, Any],
     prompt_preview_builder: Callable[[str, str | None, str | None], str],
 ) -> PromptSettings:
-    """Construit les contrôles qui séparent le prompt du format fournisseur."""
+    """Construit l'éditeur de prompt.
+
+    Le contrat de sortie est volontairement placé à côté de la sélection des
+    modèles dans la vue « Préparer ». L'opérateur choisit ainsi le comportement
+    JSON en même temps que les modèles auxquels il sera appliqué.
+    """
     with gr.Tab("Prompt et sortie"):
-        output_format_mode = gr.Radio(
-            [
-                ("Schéma JSON strict · recommandé", "schema"),
-                ("Objet JSON libre", "json"),
-                ("Prompt uniquement · Markdown possible", "prompt"),
-            ],
-            value=settings["output_format_mode"],
-            label="Contrat de sortie du modèle",
-            info=(
-                "Le schéma est transmis à Ollama pour forcer les clés configurées, "
-                "notamment avec LightOnOCR. La réponse brute reste conservée."
-            ),
+        gr.Markdown(
+            "Le **mode de sortie JSON** se choisit dans `1. Préparer`, juste "
+            "sous les modèles. Cette page ne contient que les consignes métier "
+            "et l'aperçu exact des prompts."
         )
         system_prompt = gr.Textbox(
             value=settings["system_prompt"], label="Prompt système", lines=5,
@@ -50,12 +46,11 @@ def build_prompt_settings(
                 settings["prompt_instructions"],
             ),
             label="Prompts réellement envoyés",
-            lines=18,
+            lines=14,
             interactive=False,
         )
-        refresh_prompt = gr.Button("Actualiser l’aperçu du prompt")
+        refresh_prompt = gr.Button("Recalculer l’aperçu", size="sm")
     return PromptSettings(
-        output_format_mode,
         system_prompt,
         prompt_instructions,
         prompt_preview,

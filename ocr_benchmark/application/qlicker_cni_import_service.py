@@ -303,7 +303,7 @@ def iter_prepare_qlicker_cni_clients(
             yield dict(event)
 
             try:
-                event.update(status="loading_label", message="Lecture et normalisation du label client.")
+                event.update(status="loading_label", message="Lecture des champs OCR du label client.")
                 yield dict(event)
                 customer_payload = execute_qlicker_get(
                     base_url,
@@ -318,8 +318,8 @@ def iter_prepare_qlicker_cni_clients(
                 label = extract_customer_cni_label(customer_payload)
                 write_cni_json(client_dir / f"{client_id}.json", label)
                 event.update(
-                    status="label_normalized",
-                    message="Label QlickEER normalisé.",
+                    status="label_loaded",
+                    message="Champs OCR QlickEER enregistrés sans remappage.",
                     label_path=str(client_dir / f"{client_id}.json"),
                 )
                 yield dict(event)

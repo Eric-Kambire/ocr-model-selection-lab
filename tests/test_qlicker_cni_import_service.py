@@ -17,7 +17,7 @@ def _rows(*pairs):
     return [[name, value, True] for name, value in pairs]
 
 
-def test_batch_materializes_a_cni_pair_and_normalized_label(tmp_path, monkeypatch):
+def test_batch_materializes_a_cni_pair_and_selected_qlicker_label(tmp_path, monkeypatch):
     """Un client API devient une paire locale compatible avec le scanner CNI."""
     calls = []
     downloaded_params = []
@@ -65,12 +65,13 @@ def test_batch_materializes_a_cni_pair_and_normalized_label(tmp_path, monkeypatc
     assert [event["status"] for event in events] == [
         "discovered", "loading_documents", "documents_detected",
         "downloading_recto", "downloading_verso", "downloaded",
-        "loading_label", "label_normalized", "ready",
+        "loading_label", "label_loaded", "ready",
     ]
     client_dir = tmp_path / "A0000000"
     assert (client_dir / "A0000000_CIN_Recto.pdf").is_file()
     assert (client_dir / "A0000000_CIN_Verso.pdf").is_file()
-    assert '"cin": "A0000000"' in (client_dir / "A0000000.json").read_text(encoding="utf-8")
+    saved_label = json.loads((client_dir / "A0000000.json").read_text(encoding="utf-8"))
+    assert saved_label["customer_data"]["cin_id"] == "A0000000"
     manifest = json.loads((client_dir / ".qlickeer_documents.json").read_text(encoding="utf-8"))
     assert manifest["downloads"]["recto"]["filename"] == "A0000000_CIN_Recto.pdf"
     assert manifest["downloads"]["verso"]["bytes"] == 9

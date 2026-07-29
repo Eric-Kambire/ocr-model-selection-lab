@@ -75,8 +75,8 @@ def test_system_proxy_keeps_only_http_schemes(monkeypatch):
     }
 
 
-def test_customer_data_becomes_cni_label_with_confidence():
-    """Les champs métier QlickEER deviennent le contrat CNI attendu par l'évaluateur."""
+def test_customer_data_is_selected_without_remapping():
+    """Le label conserve les clés QlickEER que le comparateur sait lire."""
     payload = {"response": {"body": {"response_data": {"customer": {
         "id": "customer-1",
         "customer_data": {
@@ -90,10 +90,10 @@ def test_customer_data_becomes_cni_label_with_confidence():
 
     label = extract_customer_cni_label(payload)
 
-    assert label["cin"] == "A0000000"
-    assert label["date_naissance"] == "1990-01-01"
-    assert label["date_validite"] == "2030-01-01"
-    assert label["field_confidence"]["cin"] == 100
+    assert label["customer_data"]["cin_id"] == "A0000000"
+    assert label["customer_data"]["birth_date"] == "01/01/1990"
+    assert label["customer_data"]["validity_date"] == "01/01/2030"
+    assert label["customer_data"]["cin_id_confidence"] == 100
 
 
 def test_document_list_detects_cni_pair_only():

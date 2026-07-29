@@ -262,8 +262,46 @@ APP_CSS = """
     margin-top: 8px !important;
 }
 #cni-tabs > .tabitem {
-    min-height: calc(100vh - 310px) !important;
+    min-height: 0 !important;
     padding-top: 12px !important;
+}
+#cni-context-bar {
+    position: sticky;
+    top: 0;
+    z-index: 20;
+    align-items: center !important;
+    gap: 8px !important;
+    padding: 8px 10px !important;
+    margin-top: 8px !important;
+    border: 1px solid var(--block-border-color);
+    border-radius: 10px;
+    background: var(--block-background-fill);
+}
+#cni-context-bar .prose {
+    margin: 0 !important;
+}
+#cni-context-bar button {
+    min-width: 112px !important;
+}
+.cni-progress-track {
+    width: 100%;
+    height: 12px;
+    overflow: hidden;
+    border-radius: 999px;
+    background: var(--border-color-primary);
+}
+.cni-progress-fill {
+    height: 100%;
+    border-radius: inherit;
+    background: var(--button-primary-background-fill);
+    transition: width 180ms ease;
+}
+.cni-progress-label {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    margin: 0 0 5px;
+    font-size: 13px;
 }
 #cni-prep-grid {
     gap: 18px !important;
@@ -314,12 +352,15 @@ APP_CSS = """
     min-height: 340px !important;
 }
 #cni-results-table {
-    min-height: 280px !important;
+    min-height: 250px !important;
 }
 #cni-results-filterbar { align-items: end !important; gap: 8px !important; }
 #cni-results-navigation { align-items: center !important; gap: 8px !important; }
 #cni-result-position { text-align: center; padding-top: 8px; }
 #cni-result-identity { min-height: 92px; }
+#cni-results-tabs > .tabitem {
+    min-height: 0 !important;
+}
 .gradio-container .tabitem {
     background: var(--body-background-fill) !important;
 }
@@ -525,7 +566,7 @@ def _cni_api_status_label(status: Any) -> str:
         "downloading_verso": "Téléchargement verso",
         "downloaded": "Téléchargé",
         "loading_label": "Lecture du label",
-        "label_normalized": "Label normalisé",
+        "label_loaded": "Label chargé",
         "ready": "Prêt",
         "ready_without_label": "Prêt sans label",
         "failed": "Erreur",
@@ -556,7 +597,7 @@ def _cni_api_downloaded_files_label(item: dict[str, Any]) -> str:
 
 
 def _cni_api_label_label(item: dict[str, Any]) -> str:
-    """Distingue un label non demandé, normalisé ou indisponible."""
+    """Distingue un label non demandé, chargé ou indisponible."""
     if item.get("label_path"):
         return "Normalisé"
     status = str(item.get("status") or "")
@@ -636,8 +677,16 @@ def _preview_cni_source(path_value: str | None) -> tuple[Any, str]:
     return gr.update(value=str(preview_path), visible=True), f"**Aperçu :** `{source.name}` · PDF rendu à 150 DPI"
 
 
-def _cni_source_mode_visibility(mode: str) -> tuple[Any, Any, Any, Any]:
+def _cni_source_mode_visibility(mode: str) -> tuple[Any, Any, Any, Any, str]:
     """Affiche la source active et le diagnostic utile à cette source."""
+    messages = {
+        "folder": "Indiquez un dossier clients, puis scannez-le.",
+        "zip": "Déposez une archive ZIP contenant les dossiers clients, puis importez-la.",
+        "api": (
+            "Recherchez les clients, sélectionnez-les dans le diagnostic, puis "
+            "téléchargez et préparez leurs documents. Les aperçus seront alors disponibles."
+        ),
+    }
     return (
         gr.update(visible=mode == "folder"),
         gr.update(visible=mode == "zip"),
@@ -645,7 +694,27 @@ def _cni_source_mode_visibility(mode: str) -> tuple[Any, Any, Any, Any]:
         # Les actions de sélection globale ne concernent que la liste issue
         # de l'API ; les dossiers locaux sont tous cochés après le scan.
         gr.update(visible=mode == "api"),
+        messages.get(mode, "Choisissez une source de documents."),
     )
+
+
+def _cni_smart_crop_visibility(method: str) -> Any:
+    """N'affiche les seuils V4 que lorsque V4 est réellement sélectionné."""
+    return gr.update(visible=str(method) == "smart_crop_v4")
+
+
+def _qlicker_route_visibility(route_name: str) -> tuple[Any, Any, Any, Any]:
+    """Affiche une seule configuration de route QlickEER à la fois."""
+    route = str(route_name or "list")
+    return tuple(
+        gr.update(visible=route == candidate)
+        for candidate in ("list", "info", "documents", "view")
+    )
+
+
+def _explicit_proxy_visibility(use_system_proxy: bool) -> Any:
+    """Masque le proxy manuel lorsque le proxy du système est utilisé."""
+    return gr.update(visible=not bool(use_system_proxy))
 
 
 def _qlicker_test_result(
@@ -737,11 +806,108 @@ def _cni_result_table(results: list[dict[str, Any]]) -> pd.DataFrame:
             "CIN recto": item.get("cin_recto") or "—",
             "CIN verso": item.get("cin_verso") or "—",
             "CIN cohérent": "Oui" if item.get("cin_coherent") is True else "Non" if item.get("cin_coherent") is False else "—",
-            "Champs à revoir": ", ".join(key for key, state in _cni_field_comparisons(item).items() if state == "different") or "—",
+            "Champs à revoir": ", ".join(
+                key
+                for key, state in _cni_field_comparisons(item).items()
+                if state in {"different", "extracted_missing", "extraction_unavailable"}
+            ) or "—",
             "Latence (s)": round(float(item.get("latency") or 0), 3),
         }
         for item in results
     ])
+
+
+def _cni_live_event_table(results: list[dict[str, Any]]) -> pd.DataFrame:
+    """Affiche seulement les derniers événements utiles pendant le run."""
+    return pd.DataFrame([
+        {
+            "Client": item.get("folder_client_id") or "—",
+            "Modèle": item.get("model") or "—",
+            "Statut": item.get("status") or "—",
+            "Accuracy": (
+                "Non noté"
+                if item.get("accuracy") is None
+                else f"{float(item['accuracy']) * 100:.2f}%"
+            ),
+            "Latence (s)": round(float(item.get("latency") or 0), 3),
+            "Erreur": str(item.get("error") or "—")[:120],
+        }
+        for item in results[-10:]
+    ])
+
+
+def _cni_field_analysis_table(
+    results: list[dict[str, Any]],
+    field_name: str = "",
+    field_state: str = "",
+) -> pd.DataFrame:
+    """Déplie chaque résultat en une ligne par champ comparable."""
+    rows: list[dict[str, Any]] = []
+    for result in results or []:
+        comparison = result.get("field_comparison")
+        if not isinstance(comparison, dict):
+            label = _read_json_if_available(result.get("label_path"))
+            extracted = _read_json_if_available(result.get("global_json_path"))
+            comparison = compare_cni_extraction(
+                label if isinstance(label, dict) else None,
+                extracted if isinstance(extracted, dict) else None,
+            )
+        for item in comparison.get("rows", []):
+            if not isinstance(item, dict):
+                continue
+            current_field = str(item.get("field") or "")
+            current_state = str(item.get("state") or item.get("status") or "")
+            if field_name and current_field != field_name:
+                continue
+            if field_state and current_state != field_state:
+                continue
+            rows.append(
+                {
+                    "Client": result.get("folder_client_id") or "—",
+                    "Modèle": result.get("model") or "—",
+                    "Champ": current_field or "—",
+                    "État": current_state or "—",
+                    "Attendu": item.get("expected") if item.get("expected") is not None else "—",
+                    "Extrait": item.get("actual") if item.get("actual") is not None else item.get("extracted", "—"),
+                    "Confiance label (%)": (
+                        round(float(item["reference_confidence"]), 2)
+                        if isinstance(item.get("reference_confidence"), (int, float))
+                        else "—"
+                    ),
+                }
+            )
+    return pd.DataFrame(rows)
+
+
+def _cni_progress_html(value: float = 0, status: str = "Prêt.") -> str:
+    """Rend une vraie barre de progression non éditable."""
+    progress = max(0.0, min(100.0, float(value or 0)))
+    return (
+        "<div class='cni-progress-label'>"
+        f"<strong>Progression</strong><span>{progress:.1f} % · {html.escape(str(status))}</span>"
+        "</div>"
+        "<div class='cni-progress-track' role='progressbar' "
+        f"aria-valuemin='0' aria-valuemax='100' aria-valuenow='{progress:.1f}'>"
+        f"<div class='cni-progress-fill' style='width:{progress:.1f}%'></div></div>"
+    )
+
+
+def _cni_context_html(
+    mode: str,
+    models: list[str] | None,
+    clients: list[dict[str, Any]] | None,
+    status: str,
+) -> str:
+    """Résume le contexte courant dans la barre persistante du module 8."""
+    source = {"folder": "Dossier local", "zip": "Archive ZIP", "api": "API QlickEER"}.get(
+        str(mode), "Source non définie"
+    )
+    records = clients or []
+    ready = sum(str(item.get("status") or "") in {"ready", "ready_without_label"} for item in records)
+    return (
+        f"**Source :** {source} · **Clients prêts :** {ready}/{len(records)} · "
+        f"**Modèles :** {len(models or [])} · **État :** {status or 'Prêt.'}"
+    )
 
 
 def _cni_boolean(value: Any) -> str:
@@ -1325,6 +1491,14 @@ def build_ui() -> gr.Blocks:
                     "<header class='cni-header'><h2>Benchmark CNI</h2>"
                     "<span>Extraction structurée · exécution séquentielle</span></header>"
                 )
+                # Cette barre reste montée quelle que soit la sous-vue ouverte :
+                # l'opérateur garde le contexte et l'action d'annulation sous les yeux.
+                with gr.Row(elem_id="cni-context-bar"):
+                    cni_run_context = gr.Markdown(
+                        _cni_context_html("folder", cni_settings["models"], [], "Prêt.")
+                    )
+                    cni_launch = gr.Button("Lancer", variant="primary")
+                    cni_stop = gr.Button("Annuler", variant="stop", visible=False)
                 with gr.Tabs(elem_id="cni-tabs"):
                     with gr.Tab("1. Préparer", render_children=True):
                         with gr.Row(elem_id="cni-prep-grid"):
@@ -1433,13 +1607,19 @@ def build_ui() -> gr.Blocks:
                                     cni_api_source_customers_state = gr.State([])
                                     gr.Markdown("Les résultats de recherche apparaissent dans **Diagnostic de la source**. Sélectionnez ensuite les clients à préparer.")
                                 cni_scan_status = gr.Markdown("Indiquez un dossier clients, puis scannez-le.")
-                                with gr.Accordion("Aperçu d’un document", open=False):
+                                with gr.Accordion(
+                                    "Aperçu des documents préparés · local, ZIP ou API",
+                                    open=False,
+                                ):
                                     with gr.Row():
                                         with gr.Column(scale=1):
                                             cni_source_selector = gr.Dropdown(
                                                 choices=_cni_source_choices([]),
                                                 label="Document",
-                                                info="Les PDF, JPEG et PNG recto/verso détectés après un scan apparaissent ici.",
+                                                info=(
+                                                    "Les PDF, JPEG et PNG recto/verso détectés après un scan "
+                                                    "ou téléchargés par view_file apparaissent ici."
+                                                ),
                                             )
                                             cni_source_preview_info = gr.Markdown("Sélectionnez un document.")
                                         with gr.Column(scale=1):
@@ -1466,13 +1646,34 @@ def build_ui() -> gr.Blocks:
                                     buttons=[cni_refresh_models],
                                     elem_id="cni-model-selector",
                                 )
+                                cni_output_format_mode = gr.Dropdown(
+                                    [
+                                        (
+                                            "Schéma JSON strict · recommandé si le modèle le supporte",
+                                            "schema",
+                                        ),
+                                        ("Objet JSON · contrainte légère", "json"),
+                                        (
+                                            "Prompt uniquement · sortie Markdown tolérée puis JSON extrait",
+                                            "prompt",
+                                        ),
+                                    ],
+                                    value=cni_settings["output_format_mode"],
+                                    label="Sortie attendue des modèles sélectionnés",
+                                    info=(
+                                        "Cette option est appliquée à tous les modèles du prochain run. "
+                                        "Le retour brut est toujours conservé, même si le JSON est invalide."
+                                    ),
+                                )
                                 with gr.Accordion("Diagnostic de la source", open=False):
                                     gr.Markdown("Un seul inventaire pour tous les candidats. L’origine indique si la paire vient d’un dossier local, d’un ZIP ou de l’API.")
                                     with gr.Group(visible=False) as cni_api_inventory_actions:
                                         with gr.Row():
-                                            cni_api_source_select_all = gr.Button("Tout sélectionner", size="sm")
-                                            cni_api_source_clear_selection = gr.Button("Tout désélectionner", size="sm")
-                                            cni_api_prepare_selected = gr.Button("Préparer la sélection", variant="primary", size="sm")
+                                            cni_api_prepare_selected = gr.Button(
+                                                "Télécharger et préparer les clients cochés",
+                                                variant="primary",
+                                                size="sm",
+                                            )
                                         cni_api_import_progress = gr.Markdown("Aucun client API en préparation.")
                                     with gr.Row():
                                         cni_source_selection_summary = gr.Markdown("Aucune source chargée.")
@@ -1493,65 +1694,94 @@ def build_ui() -> gr.Blocks:
                                 label="Continuer sans labels",
                                 info="Extraction et mesures techniques uniquement ; aucun score de comparaison.",
                             )
-                            cni_launch = gr.Button("Lancer", variant="primary")
-                            cni_stop = gr.Button("Annuler", variant="stop", visible=False)
                         cni_launch_feedback = gr.HTML(
                             "<div style='padding:10px;border-radius:8px;background:#e8f1fb;color:#2563a8'>● Prêt : sélectionnez des modèles, scannez les dossiers puis lancez le benchmark.</div>"
                         )
                     with gr.Tab("2. Suivi en direct", render_children=True):
                         cni_run_status = gr.Textbox(label="État CNI", value="Prêt.", interactive=False)
-                        cni_progress = gr.Slider(0, 100, value=0, step=0.1, label="Progression CNI (%)", interactive=False)
+                        cni_progress = gr.HTML(_cni_progress_html())
                         cni_live_counters = gr.Markdown("**Traité :** 0 / 0 · **Succès :** 0 · **Erreurs :** 0")
                         with gr.Row(elem_id="cni-live-workspace"):
                             cni_live_image = gr.Image(label="Face en cours", type="filepath", height=400)
                             cni_live_result = gr.Markdown("Les JSON et mesures apparaîtront après le premier appel.")
                         cni_live_table = gr.Dataframe(
-                            headers=["Client", "Modèle", "Statut", "Accuracy", "Label", "CIN recto", "CIN verso", "CIN cohérent", "Champs à revoir", "Latence (s)"],
-                            label="Résultats reçus pendant le run",
+                            headers=["Client", "Modèle", "Statut", "Accuracy", "Latence (s)", "Erreur"],
+                            label="10 derniers événements terminés",
                             interactive=False,
+                            max_height=300,
                         )
                     with gr.Tab("3. Résultats", render_children=True):
-                        # Même hiérarchie que « 4. Résultats détaillés » :
-                        # filtres, liste, navigation, puis inspection complète.
                         gr.Markdown("### Résultats détaillés CNI\n\nFiltrez les évaluations puis inspectez une paire recto/verso.")
                         with gr.Row(elem_id="cni-results-filterbar"):
-                            cni_accuracy_min = gr.Slider(0, 100, value=0, step=1, label="Accuracy minimale (%)")
-                            cni_accuracy_max = gr.Slider(0, 100, value=100, step=1, label="Accuracy maximale (%)")
+                            cni_accuracy_min = gr.Number(value=0, minimum=0, maximum=100, precision=0, label="Accuracy min. (%)")
+                            cni_accuracy_max = gr.Number(value=100, minimum=0, maximum=100, precision=0, label="Accuracy max. (%)")
                             cni_include_unscored = gr.Checkbox(value=True, label="Inclure non notés")
                             cni_field_filter = gr.Dropdown([("Tous les champs", ""), ("CIN", "cin"), ("Prénom", "prenom"), ("Nom", "nom"), ("Date de naissance", "date_naissance"), ("Ville de naissance", "ville_naissance"), ("Date de validité", "date_validite"), ("Adresse", "adresse")], value="", label="Champ")
-                            cni_field_state_filter = gr.Dropdown([("Tous les états", ""), ("Correct", "correct"), ("Différent", "different"), ("Valeur modèle absente", "missing_model"), ("Label absent", "label_missing")], value="", label="État")
+                            cni_field_state_filter = gr.Dropdown(
+                                [
+                                    ("Tous les états", ""),
+                                    ("Correct", "correct"),
+                                    ("Différent", "different"),
+                                    ("Valeur modèle absente", "extracted_missing"),
+                                    ("Extraction indisponible", "extraction_unavailable"),
+                                    ("Label absent", "reference_missing"),
+                                ],
+                                value="",
+                                label="État",
+                            )
                             cni_apply_filters = gr.Button("Appliquer les filtres")
-                        cni_results_table = gr.Dataframe(headers=["Client", "Modèle", "Statut", "Accuracy", "Label", "CIN recto", "CIN verso", "CIN cohérent", "Champs à revoir", "Latence (s)"], label="Éléments passés par le benchmark", interactive=False, elem_id="cni-results-table")
-                        with gr.Row():
-                            cni_accuracy_plot = gr.Plot(value=cni_accuracy_chart([]))
-                            cni_latency_plot = gr.Plot(value=cni_latency_chart([]))
-                        cni_result_selector = gr.Dropdown(label="Liste des paires testées — cliquez pour sélectionner", info="La liste contient les paires client/modèle effectivement passées par le benchmark.", choices=[])
-                        with gr.Row(elem_id="cni-results-navigation"):
-                            cni_previous_result = gr.Button("← Précédent")
-                            cni_result_position = gr.Markdown("**Aucune paire testée pour le moment.**", elem_id="cni-result-position")
-                            cni_next_result = gr.Button("Suivant →")
-                        with gr.Row(elem_id="cni-explorer-layout"):
-                            with gr.Column():
-                                cni_recto_preview = gr.Image(label="Recto traité", type="filepath", height=265)
-                                cni_verso_preview = gr.Image(label="Verso traité", type="filepath", height=265)
-                                cni_result_identity = gr.Markdown("Le client et le modèle apparaîtront ici.", elem_id="cni-result-identity")
-                            with gr.Column(scale=2):
-                                cni_detail_metrics = gr.Markdown("### Mesures\n\nAucun résultat sélectionné.")
+                        with gr.Tabs(elem_id="cni-results-tabs"):
+                            with gr.Tab("Vue d’ensemble"):
+                                cni_results_table = gr.Dataframe(
+                                    headers=["Client", "Modèle", "Statut", "Accuracy", "Label", "CIN recto", "CIN verso", "CIN cohérent", "Champs à revoir", "Latence (s)"],
+                                    label="Éléments passés par le benchmark",
+                                    interactive=False,
+                                    elem_id="cni-results-table",
+                                    max_height=360,
+                                )
                                 with gr.Row():
+                                    cni_accuracy_plot = gr.Plot(value=cni_accuracy_chart([]))
+                                    cni_latency_plot = gr.Plot(value=cni_latency_chart([]))
+                            with gr.Tab("Analyse par champ"):
+                                gr.Markdown(
+                                    "Une ligne représente un champ comparé. La confiance est celle du "
+                                    "label QlickEER lorsqu'elle est disponible, pas une confiance inventée par le VLM."
+                                )
+                                cni_field_analysis_table = gr.Dataframe(
+                                    headers=["Client", "Modèle", "Champ", "État", "Attendu", "Extrait", "Confiance label (%)"],
+                                    label="Comparaison champ par champ",
+                                    interactive=False,
+                                    max_height=520,
+                                )
+                            with gr.Tab("Détail d’un cas"):
+                                cni_result_selector = gr.Dropdown(
+                                    label="Liste des paires testées — cliquez pour sélectionner",
+                                    info="La liste contient les paires client/modèle effectivement passées par le benchmark.",
+                                    choices=[],
+                                )
+                                with gr.Row(elem_id="cni-results-navigation"):
+                                    cni_previous_result = gr.Button("← Précédent")
+                                    cni_result_position = gr.Markdown("**Aucune paire testée pour le moment.**", elem_id="cni-result-position")
+                                    cni_next_result = gr.Button("Suivant →")
+                                with gr.Row(elem_id="cni-explorer-layout"):
                                     with gr.Column():
-                                        cni_label_json = gr.JSON(label="Label attendu (JSON converti)")
-                                    with gr.Column():
-                                        gr.Markdown("**Sorties structurées du modèle**")
+                                        cni_recto_preview = gr.Image(label="Recto traité", type="filepath", height=265)
+                                        cni_verso_preview = gr.Image(label="Verso traité", type="filepath", height=265)
+                                        cni_result_identity = gr.Markdown("Le client et le modèle apparaîtront ici.", elem_id="cni-result-identity")
+                                    with gr.Column(scale=2):
+                                        cni_detail_metrics = gr.Markdown("### Mesures\n\nAucun résultat sélectionné.")
                                         with gr.Tabs():
+                                            with gr.Tab("Label attendu"):
+                                                cni_label_json = gr.JSON(label="Label de référence")
                                             with gr.Tab("Extraction recto", render_children=True):
                                                 cni_recto_json = gr.JSON(label="JSON recto")
                                             with gr.Tab("Extraction verso", render_children=True):
                                                 cni_verso_json = gr.JSON(label="JSON verso")
-                                        with gr.Tab("Fusion globale", render_children=True):
-                                            cni_global_json = gr.JSON(label="JSON global")
-                                        with gr.Tab("Retour brut et erreurs", render_children=True):
-                                            cni_recto_raw = gr.Code(label="Recto : retour brut conservé", language=None, lines=7, interactive=False)
-                                            cni_verso_raw = gr.Code(label="Verso : retour brut conservé", language=None, lines=7, interactive=False)
+                                            with gr.Tab("Fusion globale", render_children=True):
+                                                cni_global_json = gr.JSON(label="JSON global")
+                                            with gr.Tab("Retour brut et erreurs", render_children=True):
+                                                cni_recto_raw = gr.Code(label="Recto : retour brut conservé", language=None, lines=7, interactive=False)
+                                                cni_verso_raw = gr.Code(label="Verso : retour brut conservé", language=None, lines=7, interactive=False)
                     with gr.Tab("4. Paramètres", render_children=True):
                         gr.Markdown("### Paramètres CNI\n\nLes réglages sont appliqués au prochain lancement.")
                         with gr.Tabs(elem_id="cni-settings-tabs"):
@@ -1567,12 +1797,12 @@ def build_ui() -> gr.Blocks:
                             cni_recto_suffix = cni_settings_view.recto_suffix
                             cni_verso_suffix = cni_settings_view.verso_suffix
                             cni_crop_method = cni_settings_view.crop_method
+                            cni_smart_crop_controls = cni_settings_view.smart_crop_controls
                             cni_smart_crop_min_score = cni_settings_view.smart_crop_min_score
                             cni_smart_crop_margin = cni_settings_view.smart_crop_margin
                             cni_rotation_method = cni_settings_view.rotation_method
                             cni_perspective_correction = cni_settings_view.perspective_correction
                             cni_preprocessing = cni_settings_view.preprocessing
-                            cni_output_format_mode = cni_settings_view.output_format_mode
                             cni_system_prompt = cni_settings_view.system_prompt
                             cni_prompt_instructions = cni_settings_view.prompt_instructions
                             cni_prompt_preview = cni_settings_view.prompt_preview
@@ -1600,36 +1830,58 @@ def build_ui() -> gr.Blocks:
                                             cni_api_settings_timeout = gr.Number(value=qlicker_config["timeout_seconds"], minimum=1, precision=0, label="Timeout (s)")
                                             cni_api_settings_use_system_proxy = gr.Checkbox(value=qlicker_config["use_system_proxy"], label="Utiliser le proxy système")
                                             cni_api_settings_verify_ssl = gr.Checkbox(value=qlicker_config["verify_ssl"], label="Vérifier SSL")
-                                        cni_api_settings_proxy = gr.Textbox(value=qlicker_config["proxy_url"], label="Proxy explicite", type="password", placeholder="http://ncproxy:8080", info="À renseigner seulement si le proxy système est désactivé.")
+                                        cni_api_settings_proxy = gr.Textbox(
+                                            value=qlicker_config["proxy_url"],
+                                            label="Proxy explicite",
+                                            type="password",
+                                            placeholder="http://ncproxy:8080",
+                                            info="À renseigner seulement si le proxy système est désactivé.",
+                                            visible=not qlicker_config["use_system_proxy"],
+                                        )
                                         cni_api_import_root = gr.Textbox(
                                             value=qlicker_config["import_root"],
                                             label="Dossier d'import API",
                                             info="Un sous-dossier horodaté est créé par préparation de lot.",
                                         )
-                                    with gr.Tab("Clients"):
-                                        cni_api_list_raw_url = gr.Textbox(value=qlicker_config["routes"]["list"]["raw_url"], label="URL Postman · liste clients", placeholder="https://serveur/api/get_customer?...", lines=2)
-                                        cni_api_list_parse = gr.Button("Parser et enregistrer la route Clients")
-                                        cni_api_list_endpoint_setting = gr.Textbox(value=qlicker_config["routes"]["list"]["endpoint"], label="Endpoint", interactive=True)
-                                        cni_api_list_params_setting = gr.Dataframe(value=qlicker_config["routes"]["list"]["params"], headers=["Paramètre", "Valeur", "Envoyer"], datatype=["str", "str", "bool"], type="array", interactive=True, label="Paramètres parsés")
-                                        cni_api_list_test = gr.Button("Test", size="sm")
-                                    with gr.Tab("Détail client"):
-                                        cni_api_info_raw_url = gr.Textbox(value=qlicker_config["routes"]["info"]["raw_url"], label="URL Postman · get_customer_data", lines=2)
-                                        cni_api_info_parse = gr.Button("Parser et enregistrer la route Détail client")
-                                        cni_api_info_endpoint_setting = gr.Textbox(value=qlicker_config["routes"]["info"]["endpoint"], label="Endpoint", interactive=True)
-                                        cni_api_info_params_setting = gr.Dataframe(value=qlicker_config["routes"]["info"]["params"], headers=["Paramètre", "Valeur", "Envoyer"], datatype=["str", "str", "bool"], type="array", interactive=True, label="Paramètres parsés")
-                                        cni_api_info_test = gr.Button("Test", size="sm")
-                                    with gr.Tab("Documents"):
-                                        cni_api_documents_raw_url = gr.Textbox(value=qlicker_config["routes"]["documents"]["raw_url"], label="URL Postman · get_signed_documents_list", lines=2)
-                                        cni_api_documents_parse = gr.Button("Parser et enregistrer la route Documents")
-                                        cni_api_documents_endpoint_setting = gr.Textbox(value=qlicker_config["routes"]["documents"]["endpoint"], label="Endpoint", interactive=True)
-                                        cni_api_documents_params_setting = gr.Dataframe(value=qlicker_config["routes"]["documents"]["params"], headers=["Paramètre", "Valeur", "Envoyer"], datatype=["str", "str", "bool"], type="array", interactive=True, label="Paramètres parsés")
-                                        cni_api_documents_test = gr.Button("Test", size="sm")
-                                    with gr.Tab("Fichier"):
-                                        cni_api_view_raw_url = gr.Textbox(value=qlicker_config["routes"]["view"]["raw_url"], label="URL Postman · view_file", lines=2)
-                                        cni_api_view_parse = gr.Button("Parser et enregistrer la route Fichier")
-                                        cni_api_view_endpoint_setting = gr.Textbox(value=qlicker_config["routes"]["view"]["endpoint"], label="Endpoint", interactive=True)
-                                        cni_api_view_params_setting = gr.Dataframe(value=qlicker_config["routes"]["view"]["params"], headers=["Paramètre", "Valeur", "Envoyer"], datatype=["str", "str", "bool"], type="array", interactive=True, label="Paramètres parsés")
-                                        cni_api_view_test = gr.Button("Test", size="sm")
+                                    with gr.Tab("Routes"):
+                                        cni_api_route_selector = gr.Dropdown(
+                                            [
+                                                ("Clients · get_customer", "list"),
+                                                ("Détail client · get_customer_data", "info"),
+                                                ("Documents · get_signed_documents_list", "documents"),
+                                                ("Fichier · view_file", "view"),
+                                            ],
+                                            value="list",
+                                            label="Route à configurer",
+                                        )
+                                        gr.Markdown(
+                                            "Collez l'URL Postman de la route choisie, vérifiez les "
+                                            "paramètres parsés, puis testez-la. Une seule route est affichée à la fois."
+                                        )
+                                        with gr.Group(visible=True) as cni_api_list_route_group:
+                                            cni_api_list_raw_url = gr.Textbox(value=qlicker_config["routes"]["list"]["raw_url"], label="URL Postman · liste clients", placeholder="https://serveur/api/get_customer?...", lines=2)
+                                            cni_api_list_parse = gr.Button("Parser et enregistrer la route Clients")
+                                            cni_api_list_endpoint_setting = gr.Textbox(value=qlicker_config["routes"]["list"]["endpoint"], label="Endpoint", interactive=True)
+                                            cni_api_list_params_setting = gr.Dataframe(value=qlicker_config["routes"]["list"]["params"], headers=["Paramètre", "Valeur", "Envoyer"], datatype=["str", "str", "bool"], type="array", interactive=True, label="Paramètres parsés")
+                                            cni_api_list_test = gr.Button("Test", size="sm")
+                                        with gr.Group(visible=False) as cni_api_info_route_group:
+                                            cni_api_info_raw_url = gr.Textbox(value=qlicker_config["routes"]["info"]["raw_url"], label="URL Postman · get_customer_data", lines=2)
+                                            cni_api_info_parse = gr.Button("Parser et enregistrer la route Détail client")
+                                            cni_api_info_endpoint_setting = gr.Textbox(value=qlicker_config["routes"]["info"]["endpoint"], label="Endpoint", interactive=True)
+                                            cni_api_info_params_setting = gr.Dataframe(value=qlicker_config["routes"]["info"]["params"], headers=["Paramètre", "Valeur", "Envoyer"], datatype=["str", "str", "bool"], type="array", interactive=True, label="Paramètres parsés")
+                                            cni_api_info_test = gr.Button("Test", size="sm")
+                                        with gr.Group(visible=False) as cni_api_documents_route_group:
+                                            cni_api_documents_raw_url = gr.Textbox(value=qlicker_config["routes"]["documents"]["raw_url"], label="URL Postman · get_signed_documents_list", lines=2)
+                                            cni_api_documents_parse = gr.Button("Parser et enregistrer la route Documents")
+                                            cni_api_documents_endpoint_setting = gr.Textbox(value=qlicker_config["routes"]["documents"]["endpoint"], label="Endpoint", interactive=True)
+                                            cni_api_documents_params_setting = gr.Dataframe(value=qlicker_config["routes"]["documents"]["params"], headers=["Paramètre", "Valeur", "Envoyer"], datatype=["str", "str", "bool"], type="array", interactive=True, label="Paramètres parsés")
+                                            cni_api_documents_test = gr.Button("Test", size="sm")
+                                        with gr.Group(visible=False) as cni_api_view_route_group:
+                                            cni_api_view_raw_url = gr.Textbox(value=qlicker_config["routes"]["view"]["raw_url"], label="URL Postman · view_file", lines=2)
+                                            cni_api_view_parse = gr.Button("Parser et enregistrer la route Fichier")
+                                            cni_api_view_endpoint_setting = gr.Textbox(value=qlicker_config["routes"]["view"]["endpoint"], label="Endpoint", interactive=True)
+                                            cni_api_view_params_setting = gr.Dataframe(value=qlicker_config["routes"]["view"]["params"], headers=["Paramètre", "Valeur", "Envoyer"], datatype=["str", "str", "bool"], type="array", interactive=True, label="Paramètres parsés")
+                                            cni_api_view_test = gr.Button("Test", size="sm")
 
         def on_prepare(
             model_specs,
@@ -2298,7 +2550,7 @@ def build_ui() -> gr.Blocks:
                 for status in (
                     "discovered", "loading_documents", "documents_detected",
                     "downloading_recto", "downloading_verso", "downloaded",
-                    "loading_label", "label_normalized",
+                    "loading_label", "label_loaded",
                 )
             )
             return (
@@ -2519,7 +2771,7 @@ def build_ui() -> gr.Blocks:
                     labels = sum(record.get("label_status") == "label_materialized" for record in records)
                     summary = (
                         f"**Lot existant réutilisé :** {len(records)} client(s), {ready} paire(s) prête(s), "
-                        f"{labels} label(s) normalisé(s). Aucun nouvel appel API."
+                        f"{labels} label(s) chargé(s). Aucun nouvel appel API."
                     )
                     yield (
                         _cni_api_table(working, selected_client_ids=selected_client_ids), working, summary,
@@ -2597,7 +2849,7 @@ def build_ui() -> gr.Blocks:
                 )
                 summary = (
                     f"**Lot API terminé :** {len(records)} client(s) matérialisé(s), "
-                    f"{ready} paire(s) prête(s), {labels} label(s) normalisé(s)."
+                    f"{ready} paire(s) prête(s), {labels} label(s) chargé(s)."
                 )
                 yield (
                     _cni_api_table(working, selected_client_ids=selected_client_ids), working, summary,
@@ -2712,10 +2964,16 @@ def build_ui() -> gr.Blocks:
                         continue
                 elif not lower <= float(accuracy) * 100 <= upper:
                     continue
-                if field_name and field_state and _cni_field_comparisons(result).get(field_name) != field_state:
+                states = _cni_field_comparisons(result)
+                if field_name and field_state and states.get(field_name) != field_state:
+                    continue
+                if not field_name and field_state and field_state not in states.values():
                     continue
                 selected.append(result)
-            return _cni_result_table(selected)
+            return (
+                _cni_result_table(selected),
+                _cni_field_analysis_table(selected, field_name, field_state),
+            )
 
         def cni_detail_metric_summary(result):
             """Présente les mesures CNI dans le même format que l'explorateur général."""
@@ -2808,7 +3066,9 @@ def build_ui() -> gr.Blocks:
                 return f"**Traité :** {len(results)} / {total} · **Succès :** {successes} · **Erreurs :** {failures}"
 
             def view(feedback: str, status: str, progress: float, image_path, live_text: str, total: int, *, running: bool = False, alert_level: str = "ready", select_last: bool = False):
-                table = _cni_result_table(results)
+                result_table = _cni_result_table(results)
+                live_table = _cni_live_event_table(results)
+                field_table = _cni_field_analysis_table(results)
                 selector = gr.update(
                     choices=cni_choices(results),
                     value=(len(results) - 1 if select_last and results else None),
@@ -2816,8 +3076,8 @@ def build_ui() -> gr.Blocks:
                 return (
                     _cni_alert_html(alert_level, feedback),
                     gr.update(visible=not running, value="Lancer"), gr.update(visible=running),
-                    status, progress, image_path, live_text,
-                    counters(total), table, results, table, selector,
+                    status, _cni_progress_html(progress, status), image_path, live_text,
+                    counters(total), live_table, results, result_table, field_table, selector,
                     cni_accuracy_chart(results), cni_latency_chart(results),
                 )
 
@@ -3049,6 +3309,7 @@ def build_ui() -> gr.Blocks:
                 cni_zip_source,
                 cni_api_source,
                 cni_api_inventory_actions,
+                cni_scan_status,
             ],
             queue=False,
         )
@@ -3062,6 +3323,23 @@ def build_ui() -> gr.Blocks:
             qlickeer_guided_route_visibility,
             inputs=[cni_api_guided_route],
             outputs=[cni_api_list_group, cni_api_info_group, cni_api_documents_group, cni_api_view_group],
+            queue=False,
+        )
+        cni_api_route_selector.change(
+            _qlicker_route_visibility,
+            inputs=[cni_api_route_selector],
+            outputs=[
+                cni_api_list_route_group,
+                cni_api_info_route_group,
+                cni_api_documents_route_group,
+                cni_api_view_route_group,
+            ],
+            queue=False,
+        )
+        cni_api_settings_use_system_proxy.change(
+            _explicit_proxy_visibility,
+            inputs=[cni_api_settings_use_system_proxy],
+            outputs=[cni_api_settings_proxy],
             queue=False,
         )
         cni_api_list_parse.click(
@@ -3152,14 +3430,6 @@ def build_ui() -> gr.Blocks:
                 cni_api_source_feedback, cni_api_source_trace, cni_source_inventory_table,
                 cni_api_source_customers_state, cni_source_selection_summary,
             ], queue=False,
-        )
-        cni_api_source_select_all.click(
-            select_all_api_source, inputs=[cni_api_source_customers_state],
-            outputs=[cni_source_inventory_table, cni_source_selection_summary], queue=False,
-        )
-        cni_api_source_clear_selection.click(
-            clear_api_source_selection, inputs=[cni_api_source_customers_state],
-            outputs=[cni_source_inventory_table, cni_source_selection_summary], queue=False,
         )
         cni_api_prepare_selected.click(
             prepare_selected_qlicker_clients,
@@ -3302,12 +3572,41 @@ def build_ui() -> gr.Blocks:
             outputs=[cni_prompt_preview],
             queue=False,
         )
+        # L'aperçu suit automatiquement toute modification du prompt ou de la
+        # stratégie. Le petit bouton reste seulement un recalcul manuel de secours.
         cni_strategy.change(
             _cni_prompt_preview,
             inputs=[cni_strategy, cni_system_prompt, cni_prompt_instructions],
             outputs=[cni_prompt_preview],
             queue=False,
         )
+        for prompt_component in (cni_system_prompt, cni_prompt_instructions):
+            prompt_component.input(
+                _cni_prompt_preview,
+                inputs=[cni_strategy, cni_system_prompt, cni_prompt_instructions],
+                outputs=[cni_prompt_preview],
+                queue=False,
+            )
+        cni_crop_method.change(
+            _cni_smart_crop_visibility,
+            inputs=[cni_crop_method],
+            outputs=[cni_smart_crop_controls],
+            queue=False,
+        )
+
+        # Le bandeau persistant résume la source, la sélection et l'état du run.
+        cni_context_inputs = [
+            cni_input_mode, cni_models, cni_clients_state, cni_run_status,
+        ]
+        for context_component in (
+            cni_input_mode, cni_models, cni_clients_state, cni_run_status,
+        ):
+            context_component.change(
+                _cni_context_html,
+                inputs=cni_context_inputs,
+                outputs=[cni_run_context],
+                queue=False,
+            )
         # Aucun bouton « Save » n'est nécessaire : chaque choix CNI est
         # conservé localement dès sa modification et restauré au redémarrage.
         cni_settings_inputs = [
@@ -3347,7 +3646,8 @@ def build_ui() -> gr.Blocks:
                 cni_launch, cni_stop,
                 cni_run_status, cni_progress, cni_live_image, cni_live_result,
                 cni_live_counters, cni_live_table,
-                cni_results_state, cni_results_table, cni_result_selector,
+                cni_results_state, cni_results_table, cni_field_analysis_table,
+                cni_result_selector,
                 cni_accuracy_plot, cni_latency_plot,
             ],
             concurrency_limit=1,
@@ -3363,7 +3663,7 @@ def build_ui() -> gr.Blocks:
         cni_apply_filters.click(
             filter_cni_results,
             inputs=[cni_results_state, cni_accuracy_min, cni_accuracy_max, cni_include_unscored, cni_field_filter, cni_field_state_filter],
-            outputs=[cni_results_table], queue=False,
+            outputs=[cni_results_table, cni_field_analysis_table], queue=False,
         )
         # L'exploration détaillée reste indépendante du générateur : les
         # boutons restent réactifs pendant l'arrivée des nouveaux résultats.

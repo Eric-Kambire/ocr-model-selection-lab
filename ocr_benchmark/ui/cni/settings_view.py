@@ -20,12 +20,12 @@ class CniSettingsView:
     recto_suffix: Any
     verso_suffix: Any
     crop_method: Any
+    smart_crop_controls: Any
     smart_crop_min_score: Any
     smart_crop_margin: Any
     rotation_method: Any
     perspective_correction: Any
     preprocessing: Any
-    output_format_mode: Any
     system_prompt: Any
     prompt_instructions: Any
     prompt_preview: Any
@@ -49,12 +49,12 @@ def build_cni_core_settings(
         recto_suffix=execution.recto_suffix,
         verso_suffix=execution.verso_suffix,
         crop_method=preprocessing.crop_method,
+        smart_crop_controls=preprocessing.smart_crop_controls,
         smart_crop_min_score=preprocessing.smart_crop_min_score,
         smart_crop_margin=preprocessing.smart_crop_margin,
         rotation_method=preprocessing.rotation_method,
         perspective_correction=preprocessing.perspective_correction,
         preprocessing=preprocessing.preprocessing,
-        output_format_mode=prompt.output_format_mode,
         system_prompt=prompt.system_prompt,
         prompt_instructions=prompt.prompt_instructions,
         prompt_preview=prompt.prompt_preview,

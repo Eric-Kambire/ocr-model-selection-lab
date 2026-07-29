@@ -137,12 +137,11 @@ def system_proxy_mapping() -> dict[str, str]:
 
 
 def extract_customer_cni_label(payload: Mapping[str, Any]) -> dict[str, Any]:
-    """Transforme ``get_customer_data`` en label compatible avec le benchmark CNI.
+    """Sélectionne le bloc OCR de ``get_customer_data`` sans le remapper.
 
-    Les données d'origine restent dans la réponse API. Le label normalisé ne
-    retient que les champs CNI comparables et leurs confiances fournisseur ; il
-    peut donc être écrit dans ``<client_id>.json`` sans embarquer les données de
-    compte, produit ou contact qui ne concernent pas l'OCR.
+    Le comparateur connaît déjà les clés QlickEER (``cin_id``, ``first_name``,
+    ``*_confidence``). Conserver ces noms évite une seconde représentation du
+    label. Les données de contact, de compte et de produit restent exclues.
     """
     body = payload.get("response", {}).get("body", {}) if isinstance(payload, Mapping) else {}
     response_data = body.get("response_data", {}) if isinstance(body, Mapping) else {}
@@ -150,20 +149,8 @@ def extract_customer_cni_label(payload: Mapping[str, Any]) -> dict[str, Any]:
     fields = customer.get("customer_data", {}) if isinstance(customer, Mapping) else {}
     if not isinstance(fields, Mapping):
         raise ValueError("get_customer_data : customer_data est absent ou invalide.")
-    field_map = {
-        "cin": "cin_id", "prenom": "first_name", "nom": "last_name",
-        "date_naissance": "birth_date", "ville_naissance": "birth_place",
-        "date_validite": "validity_date", "adresse": "address",
-    }
-    label = {target: _normalise_qlickeer_date(fields.get(source)) if "date_" in target else _clean_label_value(fields.get(source)) for target, source in field_map.items()}
-    confidence = {
-        target: fields.get(f"{source}_confidence")
-        for target, source in field_map.items()
-        if fields.get(f"{source}_confidence") is not None
-    }
     return {
-        **label,
-        "field_confidence": confidence,
+        "customer_data": dict(fields),
         "label_source": "qlickeer_get_customer_data.customer_data",
         "customer_id": customer.get("id"),
     }
