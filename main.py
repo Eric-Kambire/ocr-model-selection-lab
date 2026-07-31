@@ -76,7 +76,11 @@ from ocr_benchmark.ui.cni.settings_view import build_cni_core_settings
 from ocr_benchmark.visualization import (
     category_quality_chart,
     cni_accuracy_chart,
+    cni_error_rate_chart,
+    cni_field_accuracy_chart,
     cni_latency_chart,
+    cni_quality_latency_chart,
+    cni_reliability_chart,
     empty_figure,
     latency_chart,
     quality_speed_chart,
@@ -726,22 +730,38 @@ def _cni_alert_html(level: str, message: str) -> str:
 
 
 def _cni_result_table(results: list[dict[str, Any]]) -> pd.DataFrame:
-    """Format CNI benchmark results; accuracy remains unscored until label mapping exists."""
-    return pd.DataFrame([
-        {
-            "Client": item.get("folder_client_id"),
-            "Modèle": item.get("model"),
-            "Statut": item.get("status"),
-            "Accuracy": "Non noté" if item.get("accuracy") is None else f"{float(item['accuracy']) * 100:.2f}%",
-            "Label": item.get("label_status", "—"),
-            "CIN recto": item.get("cin_recto") or "—",
-            "CIN verso": item.get("cin_verso") or "—",
-            "CIN cohérent": "Oui" if item.get("cin_coherent") is True else "Non" if item.get("cin_coherent") is False else "—",
-            "Champs à revoir": ", ".join(key for key, state in _cni_field_comparisons(item).items() if state == "different") or "—",
-            "Latence (s)": round(float(item.get("latency") or 0), 3),
-        }
-        for item in results
-    ])
+    """Présente qualité et performance sans confondre leurs unités."""
+    rows = []
+    for item in results:
+        accuracy = item.get("accuracy")
+        end_to_end = item.get("end_to_end_seconds")
+        rows.append(
+            {
+                "Client": item.get("folder_client_id"),
+                "Modèle": item.get("model"),
+                "Statut": item.get("status"),
+                "Exactitude": "Non noté" if accuracy is None else f"{float(accuracy) * 100:.2f}%",
+                "Similarité": _metric_percent(item.get("text_similarity")),
+                "CER": _metric_percent(item.get("cer")),
+                "WER": _metric_percent(item.get("wer")),
+                "Label": item.get("label_status", "—"),
+                "CIN recto": item.get("cin_recto") or "—",
+                "CIN verso": item.get("cin_verso") or "—",
+                "CIN cohérent": _cni_boolean(item.get("cin_coherent")),
+                "Champs à revoir": ", ".join(
+                    key
+                    for key, state in _cni_field_comparisons(item).items()
+                    if state in {"different", "extracted_missing", "extraction_unavailable"}
+                )
+                or "—",
+                "Temps bout-en-bout (s)": (
+                    round(float(end_to_end), 3)
+                    if end_to_end is not None
+                    else round(float(item.get("latency") or 0), 3)
+                ),
+            }
+        )
+    return pd.DataFrame(rows)
 
 
 def _cni_boolean(value: Any) -> str:
@@ -805,6 +825,78 @@ def _cni_confidence_summary(result: dict[str, Any]) -> str:
     if not rows:
         return ""
     return "\n\n**QlickEER label confidence and OCR comparison**\n\n| Field | Comparison | Reference confidence |\n|---|---|---|\n" + "\n".join(rows)
+
+
+def _cni_comparison_frame(result: dict[str, Any]) -> pd.DataFrame:
+    """Affiche attendu, extrait et erreurs textuelles pour chaque champ."""
+    comparison = result.get("field_comparison")
+    if not isinstance(comparison, dict):
+        label = _read_json_if_available(result.get("label_path"))
+        extracted = _read_json_if_available(result.get("global_json_path"))
+        comparison = compare_cni_extraction(
+            label if isinstance(label, dict) else None,
+            extracted if isinstance(extracted, dict) else None,
+        )
+    labels = {
+        "correct": "Correct",
+        "different": "Différent",
+        "extracted_missing": "Valeur extraite absente",
+        "extraction_unavailable": "Extraction indisponible",
+        "reference_missing": "Référence absente",
+    }
+    return pd.DataFrame(
+        [
+            {
+                "Champ": row.get("field"),
+                "Attendu": row.get("expected") if row.get("expected") not in (None, "") else "—",
+                "Extrait": row.get("actual") if row.get("actual") not in (None, "") else "—",
+                "Confiance référence": row.get("reference_confidence") if row.get("reference_confidence") is not None else "—",
+                "Similarité": _metric_percent(row.get("similarity")),
+                "CER": _metric_percent(row.get("cer")),
+                "WER": _metric_percent(row.get("wer")),
+                "État": labels.get(str(row.get("state")), str(row.get("state") or "—")),
+            }
+            for row in comparison.get("rows", [])
+            if isinstance(row, dict)
+        ]
+    )
+
+
+def _cni_call_metrics_frame(result: dict[str, Any]) -> pd.DataFrame:
+    """Détaille les vrais appels VLM, notamment recto 1/2 et verso 2/2."""
+    scope_labels = {
+        "recto": "Recto 1/2",
+        "verso": "Verso 2/2",
+        "recto_verso": "Recto + verso (appel unique)",
+    }
+    rows = []
+    calls = result.get("call_metrics")
+    for call in calls if isinstance(calls, list) else []:
+        if not isinstance(call, dict):
+            continue
+        rows.append(
+            {
+                "Appel": scope_labels.get(str(call.get("scope")), str(call.get("scope") or "—")),
+                "Statut": call.get("status") or "—",
+                "Temps inférence (s)": (
+                    round(float(call["latency_seconds"]), 3)
+                    if call.get("latency_seconds") is not None
+                    else "—"
+                ),
+                "Tokens entrée": call.get("input_tokens") if call.get("input_tokens") is not None else "N/A",
+                "Tokens sortie": call.get("output_tokens") if call.get("output_tokens") is not None else "N/A",
+                "Tokens/s": (
+                    round(float(call["tokens_per_second"]), 2)
+                    if call.get("tokens_per_second") is not None
+                    else "N/A"
+                ),
+            }
+        )
+    return pd.DataFrame(
+        rows,
+        columns=["Appel", "Statut", "Temps inférence (s)", "Tokens entrée", "Tokens sortie", "Tokens/s"],
+    )
+
 
 def _cni_raw_output(path_value: Any) -> str:
     """Expose aussi une réponse reçue après le timeout de l'interface."""
@@ -1506,7 +1598,7 @@ def build_ui() -> gr.Blocks:
                             cni_live_image = gr.Image(label="Face en cours", type="filepath", height=400)
                             cni_live_result = gr.Markdown("Les JSON et mesures apparaîtront après le premier appel.")
                         cni_live_table = gr.Dataframe(
-                            headers=["Client", "Modèle", "Statut", "Accuracy", "Label", "CIN recto", "CIN verso", "CIN cohérent", "Champs à revoir", "Latence (s)"],
+                            headers=["Client", "Modèle", "Statut", "Exactitude", "Similarité", "CER", "WER", "Label", "CIN recto", "CIN verso", "CIN cohérent", "Champs à revoir", "Temps bout-en-bout (s)"],
                             label="Résultats reçus pendant le run",
                             interactive=False,
                         )
@@ -1515,16 +1607,49 @@ def build_ui() -> gr.Blocks:
                         # filtres, liste, navigation, puis inspection complète.
                         gr.Markdown("### Résultats détaillés CNI\n\nFiltrez les évaluations puis inspectez une paire recto/verso.")
                         with gr.Row(elem_id="cni-results-filterbar"):
-                            cni_accuracy_min = gr.Slider(0, 100, value=0, step=1, label="Accuracy minimale (%)")
-                            cni_accuracy_max = gr.Slider(0, 100, value=100, step=1, label="Accuracy maximale (%)")
+                            cni_accuracy_min = gr.Slider(0, 100, value=0, step=1, label="Exactitude minimale (%)")
+                            cni_accuracy_max = gr.Slider(0, 100, value=100, step=1, label="Exactitude maximale (%)")
                             cni_include_unscored = gr.Checkbox(value=True, label="Inclure non notés")
                             cni_field_filter = gr.Dropdown([("Tous les champs", ""), ("CIN", "cin"), ("Prénom", "prenom"), ("Nom", "nom"), ("Date de naissance", "date_naissance"), ("Ville de naissance", "ville_naissance"), ("Date de validité", "date_validite"), ("Adresse", "adresse")], value="", label="Champ")
-                            cni_field_state_filter = gr.Dropdown([("Tous les états", ""), ("Correct", "correct"), ("Différent", "different"), ("Valeur modèle absente", "missing_model"), ("Label absent", "label_missing")], value="", label="État")
+                            cni_field_state_filter = gr.Dropdown(
+                                [
+                                    ("Tous les états", ""),
+                                    ("Correct", "correct"),
+                                    ("Différent", "different"),
+                                    ("Valeur extraite absente", "extracted_missing"),
+                                    ("Extraction indisponible", "extraction_unavailable"),
+                                    ("Référence absente", "reference_missing"),
+                                ],
+                                value="",
+                                label="État",
+                            )
                             cni_apply_filters = gr.Button("Appliquer les filtres")
-                        cni_results_table = gr.Dataframe(headers=["Client", "Modèle", "Statut", "Accuracy", "Label", "CIN recto", "CIN verso", "CIN cohérent", "Champs à revoir", "Latence (s)"], label="Éléments passés par le benchmark", interactive=False, elem_id="cni-results-table")
-                        with gr.Row():
-                            cni_accuracy_plot = gr.Plot(value=cni_accuracy_chart([]))
-                            cni_latency_plot = gr.Plot(value=cni_latency_chart([]))
+                        cni_results_table = gr.Dataframe(
+                            headers=["Client", "Modèle", "Statut", "Exactitude", "Similarité", "CER", "WER", "Label", "CIN recto", "CIN verso", "CIN cohérent", "Champs à revoir", "Temps bout-en-bout (s)"],
+                            label="Éléments passés par le benchmark",
+                            interactive=False,
+                            elem_id="cni-results-table",
+                        )
+                        gr.Markdown("### Vue d’ensemble\n\nLes graphiques utilisent les mêmes filtres que le tableau.")
+                        with gr.Tabs(elem_id="cni-overview-tabs"):
+                            with gr.Tab("Qualité"):
+                                with gr.Accordion("Comment lire ces métriques ?", open=False):
+                                    gr.Markdown(
+                                        "- **Exactitude stricte** : part des champs entièrement corrects ; plus haut est meilleur.\n"
+                                        "- **Similarité textuelle** : `max(0, 1 − CER)`.\n"
+                                        "- **CER** : erreurs de caractères divisées par les caractères attendus.\n"
+                                        "- **WER** : erreurs de mots divisées par les mots attendus. CER et WER peuvent dépasser 100 % en cas d’ajouts importants."
+                                    )
+                                with gr.Row():
+                                    cni_accuracy_plot = gr.Plot(value=cni_accuracy_chart([]))
+                                    cni_error_rate_plot = gr.Plot(value=cni_error_rate_chart([]))
+                                cni_field_accuracy_plot = gr.Plot(value=cni_field_accuracy_chart([]))
+                            with gr.Tab("Performance"):
+                                with gr.Row():
+                                    cni_latency_plot = gr.Plot(value=cni_latency_chart([]))
+                                    cni_quality_latency_plot = gr.Plot(value=cni_quality_latency_chart([]))
+                            with gr.Tab("Fiabilité"):
+                                cni_reliability_plot = gr.Plot(value=cni_reliability_chart([]))
                         cni_result_selector = gr.Dropdown(label="Liste des paires testées — cliquez pour sélectionner", info="La liste contient les paires client/modèle effectivement passées par le benchmark.", choices=[])
                         with gr.Row(elem_id="cni-results-navigation"):
                             cni_previous_result = gr.Button("← Précédent")
@@ -1537,6 +1662,16 @@ def build_ui() -> gr.Blocks:
                                 cni_result_identity = gr.Markdown("Le client et le modèle apparaîtront ici.", elem_id="cni-result-identity")
                             with gr.Column(scale=2):
                                 cni_detail_metrics = gr.Markdown("### Mesures\n\nAucun résultat sélectionné.")
+                                cni_call_metrics_table = gr.Dataframe(
+                                    headers=["Appel", "Statut", "Temps inférence (s)", "Tokens entrée", "Tokens sortie", "Tokens/s"],
+                                    label="Performance par appel au modèle",
+                                    interactive=False,
+                                )
+                                cni_field_comparison_table = gr.Dataframe(
+                                    headers=["Champ", "Attendu", "Extrait", "Confiance référence", "Similarité", "CER", "WER", "État"],
+                                    label="Comparaison champ par champ",
+                                    interactive=False,
+                                )
                                 with gr.Row():
                                     with gr.Column():
                                         cni_label_json = gr.JSON(label="Label attendu (JSON converti)")
@@ -2702,7 +2837,7 @@ def build_ui() -> gr.Blocks:
             ]
 
         def filter_cni_results(results, minimum, maximum, include_unscored, field_name, field_state):
-            """Filtre l'accuracy sans masquer par défaut les lignes non notées."""
+            """Applique une sélection unique au tableau et à tous les graphiques."""
             lower, upper = sorted((float(minimum or 0), float(maximum or 100)))
             selected = []
             for result in results or []:
@@ -2715,25 +2850,48 @@ def build_ui() -> gr.Blocks:
                 if field_name and field_state and _cni_field_comparisons(result).get(field_name) != field_state:
                     continue
                 selected.append(result)
-            return _cni_result_table(selected)
+            return (
+                _cni_result_table(selected),
+                cni_accuracy_chart(selected),
+                cni_error_rate_chart(selected),
+                cni_field_accuracy_chart(selected),
+                cni_latency_chart(selected),
+                cni_quality_latency_chart(selected),
+                cni_reliability_chart(selected),
+            )
 
         def cni_detail_metric_summary(result):
-            """Présente les mesures CNI dans le même format que l'explorateur général."""
+            """Sépare qualité, performance et fiabilité dans le détail du cas."""
             input_tokens = result.get("input_tokens")
             output_tokens = result.get("output_tokens")
             token_speed = result.get("tokens_per_second")
             token_speed_text = f"{float(token_speed):.2f}" if token_speed is not None else "N/A"
+            comparison = result.get("field_comparison") if isinstance(result.get("field_comparison"), dict) else {}
+            correct = comparison.get("correct_fields", "—")
+            comparable = comparison.get("comparable_fields", "—")
+
+            def seconds(value):
+                return f"{float(value):.3f} s" if value is not None else "N/A"
+
             return (
-                "### Mesures principales\n\n"
-                f"**Temps total :** {float(result.get('latency') or 0):.3f} s · "
-                f"**Accuracy :** {_metric_percent(result.get('accuracy'))} · "
-                f"**Statut :** `{result.get('status', '—')}`\n\n"
+                "### Qualité de l’extraction\n\n"
+                f"**Exactitude stricte :** {_metric_percent(result.get('accuracy'))} · "
+                f"**Similarité textuelle :** {_metric_percent(result.get('text_similarity'))}\n\n"
+                f"**CER :** {_metric_percent(result.get('cer'))} *(plus bas = meilleur)* · "
+                f"**WER :** {_metric_percent(result.get('wer'))} *(plus bas = meilleur)*\n\n"
+                f"**Champs exacts :** {correct} / {comparable} · "
+                f"**État du score :** `{result.get('score_status') or 'non calculé'}`\n\n"
+                "### Performance de la paire\n\n"
+                f"**Bout-en-bout :** {seconds(result.get('end_to_end_seconds'))} · "
+                f"**Prétraitement :** {seconds(result.get('preprocessing_seconds'))} · "
+                f"**Inférence :** {seconds(result.get('inference_seconds', result.get('latency')))}\n\n"
                 f"**Tokens entrée :** {input_tokens if input_tokens is not None else 'N/A'} · "
                 f"**Tokens sortie :** {output_tokens if output_tokens is not None else 'N/A'} · "
                 f"**Tokens/s :** {token_speed_text}\n\n"
+                "### Fiabilité\n\n"
+                f"**Statut technique :** `{result.get('status', '—')}` · "
                 f"**CIN recto/verso cohérent :** {_cni_boolean(result.get('cin_coherent'))} · "
                 f"**Label :** `{result.get('label_status') or 'absent'}`"
-                + _cni_confidence_summary(result)
             )
 
         def show_cni_detail(index, results, offset=0):
@@ -2746,6 +2904,7 @@ def build_ui() -> gr.Blocks:
                     "**Aucune paire testée pour le moment.**", None, None,
                     "Lancez un benchmark pour alimenter cet onglet.",
                     "### Mesures\n\nAucun résultat sélectionné.",
+                    pd.DataFrame(), pd.DataFrame(),
                     empty_json, empty_json, empty_json, empty_json,
                     "Aucun retour brut disponible.", "Aucun retour brut disponible.",
                 )
@@ -2764,6 +2923,8 @@ def build_ui() -> gr.Blocks:
                 f"**Paire testée {position + 1} / {len(results)}** · {len(results)} évaluation(s) disponible(s)",
                 result.get("recto_image_path"), result.get("verso_image_path"),
                 identity, cni_detail_metric_summary(result),
+                _cni_call_metrics_frame(result),
+                _cni_comparison_frame(result),
                 _read_json_if_available(result.get("label_path")),
                 _read_json_if_available(result.get("recto_json_path")),
                 _read_json_if_available(result.get("verso_json_path")),
@@ -2818,7 +2979,12 @@ def build_ui() -> gr.Blocks:
                     gr.update(visible=not running, value="Lancer"), gr.update(visible=running),
                     status, progress, image_path, live_text,
                     counters(total), table, results, table, selector,
-                    cni_accuracy_chart(results), cni_latency_chart(results),
+                    cni_accuracy_chart(results),
+                    cni_error_rate_chart(results),
+                    cni_field_accuracy_chart(results),
+                    cni_latency_chart(results),
+                    cni_quality_latency_chart(results),
+                    cni_reliability_chart(results),
                 )
 
             if not model_specs:
@@ -3348,7 +3514,8 @@ def build_ui() -> gr.Blocks:
                 cni_run_status, cni_progress, cni_live_image, cni_live_result,
                 cni_live_counters, cni_live_table,
                 cni_results_state, cni_results_table, cni_result_selector,
-                cni_accuracy_plot, cni_latency_plot,
+                cni_accuracy_plot, cni_error_rate_plot, cni_field_accuracy_plot,
+                cni_latency_plot, cni_quality_latency_plot, cni_reliability_plot,
             ],
             concurrency_limit=1,
             concurrency_id="cni-benchmark-run",
@@ -3363,7 +3530,16 @@ def build_ui() -> gr.Blocks:
         cni_apply_filters.click(
             filter_cni_results,
             inputs=[cni_results_state, cni_accuracy_min, cni_accuracy_max, cni_include_unscored, cni_field_filter, cni_field_state_filter],
-            outputs=[cni_results_table], queue=False,
+            outputs=[
+                cni_results_table,
+                cni_accuracy_plot,
+                cni_error_rate_plot,
+                cni_field_accuracy_plot,
+                cni_latency_plot,
+                cni_quality_latency_plot,
+                cni_reliability_plot,
+            ],
+            queue=False,
         )
         # L'exploration détaillée reste indépendante du générateur : les
         # boutons restent réactifs pendant l'arrivée des nouveaux résultats.
@@ -3375,6 +3551,8 @@ def build_ui() -> gr.Blocks:
             cni_verso_preview,
             cni_result_identity,
             cni_detail_metrics,
+            cni_call_metrics_table,
+            cni_field_comparison_table,
             cni_label_json,
             cni_recto_json,
             cni_verso_json,

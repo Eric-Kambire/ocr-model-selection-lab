@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+from typing import Any
 
 import pandas as pd
 import plotly.express as px
@@ -108,44 +109,226 @@ def category_quality_chart(results: list[dict]) -> go.Figure:
 
 
 def cni_accuracy_chart(results: list[dict]) -> go.Figure:
-    """Show CNI accuracy per model once an explicit label mapping exists."""
+    """Compare l'exactitude stricte et la similarité textuelle par modèle."""
     if not results:
         return empty_figure("Lancez un benchmark CNI pour afficher les résultats.")
     frame = pd.DataFrame(results)
-    if "accuracy" not in frame:
-        return empty_figure("Les labels CNI ne sont pas encore mappés à une accuracy.")
-    scored = frame.dropna(subset=["accuracy"])
-    if scored.empty:
-        return empty_figure("Aucune accuracy : importez des labels puis définissez leur mapping.")
-    grouped = scored.groupby("model", as_index=False)["accuracy"].mean()
-    grouped["Accuracy (%)"] = grouped["accuracy"] * 100
+    available = [
+        metric
+        for metric in ("accuracy", "text_similarity")
+        if metric in frame and frame[metric].notna().any()
+    ]
+    if not available:
+        return empty_figure("Aucun score : les résultats filtrés ne sont pas notés.")
+    grouped = frame.groupby("model", as_index=False)[available].mean()
+    labels = {
+        "accuracy": "Exactitude des champs",
+        "text_similarity": "Similarité textuelle",
+    }
+    plot = grouped.melt(
+        id_vars="model",
+        value_vars=available,
+        var_name="metric",
+        value_name="value",
+    )
+    plot["Mesure"] = plot["metric"].map(labels)
+    plot["Score (%)"] = plot["value"] * 100
     figure = px.bar(
-        grouped,
+        plot,
         x="model",
-        y="Accuracy (%)",
-        color="model",
-        title="Accuracy CNI moyenne par modèle",
+        y="Score (%)",
+        color="Mesure",
+        barmode="group",
+        title="Qualité moyenne par modèle",
+        labels={"model": "Modèle"},
         color_discrete_sequence=COLORS,
     )
     return style_figure(figure)
 
 
 def cni_latency_chart(results: list[dict]) -> go.Figure:
-    """Show mean CNI latency by selected model without needing labels."""
+    """Montre la distribution réelle du temps bout-en-bout par modèle."""
     if not results:
         return empty_figure("Lancez un benchmark CNI pour afficher les latences.")
     frame = pd.DataFrame(results)
-    if "latency" not in frame or frame.empty:
+    latency_column = (
+        "end_to_end_seconds"
+        if "end_to_end_seconds" in frame
+        and frame["end_to_end_seconds"].notna().any()
+        else "latency"
+    )
+    if latency_column not in frame or frame[latency_column].dropna().empty:
         return empty_figure("Aucune latence CNI disponible.")
-    grouped = frame.groupby("model", as_index=False)["latency"].mean()
-    figure = px.bar(
-        grouped,
+    plot = frame.dropna(subset=[latency_column]).copy()
+    figure = px.box(
+        plot,
         x="model",
-        y="latency",
+        y=latency_column,
         color="model",
-        title="Latence CNI moyenne par modèle",
-        labels={"latency": "Secondes", "model": "Modèle"},
+        points="all",
+        title="Distribution du temps bout-en-bout",
+        labels={latency_column: "Secondes", "model": "Modèle"},
         color_discrete_sequence=COLORS,
+    )
+    return style_figure(figure)
+
+
+def cni_error_rate_chart(results: list[dict]) -> go.Figure:
+    """Affiche CER et WER ; plus bas signifie une meilleure transcription."""
+    if not results:
+        return empty_figure("Aucun résultat CNI à afficher.")
+    frame = pd.DataFrame(results)
+    available = [
+        metric
+        for metric in ("cer", "wer")
+        if metric in frame and frame[metric].notna().any()
+    ]
+    if not available:
+        return empty_figure("CER/WER indisponibles pour les résultats filtrés.")
+    grouped = frame.groupby("model", as_index=False)[available].mean()
+    plot = grouped.melt(
+        id_vars="model",
+        value_vars=available,
+        var_name="Mesure",
+        value_name="value",
+    )
+    plot["Mesure"] = plot["Mesure"].str.upper()
+    plot["Taux d'erreur (%)"] = plot["value"] * 100
+    figure = px.bar(
+        plot,
+        x="model",
+        y="Taux d'erreur (%)",
+        color="Mesure",
+        barmode="group",
+        title="Erreurs de transcription",
+        labels={"model": "Modèle"},
+        color_discrete_sequence=["#F59E0B", "#EF4444"],
+    )
+    return style_figure(figure)
+
+
+def cni_field_accuracy_chart(results: list[dict]) -> go.Figure:
+    """Heatmap des taux de champs exacts, après application des filtres."""
+    records: list[dict[str, Any]] = []
+    for result in results or []:
+        comparison = result.get("field_comparison")
+        rows = comparison.get("rows", []) if isinstance(comparison, dict) else []
+        for row in rows:
+            if not isinstance(row, dict) or row.get("state") == "reference_missing":
+                continue
+            records.append(
+                {
+                    "model": result.get("model", "—"),
+                    "field": row.get("field", "—"),
+                    "correct": 1.0 if row.get("state") == "correct" else 0.0,
+                }
+            )
+    if not records:
+        return empty_figure("Aucun champ comparable dans les résultats filtrés.")
+    frame = pd.DataFrame(records)
+    pivot = (
+        frame.groupby(["model", "field"])["correct"]
+        .mean()
+        .mul(100)
+        .unstack(fill_value=float("nan"))
+    )
+    figure = go.Figure(
+        go.Heatmap(
+            z=pivot.to_numpy(),
+            x=list(pivot.columns),
+            y=list(pivot.index),
+            zmin=0,
+            zmax=100,
+            colorscale=[
+                [0.0, "#FEE2E2"],
+                [0.5, "#FEF3C7"],
+                [1.0, "#D1FAE5"],
+            ],
+            colorbar={"title": "Correct (%)"},
+            hovertemplate=(
+                "Modèle=%{y}<br>Champ=%{x}<br>Correct=%{z:.1f}%<extra></extra>"
+            ),
+        )
+    )
+    figure.update_layout(title="Exactitude par champ")
+    return style_figure(figure)
+
+
+def cni_quality_latency_chart(results: list[dict]) -> go.Figure:
+    """Positionne les modèles selon qualité et temps pour aider la sélection."""
+    if not results:
+        return empty_figure("Aucun résultat CNI à afficher.")
+    frame = pd.DataFrame(results)
+    latency_column = (
+        "end_to_end_seconds"
+        if "end_to_end_seconds" in frame
+        and frame["end_to_end_seconds"].notna().any()
+        else "latency"
+    )
+    if (
+        "accuracy" not in frame
+        or latency_column not in frame
+        or frame.dropna(subset=["accuracy", latency_column]).empty
+    ):
+        return empty_figure("Qualité et temps doivent être disponibles ensemble.")
+    grouped = (
+        frame.dropna(subset=["accuracy", latency_column])
+        .groupby("model", as_index=False)
+        .agg(
+            accuracy=("accuracy", "mean"),
+            latency=(latency_column, "mean"),
+            samples=("accuracy", "size"),
+        )
+    )
+    grouped["Exactitude (%)"] = grouped["accuracy"] * 100
+    figure = px.scatter(
+        grouped,
+        x="latency",
+        y="Exactitude (%)",
+        color="model",
+        size="samples",
+        text="model",
+        title="Compromis qualité / temps",
+        labels={
+            "latency": "Temps moyen bout-en-bout (s)",
+            "model": "Modèle",
+            "samples": "Cas notés",
+        },
+        color_discrete_sequence=COLORS,
+    )
+    figure.update_traces(textposition="top center")
+    return style_figure(figure)
+
+
+def cni_reliability_chart(results: list[dict]) -> go.Figure:
+    """Répartit les statuts techniques par modèle en pourcentage."""
+    if not results:
+        return empty_figure("Aucun résultat CNI à afficher.")
+    frame = pd.DataFrame(results)
+    if "status" not in frame or "model" not in frame:
+        return empty_figure("Statuts techniques indisponibles.")
+    counts = (
+        frame.groupby(["model", "status"])
+        .size()
+        .rename("count")
+        .reset_index()
+    )
+    totals = counts.groupby("model")["count"].transform("sum")
+    counts["Exécutions (%)"] = counts["count"] / totals * 100
+    figure = px.bar(
+        counts,
+        x="model",
+        y="Exécutions (%)",
+        color="status",
+        barmode="stack",
+        title="Fiabilité technique",
+        labels={"model": "Modèle", "status": "Statut"},
+        color_discrete_map={
+            "success": "#10B981",
+            "invalid_json": "#F59E0B",
+            "timeout": "#F97316",
+            "failed": "#EF4444",
+        },
     )
     return style_figure(figure)
 

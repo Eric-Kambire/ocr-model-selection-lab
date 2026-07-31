@@ -4,6 +4,7 @@ import json
 import zipfile
 from pathlib import Path
 
+import pytest
 from PIL import Image, ImageDraw
 
 from ocr_benchmark.cni import (
@@ -276,6 +277,17 @@ def test_cni_strategies_send_expected_images_and_keep_pair_progress(tmp_path: Pa
     assert separate.model.calls[1][0].endswith("crop_verso.png")
     assert separate_events[-1]["completed"] == 1
     assert separate_events[-1]["total"] == 1  # Une paire client/modèle, malgré deux appels.
+    separate_result = separate_events[-1]["result"]
+    assert separate_result["inference_seconds"] == pytest.approx(0.02)
+    assert [row["scope"] for row in separate_result["call_metrics"]] == [
+        "recto",
+        "verso",
+    ]
+    assert separate_result["preprocessing_seconds"] >= 0
+    assert (
+        separate_result["end_to_end_seconds"]
+        >= separate_result["inference_seconds"]
+    )
 
     combined = _RecordingRegistry()
     combined_events = list(iter_cni_benchmark(combined, ["fake:vision"], records, tmp_path / "runs-combined", strategy="combined_vertical"))
@@ -283,6 +295,10 @@ def test_cni_strategies_send_expected_images_and_keep_pair_progress(tmp_path: Pa
     assert combined.model.calls[0][0].endswith("recto_verso_composite.png")
     assert combined_events[-1]["completed"] == 1
     assert combined_events[-1]["total"] == 1
+    combined_result = combined_events[-1]["result"]
+    assert combined_result["inference_seconds"] == pytest.approx(0.01)
+    assert len(combined_result["call_metrics"]) == 1
+    assert combined_result["call_metrics"][0]["scope"] == "recto_verso"
 
 
 def test_runner_sends_the_full_normalized_source_when_crop_is_uncertain(tmp_path: Path):
