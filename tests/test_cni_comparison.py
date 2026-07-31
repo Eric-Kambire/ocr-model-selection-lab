@@ -28,6 +28,9 @@ def test_comparison_scores_expected_values_and_normalises_dates_and_accents():
     assert states["nom"] == "different"
     assert states["date_naissance"] == "correct"
     assert states["adresse"] == "reference_missing"
+    assert comparison["text_similarity"] is not None
+    assert comparison["cer"] is not None
+    assert comparison["wer"] is not None
 
 
 def test_comparison_distinguishes_missing_extraction_from_unavailable_extraction():
@@ -40,6 +43,39 @@ def test_comparison_distinguishes_missing_extraction_from_unavailable_extraction
     assert present_but_blank["accuracy"] == 0.0
     assert field_state_map(unavailable)["cin"] == "extraction_unavailable"
     assert unavailable["accuracy"] is None
+    assert unavailable["cer"] is None
+    assert unavailable["wer"] is None
+
+
+def test_comparison_exposes_micro_averaged_cer_wer_and_similarity():
+    """WER travaille sur les mots ; la similarité est dérivée du CER."""
+    comparison = compare_cni_extraction(
+        {"prenom": "MOHAMED ALI"},
+        {"prenom": "MOHAMAD ALI"},
+    )
+    row = next(
+        item for item in comparison["rows"] if item["field"] == "prenom"
+    )
+
+    assert row["character_edits"] == 1
+    assert row["reference_characters"] == len("mohamed ali")
+    assert row["word_edits"] == 1
+    assert row["reference_words"] == 2
+    assert row["cer"] == comparison["cer"]
+    assert row["wer"] == comparison["wer"] == 0.5
+    assert comparison["text_similarity"] == 1.0 - comparison["cer"]
+
+
+def test_missing_model_value_is_full_cer_and_wer_error():
+    comparison = compare_cni_extraction(
+        {"nom": "KABIRE ERIC"},
+        {"nom": None},
+    )
+
+    assert comparison["accuracy"] == 0.0
+    assert comparison["cer"] == 1.0
+    assert comparison["wer"] == 1.0
+    assert comparison["text_similarity"] == 0.0
 
 
 def test_comparison_reads_qlickeer_raw_customer_data_without_normalising_file():

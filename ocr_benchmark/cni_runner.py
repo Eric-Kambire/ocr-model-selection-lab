@@ -122,11 +122,20 @@ def iter_cni_benchmark(
         try:
             for client in valid_clients:
                 client_dir = run_dir / _safe_name(model_name) / _safe_name(str(client["folder_client_id"]))
+                pair_started_at = time.monotonic()
+                preparation_started_at = time.monotonic()
                 try:
                     prepared = prepare_cni_client_images(client, client_dir, dpi, preprocessing=preprocessing)
+                    preparation_finished_at = time.monotonic()
                 except Exception as exc:
                     completed += 1
                     result = _failed_client_result(run_id, model_name, client, strategy, f"prepare_failed: {type(exc).__name__}: {exc}")
+                    result["preprocessing_seconds"] = (
+                        time.monotonic() - preparation_started_at
+                    )
+                    result["end_to_end_seconds"] = (
+                        time.monotonic() - pair_started_at
+                    )
                     results.append(result)
                     _write_results_index(run_dir, results)
                     LOGGER.exception("CNI document preparation failed | client=%s", client["folder_client_id"])
@@ -147,6 +156,12 @@ def iter_cni_benchmark(
                     fields=fields,
                     prompt_instructions=prompt_instructions,
                     system_prompt=system_prompt,
+                )
+                result["preprocessing_seconds"] = (
+                    preparation_finished_at - preparation_started_at
+                )
+                result["end_to_end_seconds"] = (
+                    time.monotonic() - pair_started_at
                 )
                 completed += 1
                 results.append(result)
@@ -307,9 +322,35 @@ def _extract_one_cni_client(
     )
     write_cni_json(artefacts_dir / "global.extraction.json", global_payload)
     status = _overall_status(recto_payload["status"], verso_payload["status"], recto_parse_error, verso_parse_error)
-    total_latency = recto_inference.latency_seconds + verso_inference.latency_seconds
-    output_tokens = _sum_optional(recto_inference.output_tokens, verso_inference.output_tokens)
-    input_tokens = _sum_optional(recto_inference.input_tokens, verso_inference.input_tokens)
+    if strategy == "combined_vertical":
+        # Le recto et le verso proviennent du même appel. Les additionner
+        # doublerait artificiellement temps et tokens dans la vue de résultats.
+        total_latency = recto_inference.latency_seconds
+        output_tokens = recto_inference.output_tokens
+        input_tokens = recto_inference.input_tokens
+        call_metrics = [
+            _inference_metric_row(
+                "recto_verso",
+                recto_payload["status"],
+                recto_inference,
+            )
+        ]
+    else:
+        total_latency = (
+            recto_inference.latency_seconds + verso_inference.latency_seconds
+        )
+        output_tokens = _sum_optional(
+            recto_inference.output_tokens,
+            verso_inference.output_tokens,
+        )
+        input_tokens = _sum_optional(
+            recto_inference.input_tokens,
+            verso_inference.input_tokens,
+        )
+        call_metrics = [
+            _inference_metric_row("recto", recto_payload["status"], recto_inference),
+            _inference_metric_row("verso", verso_payload["status"], verso_inference),
+        ]
     return {
         "run_id": run_id,
         "model": model_name,
@@ -319,6 +360,9 @@ def _extract_one_cni_client(
         "label_status": client.get("label_status"),
         "label_path": client.get("label_path"),
         "accuracy": comparison["accuracy"],
+        "text_similarity": comparison["text_similarity"],
+        "cer": comparison["cer"],
+        "wer": comparison["wer"],
         "score_status": comparison["score_status"],
         "field_comparison": comparison,
         "recto_status": recto_payload["status"],
@@ -328,10 +372,14 @@ def _extract_one_cni_client(
         "cin_fusionne": global_payload["cin_fusionne"],
         "cin_coherent": global_payload["cin_coherent"],
         "date_validite_coherente": global_payload["date_validite_coherente"],
+        # ``latency`` est conservé pour les anciens consommateurs. Le nouveau
+        # nom explicite qu'il ne contient ni crop ni préparation de document.
         "latency": total_latency,
+        "inference_seconds": total_latency,
         "input_tokens": input_tokens,
         "output_tokens": output_tokens,
         "tokens_per_second": (output_tokens / total_latency if output_tokens is not None and total_latency else None),
+        "call_metrics": call_metrics,
         "recto_json_path": str(artefacts_dir / "recto.extraction.json"),
         "verso_json_path": str(artefacts_dir / "verso.extraction.json"),
         "global_json_path": str(artefacts_dir / "global.extraction.json"),
@@ -415,6 +463,22 @@ def _side_payload(side: str, fields: dict[str, str | None], inference: Inference
     }
 
 
+def _inference_metric_row(
+    scope: str,
+    status: str,
+    inference: InferenceResult,
+) -> dict[str, Any]:
+    """Sérialise les mesures d'un appel réel, jamais d'une face logique dupliquée."""
+    return {
+        "scope": scope,
+        "status": status,
+        "latency_seconds": inference.latency_seconds,
+        "input_tokens": inference.input_tokens,
+        "output_tokens": inference.output_tokens,
+        "tokens_per_second": inference.tokens_per_second,
+    }
+
+
 def _overall_status(recto_status: str, verso_status: str, recto_parse_error: str | None, verso_parse_error: str | None) -> str:
     """Réduit les deux statuts en un statut global, timeout prioritaire."""
     if recto_status == "timeout" or verso_status == "timeout":
@@ -468,11 +532,18 @@ def _failed_client_result(run_id: str, model_name: str, client: dict[str, Any], 
         "label_status": client.get("label_status"),
         "label_path": client.get("label_path"),
         "accuracy": None,
+        "text_similarity": None,
+        "cer": None,
+        "wer": None,
         "score_status": "not_scored_label_mapping_pending",
         "latency": 0.0,
+        "inference_seconds": 0.0,
+        "preprocessing_seconds": None,
+        "end_to_end_seconds": None,
         "input_tokens": None,
         "output_tokens": None,
         "tokens_per_second": None,
+        "call_metrics": [],
         "error": error,
     }
 
