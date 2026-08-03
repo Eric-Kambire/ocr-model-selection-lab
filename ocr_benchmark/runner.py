@@ -3,6 +3,7 @@ from __future__ import annotations
 import math
 import concurrent.futures
 import inspect
+import logging
 import time
 import uuid
 from collections.abc import Callable, Iterable
@@ -18,6 +19,7 @@ from .registry import ModelRegistry
 
 ProgressCallback = Callable[[int, int, str], None]
 TraceCallback = Callable[[dict[str, Any]], None]
+LOGGER = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -50,6 +52,8 @@ class BenchmarkRunner:
         timeout_seconds: float | None = None,
         max_errors: int | None = None,
         model_prompt: str | None = None,
+        cpu_threads: int | None = None,
+        unload_after_task: bool = True,
         progress: ProgressCallback | None = None,
         trace: TraceCallback | None = None,
     ) -> tuple[str, list[dict[str, Any]]]:
@@ -61,6 +65,8 @@ class BenchmarkRunner:
             timeout_seconds=timeout_seconds,
             max_errors=max_errors,
             model_prompt=model_prompt,
+            cpu_threads=cpu_threads,
+            unload_after_task=unload_after_task,
             progress=progress,
             trace=trace,
         )
@@ -82,6 +88,8 @@ class BenchmarkRunner:
         timeout_seconds: float | None = None,
         max_errors: int | None = None,
         model_prompt: str | None = None,
+        cpu_threads: int | None = None,
+        unload_after_task: bool = True,
         progress: ProgressCallback | None = None,
         trace: TraceCallback | None = None,
     ):
@@ -91,6 +99,9 @@ class BenchmarkRunner:
                 spec,
                 mock_noise=mock_noise,
                 model_prompt=model_prompt,
+                cpu_threads=cpu_threads,
+                unload_after_task=unload_after_task,
+                timeout_seconds=timeout_seconds,
             )
             for spec in model_specs
         ]
@@ -196,6 +207,13 @@ class BenchmarkRunner:
         output_schema: dict[str, Any] | None = None,
         late_result: Callable[[Any | None, str | None], None] | None = None,
     ):
+        started_at = time.monotonic()
+        LOGGER.info(
+            "Model timeout guard started | model=%s | image=%s | timeout=%s",
+            getattr(model, "model_name", type(model).__name__),
+            image_path,
+            timeout_seconds,
+        )
         if timeout_seconds is None or timeout_seconds <= 0:
             return _perform_model_call(
                 model, image_path, prompt, system_prompt,
@@ -215,6 +233,15 @@ class BenchmarkRunner:
         try:
             return future.result(timeout=timeout_seconds)
         except concurrent.futures.TimeoutError:
+            elapsed = time.monotonic() - started_at
+            LOGGER.error(
+                "Application model timeout reached | model=%s | image=%s | "
+                "elapsed=%.1fs | configured_timeout=%.1fs",
+                getattr(model, "model_name", type(model).__name__),
+                image_path,
+                elapsed,
+                timeout_seconds,
+            )
             if late_result:
                 def capture_late(completed_future):
                     try:

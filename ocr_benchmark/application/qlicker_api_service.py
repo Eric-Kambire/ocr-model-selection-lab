@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import time
 import warnings
 from datetime import datetime
 from collections.abc import Mapping, Sequence
@@ -371,12 +372,43 @@ def _qlicker_get(session: requests.Session, url: str, *, params: Any, timeout: f
     """
     if not verify_ssl:
         LOGGER.warning("QlickEER | SSL non vérifié | GET %s", urlsplit(url).path or url)
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore", InsecureRequestWarning)
-        return session.get(
-            url, params=params, timeout=timeout, proxies=dict(proxies),
-            verify=verify_ssl, stream=stream,
+    endpoint = urlsplit(url).path or url
+    started_at = time.monotonic()
+    LOGGER.info(
+        "QlickEER request started | endpoint=%s | requests_timeout=%.1fs | "
+        "stream=%s | proxy=%s",
+        endpoint,
+        timeout,
+        stream,
+        bool(proxies),
+    )
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", InsecureRequestWarning)
+            response = session.get(
+                url, params=params, timeout=timeout, proxies=dict(proxies),
+                verify=verify_ssl, stream=stream,
+            )
+    except requests.RequestException as exc:
+        elapsed = time.monotonic() - started_at
+        LOGGER.exception(
+            "QlickEER request failed | endpoint=%s | elapsed=%.1fs | "
+            "configured_timeout=%.1fs | exception=%s",
+            endpoint,
+            elapsed,
+            timeout,
+            type(exc).__name__,
         )
+        raise
+    LOGGER.info(
+        "QlickEER response headers received | endpoint=%s | elapsed=%.1fs | "
+        "status=%s | configured_timeout=%.1fs",
+        endpoint,
+        time.monotonic() - started_at,
+        getattr(response, "status_code", "unknown"),
+        timeout,
+    )
+    return response
 
 
 def _qlicker_file_extension(

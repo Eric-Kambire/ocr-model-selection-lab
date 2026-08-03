@@ -8,6 +8,7 @@ from models.ollama_capabilities import (
 )
 
 LOGGER = logging.getLogger(__name__)
+DEFAULT_OLLAMA_REQUEST_TIMEOUT_SECONDS = 300.0
 
 DEFAULT_OCR_PROMPT = """You are a professional layout-preserving OCR engine.
 Your task is to transcribe all the text, tables, and handwriting in this image.
@@ -29,18 +30,37 @@ class OllamaOCRModel(BaseOCRModel):
         *,
         cpu_threads: int | None = None,
         unload_after_task: bool = True,
+        request_timeout: float | None = None,
     ):
         super().__init__(model_name)
         self.prompt = prompt.strip() if prompt and prompt.strip() else DEFAULT_OCR_PROMPT
         self.cpu_threads = max(1, int(cpu_threads)) if cpu_threads else None
         self.unload_after_task = bool(unload_after_task)
+        self.host = os.getenv("OLLAMA_HOST", "http://127.0.0.1:11434")
+        self.request_timeout = (
+            float(request_timeout)
+            if request_timeout is not None and float(request_timeout) > 0
+            else DEFAULT_OLLAMA_REQUEST_TIMEOUT_SECONDS
+        )
         # Le résultat de ``ollama.show`` reste valable pendant la vie de
         # l'adaptateur. Ce cache évite de répéter l'appel pour recto et verso.
         self._vision_capability: OllamaVisionCapability | None = None
         # Import ollama here to avoid dependency issues if not installed
         try:
             import ollama
-            self.client = ollama
+            # Ne pas utiliser le client global du SDK : son timeout dépend de
+            # la version/install du poste. Le client dédié reçoit exactement
+            # la valeur affichée dans les paramètres de l'application.
+            self.client = ollama.Client(
+                host=self.host,
+                timeout=self.request_timeout,
+            )
+            LOGGER.info(
+                "Ollama client configured | model=%s | host=%s | request_timeout=%.1fs",
+                self.model_name,
+                self.host,
+                self.request_timeout,
+            )
         except ImportError:
             self.client = None
             print("Warning: 'ollama' Python library not installed. Please install it using pip.")
@@ -107,6 +127,12 @@ class OllamaOCRModel(BaseOCRModel):
         effective_prompt = prompt.strip() if prompt and prompt.strip() else self.prompt
         effective_system = system_prompt.strip() if system_prompt and system_prompt.strip() else None
         start_time = time.time()
+        LOGGER.info(
+            "Ollama request started | model=%s | image=%s | request_timeout=%.1fs",
+            self.model_name,
+            image_path,
+            self.request_timeout,
+        )
         
         try:
             # Call Ollama chat API with images
@@ -176,11 +202,25 @@ class OllamaOCRModel(BaseOCRModel):
                 "tokens_per_second": tokens_per_second,
                 "vision_capabilities": list(capability.capabilities),
                 "image_submitted": True,
+                "configured_timeout_seconds": self.request_timeout,
             }
             
         except Exception as e:
             latency = time.time() - start_time
-            error_msg = f"Error during Ollama OCR inference: {str(e)}"
+            error_msg = (
+                "Error during Ollama OCR inference "
+                f"after {latency:.1f}s "
+                f"(configured HTTP timeout: {self.request_timeout:.1f}s, "
+                f"exception: {type(e).__name__}): {e}"
+            )
+            LOGGER.exception(
+                "Ollama request failed | model=%s | elapsed=%.1fs | "
+                "configured_timeout=%.1fs | exception=%s",
+                self.model_name,
+                latency,
+                self.request_timeout,
+                type(e).__name__,
+            )
             return {
                 "text": "",
                 "raw_response": error_msg,
@@ -188,6 +228,7 @@ class OllamaOCRModel(BaseOCRModel):
                 "status": "failed",
                 "error": error_msg,
                 "device": "ollama",
+                "configured_timeout_seconds": self.request_timeout,
             }
 
     def _get_vision_capability(self) -> OllamaVisionCapability:

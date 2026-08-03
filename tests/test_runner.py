@@ -85,6 +85,33 @@ def test_stream_reports_processing_before_completion():
     assert updates[1].result["accuracy"] == 1
 
 
+def test_runner_forwards_timeout_and_resource_options_to_registry():
+    observed = {}
+    registry = ModelRegistry()
+
+    def factory(model_name, **options):
+        observed.update(options)
+        return SuccessfulModel()
+
+    registry.register("ok", factory)
+    runner = BenchmarkRunner(registry)
+    case = BenchmarkCase("image.png", "expected text", "test")
+
+    list(
+        runner.iter_run(
+            ["ok:model"],
+            [case],
+            timeout_seconds=321,
+            cpu_threads=3,
+            unload_after_task=False,
+        )
+    )
+
+    assert observed["timeout_seconds"] == 321
+    assert observed["cpu_threads"] == 3
+    assert observed["unload_after_task"] is False
+
+
 def test_timeout_keeps_late_output_in_trace():
     registry = ModelRegistry()
     registry.register("slow", lambda model_name, **options: SlowThinkingModel())
