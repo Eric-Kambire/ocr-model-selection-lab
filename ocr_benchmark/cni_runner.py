@@ -28,6 +28,7 @@ from .cni_schema import (
     parse_combined_cni_json_response,
 )
 from .domain import InferenceResult, InferenceStatus
+from .json_utils import dumps_json
 from .registry import ModelRegistry
 from .runner import BenchmarkRunner
 
@@ -562,7 +563,7 @@ def _read_json_mapping(path_value: Any) -> dict[str, Any] | None:
 def _write_results_index(run_dir: Path, results: list[dict[str, Any]]) -> None:
     """Checkpoint atomiquement la liste qui grandit après chaque client."""
     temporary = run_dir / "cni_results.json.tmp"
-    temporary.write_text(json.dumps(results, ensure_ascii=False, indent=2), encoding="utf-8")
+    temporary.write_text(dumps_json(results), encoding="utf-8")
     temporary.replace(run_dir / "cni_results.json")
 
 

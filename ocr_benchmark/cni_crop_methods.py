@@ -16,6 +16,8 @@ from typing import Any
 
 from PIL import Image, ImageDraw, ImageOps
 
+from .json_utils import dumps_json, to_json_compatible
+
 
 CARD_RATIO = 85.60 / 53.98
 
@@ -142,30 +144,15 @@ def run_crop_method(
     # OpenCV retourne certains nombres et tableaux dans des types NumPy. Le
     # rapport, Gradio et les futurs exports doivent recevoir uniquement des
     # structures Python sérialisables.
-    result = _json_safe(result)
+    result = to_json_compatible(result)
     result["method"] = method
     result["method_label"] = METHOD_LABELS[method]
     result["parameters"] = values
     result["elapsed_ms"] = round((time.perf_counter() - started) * 1000.0, 1)
     report_path = output_dir / "crop_method_report.json"
-    report_path.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
+    report_path.write_text(dumps_json(result), encoding="utf-8")
     result["report_path"] = str(report_path)
     return result
-
-
-def _json_safe(value: Any) -> Any:
-    """Convertit récursivement les valeurs OpenCV/NumPy pour JSON."""
-    if isinstance(value, dict):
-        return {str(key): _json_safe(item) for key, item in value.items()}
-    if isinstance(value, (list, tuple)):
-        return [_json_safe(item) for item in value]
-    if isinstance(value, Path):
-        return str(value)
-    if hasattr(value, "tolist"):
-        return _json_safe(value.tolist())
-    if hasattr(value, "item"):
-        return _json_safe(value.item())
-    return value
 
 
 def _hybrid_v4_pipeline(

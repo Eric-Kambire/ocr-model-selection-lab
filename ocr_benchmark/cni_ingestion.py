@@ -43,6 +43,8 @@ from pathlib import Path, PurePosixPath
 # peut être de n'importe quel type (dict, list, str...).
 from typing import Any
 
+from .json_utils import dumps_json
+
 # ─── CONFIGURATION DU MODULE ──────────────────────────────────────────────────
 
 # Crée un "logger" propre à ce module. Les messages apparaîtront avec le nom
@@ -412,7 +414,7 @@ def _atomic_write_json(path: Path, value: Any) -> None:
     # On convertit la valeur Python en texte JSON et on l'écrit dans le temporaire.
     # ensure_ascii=False : conserve les accents et caractères arabes tels quels.
     # indent=2 : rend le JSON lisible avec une indentation de 2 espaces.
-    temporary.write_text(json.dumps(value, ensure_ascii=False, indent=2), encoding="utf-8")
+    temporary.write_text(dumps_json(value), encoding="utf-8")
 
     # On renomme le fichier temporaire en fichier final.
     # Sur la plupart des systèmes, cette opération est atomique : personne ne
