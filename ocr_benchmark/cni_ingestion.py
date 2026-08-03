@@ -15,6 +15,8 @@ import zipfile
 from pathlib import Path, PurePosixPath
 from typing import Any
 
+from .json_utils import dumps_json
+
 LOGGER = logging.getLogger(__name__)
 DEFAULT_RECTO_SUFFIX = "_CIN_Recto"
 DEFAULT_VERSO_SUFFIX = "_CIN_Verso"
@@ -179,6 +181,6 @@ def _atomic_write_json(path: Path, value: Any) -> None:
     """Écrit d'abord un temporaire voisin, puis remplace l'artefact final."""
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_suffix(path.suffix + ".tmp")
-    temporary.write_text(json.dumps(value, ensure_ascii=False, indent=2), encoding="utf-8")
+    temporary.write_text(dumps_json(value), encoding="utf-8")
     # ``replace`` évite qu'un refresh de l'interface lise un JSON à moitié écrit.
     temporary.replace(path)
