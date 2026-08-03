@@ -1,6 +1,13 @@
 import time
 import os
+import logging
 from models.base import BaseOCRModel
+from models.ollama_capabilities import (
+    OllamaVisionCapability,
+    inspect_ollama_vision_capability,
+)
+
+LOGGER = logging.getLogger(__name__)
 
 DEFAULT_OCR_PROMPT = """You are a professional layout-preserving OCR engine.
 Your task is to transcribe all the text, tables, and handwriting in this image.
@@ -27,6 +34,9 @@ class OllamaOCRModel(BaseOCRModel):
         self.prompt = prompt.strip() if prompt and prompt.strip() else DEFAULT_OCR_PROMPT
         self.cpu_threads = max(1, int(cpu_threads)) if cpu_threads else None
         self.unload_after_task = bool(unload_after_task)
+        # Le résultat de ``ollama.show`` reste valable pendant la vie de
+        # l'adaptateur. Ce cache évite de répéter l'appel pour recto et verso.
+        self._vision_capability: OllamaVisionCapability | None = None
         # Import ollama here to avoid dependency issues if not installed
         try:
             import ollama
@@ -68,6 +78,30 @@ class OllamaOCRModel(BaseOCRModel):
                 "status": "failed",
                 "error": f"Image path not found: {image_path}",
                 "device": "ollama",
+            }
+
+        capability = self._get_vision_capability()
+        if not capability.supported:
+            error = (
+                f"Le modèle Ollama '{self.model_name}' n'est pas utilisable "
+                "pour ce benchmark d'images : "
+                f"{capability.reason} Aucune image n'a été analysée."
+            )
+            LOGGER.error(
+                "Ollama vision requirement rejected | model=%s | capabilities=%s | reason=%s",
+                self.model_name,
+                list(capability.capabilities),
+                capability.reason,
+            )
+            return {
+                "text": "",
+                "raw_response": error,
+                "latency": 0.0,
+                "status": "incompatible_model",
+                "error": error,
+                "device": "ollama",
+                "vision_capabilities": list(capability.capabilities),
+                "image_submitted": False,
             }
 
         effective_prompt = prompt.strip() if prompt and prompt.strip() else self.prompt
@@ -140,6 +174,8 @@ class OllamaOCRModel(BaseOCRModel):
                 "input_tokens": input_tokens,
                 "output_tokens": output_tokens,
                 "tokens_per_second": tokens_per_second,
+                "vision_capabilities": list(capability.capabilities),
+                "image_submitted": True,
             }
             
         except Exception as e:
@@ -153,6 +189,23 @@ class OllamaOCRModel(BaseOCRModel):
                 "error": error_msg,
                 "device": "ollama",
             }
+
+    def _get_vision_capability(self) -> OllamaVisionCapability:
+        """Inspecte une seule fois le modèle avant tout envoi d'image."""
+
+        if self._vision_capability is None:
+            self._vision_capability = inspect_ollama_vision_capability(
+                self.client,
+                self.model_name,
+            )
+            LOGGER.info(
+                "Ollama capabilities checked | model=%s | vision=%s | capabilities=%s | reason=%s",
+                self.model_name,
+                self._vision_capability.supported,
+                list(self._vision_capability.capabilities),
+                self._vision_capability.reason,
+            )
+        return self._vision_capability
 
     def close(self) -> None:
         """Demande explicitement au serveur Ollama de libérer le modèle."""

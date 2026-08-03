@@ -548,6 +548,8 @@ def _overall_status(recto_status: str, verso_status: str, recto_parse_error: str
     """Réduit les deux statuts en un statut global, timeout prioritaire."""
     if recto_status == "timeout" or verso_status == "timeout":
         return "timeout"
+    if recto_status == "incompatible_model" or verso_status == "incompatible_model":
+        return "incompatible_model"
     if recto_status != "success" or verso_status != "success":
         return "failed"
     if recto_parse_error or verso_parse_error:

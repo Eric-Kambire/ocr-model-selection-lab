@@ -9,6 +9,8 @@ class InferenceStatus(str, Enum):
     SUCCESS = "success"
     FAILED = "failed"
     TIMEOUT = "timeout"
+    # Le fournisseur répond, mais le modèle ne sait pas consommer l'image.
+    INCOMPATIBLE_MODEL = "incompatible_model"
 
 
 @dataclass(frozen=True)
