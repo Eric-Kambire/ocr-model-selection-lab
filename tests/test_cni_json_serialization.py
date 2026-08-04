@@ -10,6 +10,7 @@ import numpy as np
 from ocr_benchmark.cni_ingestion import write_cni_json
 from ocr_benchmark.cni_runner import _write_results_index
 from ocr_benchmark.json_utils import to_json_compatible
+from ocr_benchmark.reporting import RunCheckpoint
 
 
 def test_json_normalizer_converts_numpy_scalars_arrays_and_paths(tmp_path: Path):
@@ -59,3 +60,24 @@ def test_results_checkpoint_accepts_numpy_values(tmp_path: Path):
     assert json.loads(
         (run_dir / "cni_results.json").read_text(encoding="utf-8")
     )[0]["input_tokens"] == 128
+
+
+def test_generic_checkpoint_accepts_numpy_values(tmp_path: Path):
+    checkpoint = RunCheckpoint("run", tmp_path)
+
+    checkpoint.write(
+        [{
+            "input_tokens": np.int32(128),
+            "score": np.float32(0.5),
+            "box": np.array([1, 2, 30, 40], dtype=np.int32),
+        }],
+    )
+
+    stored = json.loads(
+        (tmp_path / "run" / "results.json").read_text(encoding="utf-8")
+    )
+    assert stored == [{
+        "input_tokens": 128,
+        "score": 0.5,
+        "box": [1, 2, 30, 40],
+    }]

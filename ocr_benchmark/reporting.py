@@ -1,12 +1,13 @@
 from __future__ import annotations
 
-import json
 import os
 import threading
 from pathlib import Path
 from typing import Any
 
 import pandas as pd
+
+from .json_utils import dumps_json
 
 _TRACE_LOCK = threading.Lock()
 
@@ -22,7 +23,7 @@ class RunCheckpoint:
     def write(self, results: list[dict[str, Any]]) -> None:
         _atomic_text(
             self.run_dir / "results.json",
-            json.dumps(results, indent=2, ensure_ascii=False),
+            dumps_json(results),
         )
         temporary = self.run_dir / "details.csv.tmp"
         pd.DataFrame(results).to_csv(temporary, index=False)
@@ -30,7 +31,7 @@ class RunCheckpoint:
 
     def append_trace(self, event: dict[str, Any]) -> None:
         """Append an unfiltered provider response, including late timeout output."""
-        line = json.dumps(event, ensure_ascii=False, default=str) + "\n"
+        line = dumps_json(event, indent=None) + "\n"
         with _TRACE_LOCK:
             with (self.run_dir / "traces.jsonl").open("a", encoding="utf-8") as stream:
                 stream.write(line)
@@ -61,7 +62,7 @@ def save_run(
     """Persist a run atomically in its own directory."""
     run_dir = Path(output_root) / run_id
     run_dir.mkdir(parents=True, exist_ok=False)
-    _atomic_text(run_dir / "results.json", json.dumps(results, indent=2, ensure_ascii=False))
+    _atomic_text(run_dir / "results.json", dumps_json(results))
     summary.to_csv(run_dir / "summary.csv", index=False)
     pd.DataFrame(results).to_csv(run_dir / "details.csv", index=False)
     _atomic_text(run_dir / "report.md", render_markdown(run_id, summary, results))

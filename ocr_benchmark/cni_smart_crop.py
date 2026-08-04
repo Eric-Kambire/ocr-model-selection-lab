@@ -8,7 +8,6 @@ quadrilatères candidats, les classe puis redresse le candidat retenu.
 from __future__ import annotations
 
 import argparse
-import json
 import math
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -16,6 +15,8 @@ from typing import Any, Iterable, Sequence
 
 import cv2
 import numpy as np
+
+from .json_utils import dumps_json
 
 try:
     import fitz  # PyMuPDF
@@ -1191,8 +1192,10 @@ def run_pipeline(
             }
         )
 
-    with (output_dir / "result.json").open("w", encoding="utf-8") as file:
-        json.dump(result, file, ensure_ascii=False, indent=2)
+    (output_dir / "result.json").write_text(
+        dumps_json(result),
+        encoding="utf-8",
+    )
     return result
 
 
@@ -1238,7 +1241,7 @@ def main() -> None:
         pdf_page=args.page,
         pdf_dpi=args.dpi,
     )
-    print(json.dumps(result, ensure_ascii=False, indent=2))
+    print(dumps_json(result))
 
 
 if __name__ == "__main__":
