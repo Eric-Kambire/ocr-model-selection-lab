@@ -73,6 +73,7 @@ class OllamaOCRModel(BaseOCRModel):
         system_prompt: str | None = None,
         output_format: str = "prompt",
         output_schema: dict | None = None,
+        image_only: bool = False,
     ) -> dict:
         """Exécute Ollama avec une contrainte JSON facultative.
 
@@ -124,14 +125,29 @@ class OllamaOCRModel(BaseOCRModel):
                 "image_submitted": False,
             }
 
-        effective_prompt = prompt.strip() if prompt and prompt.strip() else self.prompt
-        effective_system = system_prompt.strip() if system_prompt and system_prompt.strip() else None
+        # En mode image seule, aucun prompt SYSTEM/USER fourni par
+        # l'application ne doit masquer le SYSTEM embarqué dans le Modelfile.
+        # Le message utilisateur reste présent avec un contenu vide car il
+        # transporte l'image dans l'API chat d'Ollama.
+        if image_only:
+            effective_prompt = ""
+            effective_system = None
+        else:
+            effective_prompt = (
+                prompt.strip() if prompt and prompt.strip() else self.prompt
+            )
+            effective_system = (
+                system_prompt.strip()
+                if system_prompt and system_prompt.strip()
+                else None
+            )
         start_time = time.time()
         LOGGER.info(
-            "Ollama request started | model=%s | image=%s | request_timeout=%.1fs",
+            "Ollama request started | model=%s | image=%s | request_timeout=%.1fs | image_only=%s",
             self.model_name,
             image_path,
             self.request_timeout,
+            bool(image_only),
         )
         
         try:
@@ -203,6 +219,9 @@ class OllamaOCRModel(BaseOCRModel):
                 "vision_capabilities": list(capability.capabilities),
                 "image_submitted": True,
                 "configured_timeout_seconds": self.request_timeout,
+                "prompt_delivery_mode": (
+                    "image_only" if image_only else "application_prompt"
+                ),
             }
             
         except Exception as e:

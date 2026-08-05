@@ -55,6 +55,8 @@ def default_cni_settings(*, cpu_threads: int, system_prompt: str, prompt_instruc
         # Le routage du prompt est indépendant de la stratégie d'image.
         # En mode combiné, les deux groupes de règles sont toujours envoyés.
         "prompt_scope_mode": "side_specific",
+        # ``image_only`` réserve le texte au SYSTEM embarqué dans le Modelfile.
+        "prompt_delivery_mode": "application_prompt",
         # Ce seuil sert uniquement à surveiller la taille du prompt dans l'UI.
         # Il ne modifie pas le contexte réellement alloué par Ollama.
         "prompt_context_budget": 8192,
@@ -104,6 +106,7 @@ def cni_settings_from_ui(
     system_prompt: Any,
     prompt_instructions: Any,
     prompt_scope_mode: Any,
+    prompt_delivery_mode: Any,
     prompt_context_budget: Any,
 ) -> dict[str, Any]:
     """Convertit les composants Gradio en données JSON simples."""
@@ -133,6 +136,7 @@ def cni_settings_from_ui(
         "system_prompt": str(system_prompt or "").strip(),
         "prompt_instructions": str(prompt_instructions or "").strip(),
         "prompt_scope_mode": str(prompt_scope_mode or ""),
+        "prompt_delivery_mode": str(prompt_delivery_mode or ""),
         "prompt_context_budget": _positive_integer(prompt_context_budget, 8192),
     }
 
@@ -164,6 +168,9 @@ def _normalise(value: Any, defaults: Mapping[str, Any]) -> dict[str, Any]:
         prompt_scope_mode=raw.get(
             "prompt_scope_mode", fallback["prompt_scope_mode"]
         ),
+        prompt_delivery_mode=raw.get(
+            "prompt_delivery_mode", fallback["prompt_delivery_mode"]
+        ),
         prompt_context_budget=raw.get(
             "prompt_context_budget", fallback["prompt_context_budget"]
         ),
@@ -185,6 +192,11 @@ def _normalise(value: Any, defaults: Mapping[str, Any]) -> dict[str, Any]:
         result["prompt_scope_mode"]
         if result["prompt_scope_mode"] in {"side_specific", "full_rules"}
         else fallback["prompt_scope_mode"]
+    )
+    result["prompt_delivery_mode"] = (
+        result["prompt_delivery_mode"]
+        if result["prompt_delivery_mode"] in {"application_prompt", "image_only"}
+        else fallback["prompt_delivery_mode"]
     )
     result["recto_suffix"] = result["recto_suffix"] or fallback["recto_suffix"]
     result["verso_suffix"] = result["verso_suffix"] or fallback["verso_suffix"]

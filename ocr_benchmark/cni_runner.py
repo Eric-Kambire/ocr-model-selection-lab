@@ -56,6 +56,7 @@ def iter_cni_benchmark(
     fields: dict[str, list[dict[str, str]]] | None = None,
     prompt_instructions: str | None = None,
     prompt_scope_mode: str = "side_specific",
+    prompt_delivery_mode: str = "application_prompt",
     system_prompt: str | None = None,
     output_format_mode: str = "schema",
     model_output_modes: Mapping[str, str] | None = None,
@@ -87,6 +88,10 @@ def iter_cni_benchmark(
         raise ValueError(
             "CNI prompt scope must be 'side_specific' or 'full_rules'."
         )
+    if prompt_delivery_mode not in {"application_prompt", "image_only"}:
+        raise ValueError(
+            "CNI prompt delivery must be 'application_prompt' or 'image_only'."
+        )
     valid_clients = [client for client in clients if client.get("status") == "ready"]
     run_id = "cni-" + time.strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:8]
     run_dir = runs_root / run_id
@@ -98,8 +103,14 @@ def iter_cni_benchmark(
 
     LOGGER.info(
         "CNI benchmark starting | run=%s | models=%s | valid_clients=%d | "
-        "strategy=%s | prompt_scope=%s | dpi=%d",
-        run_id, model_specs, len(valid_clients), strategy, prompt_scope_mode, dpi,
+        "strategy=%s | prompt_scope=%s | prompt_delivery=%s | dpi=%d",
+        run_id,
+        model_specs,
+        len(valid_clients),
+        strategy,
+        prompt_scope_mode,
+        prompt_delivery_mode,
+        dpi,
     )
     if not valid_clients:
         yield {
@@ -181,6 +192,7 @@ def iter_cni_benchmark(
                     fields=fields,
                     prompt_instructions=prompt_instructions,
                     prompt_scope_mode=prompt_scope_mode,
+                    prompt_delivery_mode=prompt_delivery_mode,
                     system_prompt=system_prompt,
                     output_format_mode=effective_output_format,
                 )
@@ -335,6 +347,7 @@ def _iter_extract_one_cni_client(
     fields: dict[str, list[dict[str, str]]] | None,
     prompt_instructions: str | None,
     prompt_scope_mode: str,
+    prompt_delivery_mode: str,
     system_prompt: str | None,
     output_format_mode: str,
 ) -> Generator[dict[str, Any], None, dict[str, Any]]:
@@ -345,6 +358,8 @@ def _iter_extract_one_cni_client(
     ne modifient donc pas le compteur principal modèle × client.
     """
     artefacts_dir = Path(prepared["recto_crop"]["image_path"]).parent
+    image_only = prompt_delivery_mode == "image_only"
+    effective_system_prompt = None if image_only else system_prompt
     if strategy == "combined_vertical":
         # Un seul appel reçoit le composite, mais le parsing produit toujours
         # deux dictionnaires afin de préserver le contrat des artefacts.
@@ -352,13 +367,20 @@ def _iter_extract_one_cni_client(
         inference = _perform_cni_call(
             model,
             Path(prepared["combined_image"]),
-            build_combined_cni_prompt(fields, instructions=prompt_instructions),
+            (
+                ""
+                if image_only
+                else build_combined_cni_prompt(
+                    fields, instructions=prompt_instructions
+                )
+            ),
             timeout_seconds,
             artefacts_dir,
             "combined",
-            system_prompt,
+            effective_system_prompt,
             output_format_mode,
             build_cni_output_schema("combined", fields),
+            image_only=image_only,
         )
         recto, verso, parse_error = parse_combined_cni_json_response(inference.text, fields)
         recto_inference = verso_inference = inference
@@ -370,35 +392,45 @@ def _iter_extract_one_cni_client(
         recto_inference = _perform_cni_call(
             model,
             Path(prepared["recto_model_image"]),
-            build_cni_prompt(
-                "recto",
-                fields,
-                instructions=prompt_instructions,
-                prompt_scope_mode=prompt_scope_mode,
+            (
+                ""
+                if image_only
+                else build_cni_prompt(
+                    "recto",
+                    fields,
+                    instructions=prompt_instructions,
+                    prompt_scope_mode=prompt_scope_mode,
+                )
             ),
             timeout_seconds,
             artefacts_dir,
             "recto",
-            system_prompt,
+            effective_system_prompt,
             output_format_mode,
             build_cni_output_schema("recto", fields),
+            image_only=image_only,
         )
         yield {"side": "verso", "substep": 2, "substeps": 2}
         verso_inference = _perform_cni_call(
             model,
             Path(prepared["verso_model_image"]),
-            build_cni_prompt(
-                "verso",
-                fields,
-                instructions=prompt_instructions,
-                prompt_scope_mode=prompt_scope_mode,
+            (
+                ""
+                if image_only
+                else build_cni_prompt(
+                    "verso",
+                    fields,
+                    instructions=prompt_instructions,
+                    prompt_scope_mode=prompt_scope_mode,
+                )
             ),
             timeout_seconds,
             artefacts_dir,
             "verso",
-            system_prompt,
+            effective_system_prompt,
             output_format_mode,
             build_cni_output_schema("verso", fields),
+            image_only=image_only,
         )
         recto, recto_parse_error = parse_cni_json_response(recto_inference.text, "recto", fields)
         verso, verso_parse_error = parse_cni_json_response(verso_inference.text, "verso", fields)
@@ -417,6 +449,7 @@ def _iter_extract_one_cni_client(
             "run_id": run_id,
             "model": model_name,
             "strategy": strategy,
+            "prompt_delivery_mode": prompt_delivery_mode,
             "recto_status": recto_payload["status"],
             "verso_status": verso_payload["status"],
             "comparison": comparison,
@@ -440,6 +473,7 @@ def _iter_extract_one_cni_client(
         "folder_client_id": client["folder_client_id"],
         "status": status,
         "strategy": strategy,
+        "prompt_delivery_mode": prompt_delivery_mode,
         "label_status": client.get("label_status"),
         "label_path": client.get("label_path"),
         "accuracy": comparison["accuracy"],
@@ -484,6 +518,8 @@ def _perform_cni_call(
     system_prompt: str | None,
     output_format_mode: str,
     output_schema: dict[str, Any],
+    *,
+    image_only: bool = False,
 ) -> InferenceResult:
     """Appelle une image et conserve sortie brute ou sortie tardive."""
     def save_late(raw: Any | None, error: str | None) -> None:
@@ -501,9 +537,13 @@ def _perform_cni_call(
     # Le prompt exact reste dans le run, même si l'appel échoue. C'est le
     # point de départ indispensable pour comprendre une réponse invalide.
     (artefacts_dir / f"prompt_{side}.txt").write_text(
+        f"--- DELIVERY MODE ---\n"
+        f"{'image_only' if image_only else 'application_prompt'}\n\n"
         f"--- OUTPUT FORMAT ---\n{output_format_mode}\n\n"
-        + "--- SYSTEM ---\n" + (system_prompt or "")
-        + "\n\n--- USER ---\n" + prompt,
+        + "--- SYSTEM SENT BY APPLICATION ---\n"
+        + (system_prompt or "")
+        + "\n\n--- USER TEXT SENT BY APPLICATION ---\n"
+        + prompt,
         encoding="utf-8",
     )
     raw = BenchmarkRunner._perform_with_timeout(
@@ -514,6 +554,7 @@ def _perform_cni_call(
         system_prompt=system_prompt,
         output_format=output_format_mode,
         output_schema=output_schema,
+        image_only=image_only,
         late_result=save_late,
     )
     inference = raw if isinstance(raw, InferenceResult) else InferenceResult.from_legacy_dict(raw)

@@ -27,6 +27,7 @@ def prompt_section_token_badge(text: str | None) -> str:
 
 @dataclass(frozen=True)
 class PromptSettings:
+    prompt_delivery_mode: Any
     system_prompt: Any
     system_token_indicator: Any
     prompt_instructions: Any
@@ -41,10 +42,10 @@ class PromptSettings:
 def build_prompt_settings(
     settings: dict[str, Any],
     prompt_preview_builder: Callable[
-        [str, str, str | None, str | None, str], str
+        [str, str, str | None, str | None, str, str], str
     ],
     token_indicator_builder: Callable[
-        [str, str, str | None, str | None, str, int | float | None], str
+        [str, str, str | None, str | None, str, str, int | float | None], str
     ],
 ) -> PromptSettings:
     """Construit l'éditeur de prompt.
@@ -58,6 +59,19 @@ def build_prompt_settings(
             "Définissez le rôle, ajoutez les règles métier, puis vérifiez le message "
             "assemblé pour chaque face. Le réglage du format JSON reste accessible "
             "avec ⚙ à côté des modèles dans `1. Préparer`."
+        )
+        prompt_delivery_mode = gr.Radio(
+            [
+                ("Prompt construit par l’application", "application_prompt"),
+                ("Image seule · SYSTEM embarqué dans le Modelfile", "image_only"),
+            ],
+            value=settings.get("prompt_delivery_mode", "application_prompt"),
+            label="Texte envoyé au modèle",
+            info=(
+                "Image seule n’envoie ni prompt système ni consigne utilisateur "
+                "depuis ce lab. Utilisez ce mode seulement avec un modèle dérivé "
+                "dont le Modelfile contient déjà toutes les instructions."
+            ),
         )
         with gr.Tabs(elem_id="cni-prompt-tabs"):
             with gr.Tab("① Système"):
@@ -143,6 +157,9 @@ def build_prompt_settings(
                         settings["system_prompt"],
                         settings["prompt_instructions"],
                         settings.get("prompt_scope_mode", "side_specific"),
+                        settings.get(
+                            "prompt_delivery_mode", "application_prompt"
+                        ),
                         settings.get("prompt_context_budget", 8192),
                     )
                 )
@@ -153,12 +170,16 @@ def build_prompt_settings(
                         settings["system_prompt"],
                         settings["prompt_instructions"],
                         settings.get("prompt_scope_mode", "side_specific"),
+                        settings.get(
+                            "prompt_delivery_mode", "application_prompt"
+                        ),
                     ),
                     label="Message complet inspecté",
                     lines=18,
                     interactive=False,
                 )
     return PromptSettings(
+        prompt_delivery_mode,
         system_prompt,
         system_token_indicator,
         prompt_instructions,

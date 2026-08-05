@@ -76,6 +76,26 @@ def test_vision_model_sends_the_image_and_can_succeed(monkeypatch, tmp_path: Pat
     assert result["configured_timeout_seconds"] == 123
 
 
+def test_image_only_sends_no_application_prompt_or_system(monkeypatch, tmp_path: Path):
+    """Le Modelfile reste seul responsable des instructions en mode image seule."""
+
+    image = tmp_path / "recto.png"
+    image.write_bytes(b"image")
+    client = _FakeOllamaClient(["completion", "vision"])
+    model = _build_model(monkeypatch, client)
+
+    result = model.perform_ocr(
+        str(image),
+        prompt="Ce texte ne doit pas partir.",
+        system_prompt="Ce système ne doit pas remplacer le Modelfile.",
+        image_only=True,
+    )
+
+    messages = client.chat_calls[0]["messages"]
+    assert messages == [{"role": "user", "content": "", "images": [str(image)]}]
+    assert result["prompt_delivery_mode"] == "image_only"
+
+
 def test_multimodal_metadata_is_supported_for_older_show_response():
     class _LegacyClient:
         @staticmethod

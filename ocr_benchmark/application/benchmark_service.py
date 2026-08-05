@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from collections.abc import Callable, Iterable, Iterator
 from pathlib import Path
 from typing import Any
@@ -64,19 +65,30 @@ def load_dataset_catalog(
     return data
 
 
-def list_ollama_models() -> list[str]:
-    """Retourne les modèles Ollama visibles, sans faire échouer l'application."""
+def list_ollama_models(timeout_seconds: float = 10.0) -> list[str]:
+    """Retourne les modèles Ollama avec un timeout réseau explicite."""
     try:
         import ollama
 
-        response = ollama.list()
+        host = os.getenv("OLLAMA_HOST", "http://127.0.0.1:11434")
+        client = ollama.Client(
+            host=host,
+            timeout=max(1.0, float(timeout_seconds)),
+        )
+        response = client.list()
         models = response.get("models", []) if isinstance(response, dict) else response.models
         names = [
             model.get("model") or model.get("name") if isinstance(model, dict) else getattr(model, "model", None)
             for model in models
         ]
         installed = [str(name) for name in names if name]
-        LOGGER.info("Ollama models detected | count=%d | models=%s", len(installed), installed)
+        LOGGER.info(
+            "Ollama models detected | host=%s | timeout=%.1fs | count=%d | models=%s",
+            host,
+            max(1.0, float(timeout_seconds)),
+            len(installed),
+            installed,
+        )
         return installed
     except Exception as exc:
         LOGGER.warning("Unable to list Ollama models | error=%s", exc, exc_info=True)

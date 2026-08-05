@@ -31,6 +31,7 @@ def test_cni_settings_round_trip_keeps_preprocessing_and_execution(tmp_path):
         model_output_modes={"ollama:lightonocr": "prompt", "": "json", "bad": "xml"},
         system_prompt="system personnalisé", prompt_instructions="user personnalisé",
         prompt_scope_mode="full_rules",
+        prompt_delivery_mode="image_only",
         prompt_context_budget=16384,
     )
     path = tmp_path / "cni_settings.local.json"
@@ -50,6 +51,7 @@ def test_cni_settings_round_trip_keeps_preprocessing_and_execution(tmp_path):
     assert loaded["model_output_modes"] == {"ollama:lightonocr": "prompt"}
     assert loaded["models"] == ["ollama:test"]
     assert loaded["prompt_scope_mode"] == "full_rules"
+    assert loaded["prompt_delivery_mode"] == "image_only"
     assert loaded["prompt_context_budget"] == 16384
 
 
@@ -66,6 +68,7 @@ def test_invalid_saved_settings_fall_back_to_safe_defaults(tmp_path):
     assert loaded["crop_method"] == "smart_crop_v4"
     assert loaded["output_format_mode"] == "schema"
     assert loaded["prompt_scope_mode"] == "side_specific"
+    assert loaded["prompt_delivery_mode"] == "application_prompt"
 
 
 def test_invalid_crop_settings_fall_back_to_safe_v4_defaults(tmp_path):

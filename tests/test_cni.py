@@ -358,7 +358,43 @@ def test_runner_applies_output_format_exception_to_one_model(tmp_path: Path):
 
     result = events[-1]["result"]
     recto_prompt = Path(result["recto_prompt_path"]).read_text(encoding="utf-8")
-    assert recto_prompt.startswith("--- OUTPUT FORMAT ---\nprompt")
+    assert "--- OUTPUT FORMAT ---\nprompt" in recto_prompt
+
+
+def test_runner_image_only_keeps_both_images_and_omits_application_text(
+    tmp_path: Path,
+):
+    """Recto et verso partent bien, sans SYSTEM/USER provenant du lab."""
+
+    client = tmp_path / "clients" / "folder-client"
+    client.mkdir(parents=True)
+    _write_pdf(client / "source_CIN_Recto.pdf")
+    _write_pdf(client / "source_CIN_Verso.pdf")
+    records = scan_cni_clients(tmp_path / "clients")
+    registry = _RecordingRegistry()
+
+    events = list(
+        iter_cni_benchmark(
+            registry,
+            ["fake:vision"],
+            records,
+            tmp_path / "runs",
+            strategy="separate_calls",
+            system_prompt="ne doit pas partir",
+            prompt_instructions="ne doit pas partir",
+            prompt_delivery_mode="image_only",
+        )
+    )
+
+    assert len(registry.model.calls) == 2
+    assert registry.model.calls[0][1] == ""
+    assert registry.model.calls[1][1] == ""
+    result = events[-1]["result"]
+    artifact = Path(result["recto_prompt_path"]).read_text(encoding="utf-8")
+    assert "--- DELIVERY MODE ---\nimage_only" in artifact
+    assert "--- SYSTEM SENT BY APPLICATION ---\n\n" in artifact
+    assert "--- USER TEXT SENT BY APPLICATION ---\n" in artifact
+    assert "ne doit pas partir" not in artifact
 
 
 def test_runner_sends_the_full_normalized_source_when_crop_is_uncertain(tmp_path: Path):

@@ -205,6 +205,7 @@ class BenchmarkRunner:
         system_prompt: str | None = None,
         output_format: str = "prompt",
         output_schema: dict[str, Any] | None = None,
+        image_only: bool = False,
         late_result: Callable[[Any | None, str | None], None] | None = None,
     ):
         started_at = time.monotonic()
@@ -218,6 +219,7 @@ class BenchmarkRunner:
             return _perform_model_call(
                 model, image_path, prompt, system_prompt,
                 output_format=output_format, output_schema=output_schema,
+                image_only=image_only,
             )
 
         executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
@@ -229,6 +231,7 @@ class BenchmarkRunner:
             system_prompt,
             output_format=output_format,
             output_schema=output_schema,
+            image_only=image_only,
         )
         try:
             return future.result(timeout=timeout_seconds)
@@ -416,6 +419,7 @@ def _perform_model_call(
     *,
     output_format: str = "prompt",
     output_schema: dict[str, Any] | None = None,
+    image_only: bool = False,
 ) -> Any:
     """Keep existing adapters compatible unless a structured prompt is supplied."""
     if prompt is None:
@@ -432,4 +436,6 @@ def _perform_model_call(
         options["output_format"] = output_format
     if output_schema is not None and ("output_schema" in names or accepts_kwargs):
         options["output_schema"] = output_schema
+    if "image_only" in names or accepts_kwargs:
+        options["image_only"] = bool(image_only)
     return model.perform_ocr(image_path, **options)

@@ -26,6 +26,7 @@ class CniSettingsView:
     rotation_method: Any
     perspective_correction: Any
     preprocessing: Any
+    prompt_delivery_mode: Any
     system_prompt: Any
     system_token_indicator: Any
     prompt_instructions: Any
@@ -40,10 +41,10 @@ class CniSettingsView:
 def build_cni_core_settings(
     settings: dict[str, Any],
     prompt_preview_builder: Callable[
-        [str, str, str | None, str | None, str], str
+        [str, str, str | None, str | None, str, str], str
     ],
     token_indicator_builder: Callable[
-        [str, str, str | None, str | None, str, int | float | None], str
+        [str, str, str | None, str | None, str, str, int | float | None], str
     ],
 ) -> CniSettingsView:
     """Assemble les vues spécialisées sans y placer de logique métier."""
@@ -69,6 +70,7 @@ def build_cni_core_settings(
         rotation_method=preprocessing.rotation_method,
         perspective_correction=preprocessing.perspective_correction,
         preprocessing=preprocessing.preprocessing,
+        prompt_delivery_mode=prompt.prompt_delivery_mode,
         system_prompt=prompt.system_prompt,
         system_token_indicator=prompt.system_token_indicator,
         prompt_instructions=prompt.prompt_instructions,

@@ -32,7 +32,7 @@ def create_persist_settings_handler(
         recto_suffix, verso_suffix, crop_method, smart_crop_min_score,
         smart_crop_margin, rotation_method, perspective_correction, preprocessing,
         output_format_mode, model_output_modes, system_prompt, prompt_instructions,
-        prompt_scope_mode, prompt_context_budget,
+        prompt_scope_mode, prompt_delivery_mode, prompt_context_budget,
     ) -> None:
         value = cni_settings_from_ui(
             models=models,
@@ -55,6 +55,7 @@ def create_persist_settings_handler(
             system_prompt=system_prompt,
             prompt_instructions=prompt_instructions,
             prompt_scope_mode=prompt_scope_mode,
+            prompt_delivery_mode=prompt_delivery_mode,
             prompt_context_budget=prompt_context_budget,
         )
         try:

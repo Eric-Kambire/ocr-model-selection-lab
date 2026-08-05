@@ -16,6 +16,7 @@ class BaseOCRModel(abc.ABC):
         system_prompt: str | None = None,
         output_format: str = "prompt",
         output_schema: dict | None = None,
+        image_only: bool = False,
     ) -> dict:
         """
         Performs OCR on the given image.
@@ -23,6 +24,9 @@ class BaseOCRModel(abc.ABC):
         ``output_format`` vaut ``prompt``, ``json`` ou ``schema``. Les
         adaptateurs qui ne supportent pas la contrainte structurée peuvent
         l'ignorer ; le parser applicatif validera toujours la réponse.
+
+        ``image_only`` signifie qu'aucun texte applicatif ne doit remplacer le
+        prompt système éventuellement embarqué dans le modèle fournisseur.
         
         Returns a dictionary with:
             - "text": Extracted text (clean transcription)

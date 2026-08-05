@@ -58,6 +58,7 @@ config/cni_fields.json          # champs d'extraction modifiables sans changer l
 docs/CNI_BENCHMARK_IMPLEMENTATION_PLAN.md # contrat de données et décisions métier
 scripts/cni_crop_methods_lab.py # comparaison visuelle des méthodes de crop
 scripts/cni_crop_stepper_app.py # parcours V4 compact en six étapes
+scripts/ollama_modelfile_lab.py # création contrôlée d'un modèle Ollama dérivé
 scripts/smart_crop_lab_v4/      # laboratoire complet et cas dégradés reproductibles
 ```
 
@@ -127,6 +128,28 @@ L’interface est disponible sur `http://127.0.0.1:7860`.
 
 Pour utiliser Ollama, lancez Ollama localement et installez au moins un modèle
 vision. Les modèles détectés apparaissent automatiquement dans l’interface.
+
+### Créer un modèle Ollama avec un prompt système embarqué
+
+Le laboratoire `Modelfile` permet de choisir un modèle source, de modifier un
+template complet, d’y placer un très long `SYSTEM`, puis de créer une variante
+locale :
+
+```powershell
+python scripts/ollama_modelfile_lab.py
+```
+
+Ouvrez `http://127.0.0.1:8101`. La création appelle
+`ollama create <nouveau-nom> -f <Modelfile>` sans shell. Le modèle source
+sélectionné est automatiquement imposé dans `FROM`, et le blueprint réellement
+utilisé reste téléchargeable dans `runs/ollama_modelfiles/`.
+
+Dans `8. Benchmark CNI → 4. Paramètres → Prompt et sortie`, sélectionnez
+**Image seule · SYSTEM embarqué dans le Modelfile** pour ne transmettre aucun
+texte système ou utilisateur depuis l’application. Le message Ollama contient
+alors uniquement l’image ; le modèle dérivé suit son `SYSTEM` embarqué. La
+contrainte de sortie Ollama (`prompt`, `json` ou `schema`) reste indépendante et
+peut toujours être réglée à côté de la sélection des modèles.
 
 ## Utiliser l’interface
 
