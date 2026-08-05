@@ -254,8 +254,13 @@ python scripts/runtime_debug/05_application_runner_image.py \
   "runs/runtime_debug/prepared/document.png" \
   --model "NOM_EXACT_DU_MODELE" \
   --http-timeout 300 \
-  --runner-timeout 300
+  --runner-timeout 300 \
+  --ignore-env-proxy
 ```
+
+`--ignore-env-proxy` reproduit exactement la case **Ignorer le proxy système
+pour Ollama** de l'interface CNI. Le rapport écrit alors
+`"trust_environment": false`.
 
 ## 6. Appel HTTP brut sans le SDK Ollama
 

@@ -14,6 +14,7 @@ class ExecutionSettings:
     timeout: Any
     cpu_threads: Any
     unload: Any
+    ollama_ignore_environment_proxy: Any
     recto_suffix: Any
     verso_suffix: Any
 
@@ -50,6 +51,15 @@ def build_execution_settings(settings: dict[str, Any]) -> ExecutionSettings:
                 label="Décharger le modèle après son lot de documents",
                 info="Le modèle reste chargé entre recto et verso, puis est libéré avant le suivant.",
             )
+            ollama_ignore_environment_proxy = gr.Checkbox(
+                value=settings["ollama_ignore_environment_proxy"],
+                label="Ignorer le proxy système pour Ollama",
+                info=(
+                    "Active trust_env=False. Recommandé pour un Ollama local "
+                    "sur 127.0.0.1/localhost afin d'éviter un timeout de proxy. "
+                    "Décochez seulement si votre serveur Ollama distant exige le proxy."
+                ),
+            )
         with gr.Row():
             recto_suffix = gr.Textbox(
                 value=settings["recto_suffix"], label="Suffixe recto",
@@ -60,5 +70,12 @@ def build_execution_settings(settings: dict[str, Any]) -> ExecutionSettings:
                 info="Ex. _CIN_Verso. L'extension est ignorée.",
             )
     return ExecutionSettings(
-        strategy, dpi, timeout, cpu_threads, unload, recto_suffix, verso_suffix
+        strategy,
+        dpi,
+        timeout,
+        cpu_threads,
+        unload,
+        ollama_ignore_environment_proxy,
+        recto_suffix,
+        verso_suffix,
     )

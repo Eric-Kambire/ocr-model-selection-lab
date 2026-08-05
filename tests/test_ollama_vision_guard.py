@@ -15,10 +15,12 @@ class _FakeOllamaClient:
         self.chat_calls: list[dict] = []
         self.configured_host: str | None = None
         self.configured_timeout: float | None = None
+        self.configured_trust_env: bool | None = None
 
-    def Client(self, *, host: str, timeout: float):
+    def Client(self, *, host: str, timeout: float, trust_env: bool):
         self.configured_host = host
         self.configured_timeout = timeout
+        self.configured_trust_env = trust_env
         return self
 
     def show(self, *, model: str) -> dict:
@@ -37,12 +39,18 @@ class _FakeOllamaClient:
         return {}
 
 
-def _build_model(monkeypatch, client: _FakeOllamaClient) -> OllamaOCRModel:
+def _build_model(
+    monkeypatch,
+    client: _FakeOllamaClient,
+    *,
+    ignore_environment_proxy: bool = False,
+) -> OllamaOCRModel:
     monkeypatch.setitem(sys.modules, "ollama", client)
     return OllamaOCRModel(
         "modele-test",
         unload_after_task=False,
         request_timeout=123,
+        ignore_environment_proxy=ignore_environment_proxy,
     )
 
 
@@ -60,6 +68,22 @@ def test_text_model_is_rejected_before_chat(monkeypatch, tmp_path: Path):
     assert "Aucune image n'a été analysée" in result["error"]
     assert client.chat_calls == []
     assert client.configured_timeout == 123
+    assert client.configured_trust_env is True
+
+
+def test_ignore_proxy_disables_ollama_environment(monkeypatch):
+    """L'option UI devient exactement trust_env=False dans le SDK Ollama."""
+
+    client = _FakeOllamaClient(["completion", "vision"])
+
+    model = _build_model(
+        monkeypatch,
+        client,
+        ignore_environment_proxy=True,
+    )
+
+    assert model.trust_environment is False
+    assert client.configured_trust_env is False
 
 
 def test_vision_model_sends_the_image_and_can_succeed(monkeypatch, tmp_path: Path):

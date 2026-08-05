@@ -31,6 +31,7 @@ class OllamaOCRModel(BaseOCRModel):
         cpu_threads: int | None = None,
         unload_after_task: bool = True,
         request_timeout: float | None = None,
+        ignore_environment_proxy: bool = False,
     ):
         super().__init__(model_name)
         self.prompt = prompt.strip() if prompt and prompt.strip() else DEFAULT_OCR_PROMPT
@@ -42,6 +43,10 @@ class OllamaOCRModel(BaseOCRModel):
             if request_timeout is not None and float(request_timeout) > 0
             else DEFAULT_OLLAMA_REQUEST_TIMEOUT_SECONDS
         )
+        # HTTPX lit HTTP_PROXY/HTTPS_PROXY par défaut. Pour un Ollama local,
+        # ignorer cet environnement évite qu'un proxy intermédiaire coupe une
+        # réponse non-streaming après sa propre limite d'inactivité.
+        self.trust_environment = not bool(ignore_environment_proxy)
         # Le résultat de ``ollama.show`` reste valable pendant la vie de
         # l'adaptateur. Ce cache évite de répéter l'appel pour recto et verso.
         self._vision_capability: OllamaVisionCapability | None = None
@@ -54,12 +59,15 @@ class OllamaOCRModel(BaseOCRModel):
             self.client = ollama.Client(
                 host=self.host,
                 timeout=self.request_timeout,
+                trust_env=self.trust_environment,
             )
             LOGGER.info(
-                "Ollama client configured | model=%s | host=%s | request_timeout=%.1fs",
+                "Ollama client configured | model=%s | host=%s | "
+                "request_timeout=%.1fs | trust_environment=%s",
                 self.model_name,
                 self.host,
                 self.request_timeout,
+                self.trust_environment,
             )
         except ImportError:
             self.client = None
@@ -143,10 +151,12 @@ class OllamaOCRModel(BaseOCRModel):
             )
         start_time = time.time()
         LOGGER.info(
-            "Ollama request started | model=%s | image=%s | request_timeout=%.1fs | image_only=%s",
+            "Ollama request started | model=%s | image=%s | "
+            "request_timeout=%.1fs | trust_environment=%s | image_only=%s",
             self.model_name,
             image_path,
             self.request_timeout,
+            self.trust_environment,
             bool(image_only),
         )
         
@@ -219,6 +229,7 @@ class OllamaOCRModel(BaseOCRModel):
                 "vision_capabilities": list(capability.capabilities),
                 "image_submitted": True,
                 "configured_timeout_seconds": self.request_timeout,
+                "trust_environment": self.trust_environment,
                 "prompt_delivery_mode": (
                     "image_only" if image_only else "application_prompt"
                 ),
@@ -248,6 +259,7 @@ class OllamaOCRModel(BaseOCRModel):
                 "error": error_msg,
                 "device": "ollama",
                 "configured_timeout_seconds": self.request_timeout,
+                "trust_environment": self.trust_environment,
             }
 
     def _get_vision_capability(self) -> OllamaVisionCapability:

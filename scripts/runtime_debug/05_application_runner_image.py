@@ -52,6 +52,8 @@ def run_application_call(args: argparse.Namespace) -> dict:
         unload_after_task=not args.keep_loaded,
         ## Timeout interne du client HTTP Ollama.
         request_timeout=args.http_timeout,
+        ## Même option que l'interface CNI : trust_env=False si elle est active.
+        ignore_environment_proxy=args.ignore_env_proxy,
     )
     ## En mode image-only, aucun texte n'est ajouté par le runner.
     prompt = "" if args.image_only else read_text(args.prompt, args.prompt_file)
@@ -84,6 +86,7 @@ def run_application_call(args: argparse.Namespace) -> dict:
             "http_timeout_seconds": args.http_timeout,
             "runner_timeout_seconds": args.runner_timeout,
             "image_only": args.image_only,
+            "trust_environment": not args.ignore_env_proxy,
             "result": asdict(inference),
         }
     finally:
@@ -133,6 +136,11 @@ def main() -> None:
         "--keep-loaded",
         action="store_true",
         help="Demande de garder le modèle chargé après la tâche.",
+    )
+    parser.add_argument(
+        "--ignore-env-proxy",
+        action="store_true",
+        help="Reproduit l'option UI et passe trust_env=False au SDK Ollama.",
     )
     parser.add_argument("--output", type=Path, help="Chemin du rapport JSON.")
     args = parser.parse_args()

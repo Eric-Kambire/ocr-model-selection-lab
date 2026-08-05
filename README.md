@@ -94,6 +94,12 @@ est enregistrée dans `traces.jsonl` avec `timing: "late_after_timeout"`; elle n
 réapparaît jamais comme un succès. Pour Ollama, configurez aussi le timeout HTTP
 dans les paramètres afin d'arrêter la requête réseau réelle.
 
+Pour un Ollama local, activez dans `8. Benchmark CNI → 4. Paramètres →
+Exécution` l'option **Ignorer le proxy système pour Ollama**. Elle transmet
+`trust_env=False` au SDK et empêche `HTTP_PROXY/HTTPS_PROXY` d'intercepter
+`127.0.0.1:11434`. Le choix est sauvegardé automatiquement et sa valeur
+effective est écrite dans les logs sous `ollama_trust_environment`.
+
 ## Débogage local
 
 Activez les logs détaillés avant de démarrer :

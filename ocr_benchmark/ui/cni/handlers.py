@@ -28,7 +28,8 @@ def create_persist_settings_handler(
     """Crée le handler d'auto-sauvegarde avec ses dépendances explicites."""
 
     def persist(
-        models, strategy, dpi, timeout, threads, unload, continue_without_label,
+        models, strategy, dpi, timeout, threads, unload,
+        ollama_ignore_environment_proxy, continue_without_label,
         recto_suffix, verso_suffix, crop_method, smart_crop_min_score,
         smart_crop_margin, rotation_method, perspective_correction, preprocessing,
         output_format_mode, model_output_modes, system_prompt, prompt_instructions,
@@ -41,6 +42,7 @@ def create_persist_settings_handler(
             timeout_seconds=timeout,
             cpu_threads=threads,
             unload_after_task=unload,
+            ollama_ignore_environment_proxy=ollama_ignore_environment_proxy,
             continue_without_label=continue_without_label,
             recto_suffix=recto_suffix,
             verso_suffix=verso_suffix,
@@ -61,9 +63,11 @@ def create_persist_settings_handler(
         try:
             save_cni_settings(config_path, value, defaults=defaults)
             LOGGER.info(
-                "CNI settings saved | strategy=%s | output_format=%s | model_overrides=%d",
+                "CNI settings saved | strategy=%s | output_format=%s | "
+                "ollama_trust_environment=%s | model_overrides=%d",
                 value["strategy"],
                 value["output_format_mode"],
+                not value["ollama_ignore_environment_proxy"],
                 len(value["model_output_modes"]),
             )
         except OSError:

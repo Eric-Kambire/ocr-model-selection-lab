@@ -39,6 +39,9 @@ def default_cni_settings(*, cpu_threads: int, system_prompt: str, prompt_instruc
         "timeout_seconds": 300,
         "cpu_threads": max(1, int(cpu_threads)),
         "unload_after_task": True,
+        # Ollama est local par défaut. Le trafic vers 127.0.0.1 ne doit pas
+        # traverser un proxy système susceptible d'imposer un timeout de 60 s.
+        "ollama_ignore_environment_proxy": True,
         "continue_without_label": False,
         "recto_suffix": "_CIN_Recto",
         "verso_suffix": "_CIN_Verso",
@@ -92,6 +95,7 @@ def cni_settings_from_ui(
     timeout_seconds: Any,
     cpu_threads: Any,
     unload_after_task: Any,
+    ollama_ignore_environment_proxy: Any,
     continue_without_label: Any,
     recto_suffix: Any,
     verso_suffix: Any,
@@ -118,6 +122,9 @@ def cni_settings_from_ui(
         "timeout_seconds": _positive_integer(timeout_seconds, 300),
         "cpu_threads": _positive_integer(cpu_threads, 1),
         "unload_after_task": bool(unload_after_task),
+        "ollama_ignore_environment_proxy": bool(
+            ollama_ignore_environment_proxy
+        ),
         "continue_without_label": bool(continue_without_label),
         "recto_suffix": str(recto_suffix or "").strip(),
         "verso_suffix": str(verso_suffix or "").strip(),
@@ -152,6 +159,10 @@ def _normalise(value: Any, defaults: Mapping[str, Any]) -> dict[str, Any]:
         timeout_seconds=raw.get("timeout_seconds", fallback["timeout_seconds"]),
         cpu_threads=raw.get("cpu_threads", fallback["cpu_threads"]),
         unload_after_task=raw.get("unload_after_task", fallback["unload_after_task"]),
+        ollama_ignore_environment_proxy=raw.get(
+            "ollama_ignore_environment_proxy",
+            fallback["ollama_ignore_environment_proxy"],
+        ),
         continue_without_label=raw.get("continue_without_label", fallback["continue_without_label"]),
         recto_suffix=raw.get("recto_suffix", fallback["recto_suffix"]),
         verso_suffix=raw.get("verso_suffix", fallback["verso_suffix"]),

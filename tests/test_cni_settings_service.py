@@ -22,6 +22,7 @@ def test_cni_settings_round_trip_keeps_preprocessing_and_execution(tmp_path):
     value = cni_settings_from_ui(
         models=["ollama:test"], strategy="combined_vertical", dpi=350,
         timeout_seconds=600, cpu_threads=2, unload_after_task=False,
+        ollama_ignore_environment_proxy=True,
         continue_without_label=True, recto_suffix="_CIN_recto",
         verso_suffix="_CIN_verso", crop_method="connected_components",
         smart_crop_min_score=0.62, smart_crop_margin=0.018,
@@ -50,6 +51,7 @@ def test_cni_settings_round_trip_keeps_preprocessing_and_execution(tmp_path):
     assert loaded["output_format_mode"] == "json"
     assert loaded["model_output_modes"] == {"ollama:lightonocr": "prompt"}
     assert loaded["models"] == ["ollama:test"]
+    assert loaded["ollama_ignore_environment_proxy"] is True
     assert loaded["prompt_scope_mode"] == "full_rules"
     assert loaded["prompt_delivery_mode"] == "image_only"
     assert loaded["prompt_context_budget"] == 16384
@@ -69,6 +71,7 @@ def test_invalid_saved_settings_fall_back_to_safe_defaults(tmp_path):
     assert loaded["output_format_mode"] == "schema"
     assert loaded["prompt_scope_mode"] == "side_specific"
     assert loaded["prompt_delivery_mode"] == "application_prompt"
+    assert loaded["ollama_ignore_environment_proxy"] is True
 
 
 def test_invalid_crop_settings_fall_back_to_safe_v4_defaults(tmp_path):

@@ -17,6 +17,7 @@ class CniSettingsView:
     timeout: Any
     cpu_threads: Any
     unload: Any
+    ollama_ignore_environment_proxy: Any
     recto_suffix: Any
     verso_suffix: Any
     crop_method: Any
@@ -61,6 +62,9 @@ def build_cni_core_settings(
         timeout=execution.timeout,
         cpu_threads=execution.cpu_threads,
         unload=execution.unload,
+        ollama_ignore_environment_proxy=(
+            execution.ollama_ignore_environment_proxy
+        ),
         recto_suffix=execution.recto_suffix,
         verso_suffix=execution.verso_suffix,
         crop_method=preprocessing.crop_method,

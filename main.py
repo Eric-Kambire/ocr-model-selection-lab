@@ -2071,6 +2071,9 @@ def build_ui() -> gr.Blocks:
                             cni_timeout = cni_settings_view.timeout
                             cni_cpu_threads = cni_settings_view.cpu_threads
                             cni_unload = cni_settings_view.unload
+                            cni_ollama_ignore_environment_proxy = (
+                                cni_settings_view.ollama_ignore_environment_proxy
+                            )
                             cni_recto_suffix = cni_settings_view.recto_suffix
                             cni_verso_suffix = cni_settings_view.verso_suffix
                             cni_crop_method = cni_settings_view.crop_method
@@ -3493,6 +3496,7 @@ def build_ui() -> gr.Blocks:
 
         def on_cni_run(
             model_specs, client_records, strategy, dpi, timeout, threads, unload,
+            ollama_ignore_environment_proxy,
             crop_method, smart_crop_min_score, smart_crop_margin, rotation_method,
             perspective_correction, preprocessing, system_prompt,
             prompt_instructions, prompt_scope_mode, prompt_delivery_mode,
@@ -3576,6 +3580,7 @@ def build_ui() -> gr.Blocks:
             LOGGER.info(
                 "CNI launch accepted | pairs=%d | models=%d | strategy=%s | "
                 "dpi=%s | timeout=%s | cpu_threads=%s | unload=%s | "
+                "ollama_trust_environment=%s | "
                 "crop_method=%s | smart_crop_min_score=%s | smart_crop_margin=%s | "
                 "rotation=%s | perspective=%s | preprocessing=%s | "
                 "prompt_scope=%s | prompt_delivery=%s | output_format=%s | "
@@ -3588,6 +3593,7 @@ def build_ui() -> gr.Blocks:
                 timeout,
                 threads,
                 bool(unload),
+                not bool(ollama_ignore_environment_proxy),
                 crop_method,
                 smart_crop_min_score,
                 smart_crop_margin,
@@ -3609,6 +3615,9 @@ def build_ui() -> gr.Blocks:
                     list(model_specs), ready_records, RUNS_DIR,
                     strategy=str(strategy), dpi=int(dpi), timeout_seconds=float(timeout or 0),
                     cpu_threads=int(threads or 1), unload_after_task=bool(unload),
+                    ignore_environment_proxy=bool(
+                        ollama_ignore_environment_proxy
+                    ),
                     fields=fields, prompt_instructions=prompt_instructions, system_prompt=system_prompt,
                     prompt_scope_mode=str(prompt_scope_mode or "side_specific"),
                     prompt_delivery_mode=str(
@@ -4218,7 +4227,8 @@ def build_ui() -> gr.Blocks:
         # conservé localement dès sa modification et restauré au redémarrage.
         cni_settings_inputs = [
             cni_models, cni_strategy, cni_dpi, cni_timeout, cni_cpu_threads,
-            cni_unload, cni_continue_without_label, cni_recto_suffix,
+            cni_unload, cni_ollama_ignore_environment_proxy,
+            cni_continue_without_label, cni_recto_suffix,
             cni_verso_suffix, cni_crop_method, cni_smart_crop_min_score,
             cni_smart_crop_margin, cni_rotation_method,
             cni_perspective_correction, cni_preprocessing,
@@ -4230,7 +4240,8 @@ def build_ui() -> gr.Blocks:
         ]
         for setting_component in (
             cni_models, cni_strategy, cni_dpi, cni_timeout, cni_cpu_threads,
-            cni_unload, cni_continue_without_label, cni_recto_suffix,
+            cni_unload, cni_ollama_ignore_environment_proxy,
+            cni_continue_without_label, cni_recto_suffix,
             cni_verso_suffix, cni_crop_method, cni_smart_crop_min_score,
             cni_smart_crop_margin, cni_rotation_method,
             cni_perspective_correction, cni_preprocessing,
@@ -4249,7 +4260,8 @@ def build_ui() -> gr.Blocks:
             on_cni_run,
             inputs=[
                 cni_models, cni_clients_state, cni_strategy, cni_dpi, cni_timeout,
-                cni_cpu_threads, cni_unload, cni_crop_method,
+                cni_cpu_threads, cni_unload,
+                cni_ollama_ignore_environment_proxy, cni_crop_method,
                 cni_smart_crop_min_score, cni_smart_crop_margin,
                 cni_rotation_method, cni_perspective_correction,
                 cni_preprocessing, cni_system_prompt,

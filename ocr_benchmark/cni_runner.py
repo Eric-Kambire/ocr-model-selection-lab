@@ -53,6 +53,7 @@ def iter_cni_benchmark(
     timeout_seconds: float | None = None,
     cpu_threads: int | None = None,
     unload_after_task: bool = True,
+    ignore_environment_proxy: bool = False,
     fields: dict[str, list[dict[str, str]]] | None = None,
     prompt_instructions: str | None = None,
     prompt_scope_mode: str = "side_specific",
@@ -103,7 +104,8 @@ def iter_cni_benchmark(
 
     LOGGER.info(
         "CNI benchmark starting | run=%s | models=%s | valid_clients=%d | "
-        "strategy=%s | prompt_scope=%s | prompt_delivery=%s | dpi=%d",
+        "strategy=%s | prompt_scope=%s | prompt_delivery=%s | dpi=%d | "
+        "ollama_trust_environment=%s",
         run_id,
         model_specs,
         len(valid_clients),
@@ -111,6 +113,7 @@ def iter_cni_benchmark(
         prompt_scope_mode,
         prompt_delivery_mode,
         dpi,
+        not bool(ignore_environment_proxy),
     )
     if not valid_clients:
         yield {
@@ -140,6 +143,7 @@ def iter_cni_benchmark(
                 cpu_threads=cpu_threads,
                 unload_after_task=unload_after_task,
                 timeout_seconds=timeout_seconds,
+                ignore_environment_proxy=ignore_environment_proxy,
             )
             model_name = model.model_name
             effective_output_format = _model_output_format(
