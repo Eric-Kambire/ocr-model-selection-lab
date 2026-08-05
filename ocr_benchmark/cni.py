@@ -23,6 +23,7 @@ from .cni_schema import (
     VERSO_FIELDS,
     build_cni_global_json,
     build_cni_output_schema,
+    build_cni_face_hint,
     build_cni_prompt,
     build_combined_cni_prompt,
     load_cni_field_config,
@@ -32,7 +33,8 @@ from .cni_schema import (
 
 __all__ = [
     "DEFAULT_CNI_FIELD_CONFIG", "DEFAULT_RECTO_SUFFIX", "DEFAULT_VERSO_SUFFIX", "RECTO_FIELDS", "VERSO_FIELDS",
-    "build_cni_global_json", "build_cni_output_schema", "build_cni_prompt", "build_combined_cni_prompt",
+    "build_cni_global_json", "build_cni_output_schema", "build_cni_face_hint",
+    "build_cni_prompt", "build_combined_cni_prompt",
     "build_vertical_cni_composite", "crop_cni_from_a4", "import_cni_zip",
     "load_cni_field_config", "materialize_cni_labels", "normalize_cni_source_suffix", "parse_cni_json_response",
     "parse_combined_cni_json_response", "render_single_page_pdf", "scan_cni_clients",

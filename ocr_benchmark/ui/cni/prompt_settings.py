@@ -28,6 +28,7 @@ def prompt_section_token_badge(text: str | None) -> str:
 @dataclass(frozen=True)
 class PromptSettings:
     prompt_delivery_mode: Any
+    ollama_thinking_mode: Any
     system_prompt: Any
     system_token_indicator: Any
     prompt_instructions: Any
@@ -62,15 +63,39 @@ def build_prompt_settings(
         )
         prompt_delivery_mode = gr.Radio(
             [
-                ("Prompt construit par l’application", "application_prompt"),
-                ("Image seule · SYSTEM embarqué dans le Modelfile", "image_only"),
+                (
+                    "Prompt de l’application · règles éditables ci-dessous",
+                    "application_prompt",
+                ),
+                (
+                    "Image seule · SYSTEM déjà dans le Modelfile",
+                    "image_only",
+                ),
+                (
+                    "Image + face · SYSTEM déjà dans le Modelfile",
+                    "image_with_side_hint",
+                ),
             ],
             value=settings.get("prompt_delivery_mode", "application_prompt"),
-            label="Texte envoyé au modèle",
+            label="Source des instructions",
             info=(
-                "Image seule n’envoie ni prompt système ni consigne utilisateur "
-                "depuis ce lab. Utilisez ce mode seulement avec un modèle dérivé "
-                "dont le Modelfile contient déjà toutes les instructions."
+                "Image seule n’envoie aucun texte applicatif. Image + face ajoute "
+                "uniquement RECTO, VERSO ou image combinée. Ces deux modes exigent "
+                "un modèle dont le Modelfile contient déjà le SYSTEM complet."
+            ),
+        )
+        ollama_thinking_mode = gr.Radio(
+            [
+                ("Désactivé · plus rapide pour le JSON", "disabled"),
+                ("Automatique · comportement du modèle", "automatic"),
+                ("Activé · conserver le raisonnement", "enabled"),
+            ],
+            value=settings.get("ollama_thinking_mode", "disabled"),
+            label="Raisonnement Ollama (think)",
+            info=(
+                "Désactivé envoie think=false. Automatique n’envoie aucun "
+                "paramètre et conserve le défaut du modèle. Le raisonnement "
+                "peut fortement augmenter la latence et les tokens générés."
             ),
         )
         with gr.Tabs(elem_id="cni-prompt-tabs"):
@@ -104,15 +129,22 @@ def build_prompt_settings(
                 )
                 prompt_scope_mode = gr.Radio(
                     [
-                        ("Selon la face connue · recommandé", "side_specific"),
-                        ("Toutes les règles à chaque appel", "full_rules"),
+                        (
+                            "Règles spécifiques · recto et verso ont chacun leur prompt",
+                            "side_specific",
+                        ),
+                        (
+                            "Règles complètes · même contexte métier aux deux faces",
+                            "full_rules",
+                        ),
                     ],
                     value=settings.get("prompt_scope_mode", "side_specific"),
                     label="Routage des règles métier",
                     info=(
-                        "Mode séparé : choisissez des règles spécialisées ou le "
-                        "contexte recto + verso à chaque appel. L’image combinée "
-                        "reçoit toujours les deux groupes de règles."
+                        "Avec les règles complètes, le contexte métier est le même, "
+                        "mais la courte indication RECTO/VERSO et le schéma restent "
+                        "spécifiques afin d’éviter une sortie ambiguë. L’image "
+                        "combinée reçoit toujours les deux groupes de règles."
                     ),
                 )
             with gr.Tab("③ Aperçu final"):
@@ -180,6 +212,7 @@ def build_prompt_settings(
                 )
     return PromptSettings(
         prompt_delivery_mode,
+        ollama_thinking_mode,
         system_prompt,
         system_token_indicator,
         prompt_instructions,

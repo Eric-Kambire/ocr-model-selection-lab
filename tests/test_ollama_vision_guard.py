@@ -44,6 +44,7 @@ def _build_model(
     client: _FakeOllamaClient,
     *,
     ignore_environment_proxy: bool = False,
+    thinking_mode: str = "disabled",
 ) -> OllamaOCRModel:
     monkeypatch.setitem(sys.modules, "ollama", client)
     return OllamaOCRModel(
@@ -51,6 +52,7 @@ def _build_model(
         unload_after_task=False,
         request_timeout=123,
         ignore_environment_proxy=ignore_environment_proxy,
+        thinking_mode=thinking_mode,
     )
 
 
@@ -97,6 +99,7 @@ def test_vision_model_sends_the_image_and_can_succeed(monkeypatch, tmp_path: Pat
     assert result["status"] == "success"
     assert result["image_submitted"] is True
     assert client.chat_calls[0]["messages"][-1]["images"] == [str(image)]
+    assert client.chat_calls[0]["think"] is False
     assert result["configured_timeout_seconds"] == 123
 
 
@@ -118,6 +121,46 @@ def test_image_only_sends_no_application_prompt_or_system(monkeypatch, tmp_path:
     messages = client.chat_calls[0]["messages"]
     assert messages == [{"role": "user", "content": "", "images": [str(image)]}]
     assert result["prompt_delivery_mode"] == "image_only"
+
+
+def test_modelfile_face_hint_omits_application_system(monkeypatch, tmp_path: Path):
+    """Le modèle garde son SYSTEM interne et reçoit seulement la face."""
+
+    image = tmp_path / "verso.png"
+    image.write_bytes(b"image")
+    client = _FakeOllamaClient(["completion", "vision"])
+    model = _build_model(monkeypatch, client, thinking_mode="automatic")
+
+    result = model.perform_ocr(
+        str(image),
+        prompt="The attached image is the VERSO side.",
+        system_prompt="Ne doit pas être envoyé.",
+        prompt_delivery_mode="image_with_side_hint",
+    )
+
+    request = client.chat_calls[0]
+    assert request["messages"] == [
+        {
+            "role": "user",
+            "content": "The attached image is the VERSO side.",
+            "images": [str(image)],
+        }
+    ]
+    assert "think" not in request
+    assert result["prompt_delivery_mode"] == "image_with_side_hint"
+
+
+def test_thinking_can_be_enabled_explicitly(monkeypatch, tmp_path: Path):
+    """L'option UI activée devient exactement think=true dans Ollama."""
+
+    image = tmp_path / "recto.png"
+    image.write_bytes(b"image")
+    client = _FakeOllamaClient(["completion", "vision"])
+    model = _build_model(monkeypatch, client, thinking_mode="enabled")
+
+    model.perform_ocr(str(image), prompt="Extract.")
+
+    assert client.chat_calls[0]["think"] is True
 
 
 def test_multimodal_metadata_is_supported_for_older_show_response():

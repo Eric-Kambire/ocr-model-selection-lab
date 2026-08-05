@@ -58,13 +58,15 @@ def build_default_registry() -> ModelRegistry:
         "ollama",
         lambda model_name, model_prompt=None, cpu_threads=None,
         unload_after_task=True, timeout_seconds=None,
-        ignore_environment_proxy=False, **_: OllamaOCRModel(
+        ignore_environment_proxy=False, thinking_mode="automatic",
+        **_: OllamaOCRModel(
             model_name=model_name,
             prompt=model_prompt,
             cpu_threads=cpu_threads,
             unload_after_task=unload_after_task,
             request_timeout=timeout_seconds,
             ignore_environment_proxy=ignore_environment_proxy,
+            thinking_mode=thinking_mode,
         ),
     )
 

@@ -28,6 +28,7 @@ class CniSettingsView:
     perspective_correction: Any
     preprocessing: Any
     prompt_delivery_mode: Any
+    ollama_thinking_mode: Any
     system_prompt: Any
     system_token_indicator: Any
     prompt_instructions: Any
@@ -75,6 +76,7 @@ def build_cni_core_settings(
         perspective_correction=preprocessing.perspective_correction,
         preprocessing=preprocessing.preprocessing,
         prompt_delivery_mode=prompt.prompt_delivery_mode,
+        ollama_thinking_mode=prompt.ollama_thinking_mode,
         system_prompt=prompt.system_prompt,
         system_token_indicator=prompt.system_token_indicator,
         prompt_instructions=prompt.prompt_instructions,

@@ -33,6 +33,7 @@ def test_cni_settings_round_trip_keeps_preprocessing_and_execution(tmp_path):
         system_prompt="system personnalisé", prompt_instructions="user personnalisé",
         prompt_scope_mode="full_rules",
         prompt_delivery_mode="image_only",
+        ollama_thinking_mode="enabled",
         prompt_context_budget=16384,
     )
     path = tmp_path / "cni_settings.local.json"
@@ -54,6 +55,7 @@ def test_cni_settings_round_trip_keeps_preprocessing_and_execution(tmp_path):
     assert loaded["ollama_ignore_environment_proxy"] is True
     assert loaded["prompt_scope_mode"] == "full_rules"
     assert loaded["prompt_delivery_mode"] == "image_only"
+    assert loaded["ollama_thinking_mode"] == "enabled"
     assert loaded["prompt_context_budget"] == 16384
 
 
@@ -71,6 +73,7 @@ def test_invalid_saved_settings_fall_back_to_safe_defaults(tmp_path):
     assert loaded["output_format_mode"] == "schema"
     assert loaded["prompt_scope_mode"] == "side_specific"
     assert loaded["prompt_delivery_mode"] == "application_prompt"
+    assert loaded["ollama_thinking_mode"] == "disabled"
     assert loaded["ollama_ignore_environment_proxy"] is True
 
 

@@ -33,7 +33,8 @@ def create_persist_settings_handler(
         recto_suffix, verso_suffix, crop_method, smart_crop_min_score,
         smart_crop_margin, rotation_method, perspective_correction, preprocessing,
         output_format_mode, model_output_modes, system_prompt, prompt_instructions,
-        prompt_scope_mode, prompt_delivery_mode, prompt_context_budget,
+        prompt_scope_mode, prompt_delivery_mode, ollama_thinking_mode,
+        prompt_context_budget,
     ) -> None:
         value = cni_settings_from_ui(
             models=models,
@@ -58,16 +59,19 @@ def create_persist_settings_handler(
             prompt_instructions=prompt_instructions,
             prompt_scope_mode=prompt_scope_mode,
             prompt_delivery_mode=prompt_delivery_mode,
+            ollama_thinking_mode=ollama_thinking_mode,
             prompt_context_budget=prompt_context_budget,
         )
         try:
             save_cni_settings(config_path, value, defaults=defaults)
             LOGGER.info(
                 "CNI settings saved | strategy=%s | output_format=%s | "
-                "ollama_trust_environment=%s | model_overrides=%d",
+                "ollama_trust_environment=%s | ollama_thinking=%s | "
+                "model_overrides=%d",
                 value["strategy"],
                 value["output_format_mode"],
                 not value["ollama_ignore_environment_proxy"],
+                value["ollama_thinking_mode"],
                 len(value["model_output_modes"]),
             )
         except OSError:

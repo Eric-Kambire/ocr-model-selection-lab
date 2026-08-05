@@ -151,11 +151,18 @@ sélectionné est automatiquement imposé dans `FROM`, et le blueprint réelleme
 utilisé reste téléchargeable dans `runs/ollama_modelfiles/`.
 
 Dans `8. Benchmark CNI → 4. Paramètres → Prompt et sortie`, sélectionnez
-**Image seule · SYSTEM embarqué dans le Modelfile** pour ne transmettre aucun
+**Image seule · SYSTEM déjà dans le Modelfile** pour ne transmettre aucun
 texte système ou utilisateur depuis l’application. Le message Ollama contient
 alors uniquement l’image ; le modèle dérivé suit son `SYSTEM` embarqué. La
 contrainte de sortie Ollama (`prompt`, `json` ou `schema`) reste indépendante et
 peut toujours être réglée à côté de la sélection des modèles.
+
+Le mode **Image + face · SYSTEM déjà dans le Modelfile** ajoute uniquement une
+courte indication `RECTO`, `VERSO` ou `image combinée`. Il évite de répéter le
+SYSTEM tout en supprimant l'ambiguïté sur la face. Le réglage **Raisonnement
+Ollama (think)** permet d'envoyer `think=false`, de conserver le comportement
+automatique du modèle ou d'activer explicitement le raisonnement. Pour une
+extraction JSON rapide, la valeur par défaut est **Désactivé**.
 
 ## Utiliser l’interface
 

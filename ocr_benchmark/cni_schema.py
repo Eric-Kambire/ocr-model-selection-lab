@@ -37,28 +37,30 @@ DEFAULT_CNI_FIELD_CONFIG = {
 #   contexte au modèle. Le schéma de sortie reste toujours celui de la face.
 RECTO_READING_RULES = """RECTO rules:
 - Extract only cin, prenom, nom, date_naissance, ville_naissance and date_validite.
-- The holder's Latin first and last names are often large standalone lines without an explicit label; do not skip them only because no label is printed.
-- The main holder-name block is usually near the portrait and before the birth information. Its upper large Latin line is usually prenom and the following line is usually nom; use this ordering only as a clue and return null when ambiguous.
-- On an old upright front, the portrait is commonly on the right and the holder-name block is left or centre-left. On a new upright front, the portrait is commonly on the left and the names are near its upper or right area.
-- date_naissance is attached to 'Né le' or 'Née le'; ville_naissance is attached to the nearby 'à'.
-- date_validite is attached to 'Valable jusqu’au' or 'Valable jusqu'à'.
-- cin is the alphanumeric value attached to plain 'N°'. On old fronts it is often below the photo or in its lower-right column; on new fronts it is often bottom-left after 'N°'.
-- Never use CAN or 'N° état civil' as cin."""
+- The holder's first name and family name are usually two large standalone lines. The first line is generally prenom and the next line nom. This is a clue, not permission to guess.
+- date_naissance is the complete date next to 'Né le' or 'Née le'. ville_naissance is the Latin-alphabet place next to the associated 'à'.
+- date_validite is the complete date next to 'Valable jusqu’au' or 'Valable jusqu'à'.
+- cin is the visible alphanumeric card number associated with the plain label 'N°'.
+- Old CNI clue: portrait on the right on the front and a black barcode on the back; cin is often below the portrait.
+- New CNI clue: portrait on the left on the front and an MRZ on the back; cin is often in the lower-left area after 'N°'.
+- Do not classify or return the CNI version. If the layout is unclear, ignore these layout clues and read the printed labels directly.
+- Never use a value labelled 'CAN' or 'N° état civil' as cin."""
 
 VERSO_READING_RULES = """VERSO rules:
 - Extract only cin, date_validite and adresse.
-- cin may be the card number repeated in the top or top-left area. Use it only when it is not attached to CAN or 'N° état civil'.
-- date_validite is attached to 'Valable jusqu’au' or 'Valable jusqu'à'.
-- adresse is the full holder address attached to 'Adresse'; preserve the visible reading order and join its lines with one space.
-- Names attached to 'Fils de' or 'Et de' are the holder's parents and must never populate a requested holder field.
-- Ignore sex and civil-status data because they are outside this schema."""
+- cin may repeat near the top. Accept it only when it is the visible card number and is not labelled 'CAN' or 'N° état civil'.
+- date_validite is the complete date next to 'Valable jusqu’au' or 'Valable jusqu'à'.
+- adresse is the full Latin-alphabet value next to 'Adresse'. Preserve its visible reading order and join multiple lines with one space.
+- 'Fils de' and 'Et de' introduce the holder's parents. Never use those names as holder fields.
+- Ignore sex and civil-status data because they are outside the requested schema.
+- A black barcode indicates the old back layout and an MRZ indicates the new back layout. Ignore both; do not decode them."""
 
 COMMON_VALUE_RULES = """Common value rules:
-- The card may use an old or new layout and may be rotated; interpret positions relative to the upright readable card.
-- Read only explicitly visible Latin-script values. Arabic labels may locate a field, but do not extract Arabic values.
-- Do not translate, transliterate, infer, decode or guess.
-- Use null when a requested value is absent, unreadable or ambiguous.
-- Preserve visible spelling, punctuation and accents. Normalize only an unambiguous date to YYYY-MM-DD.
+- 'Latin-alphabet value' means text written with A-Z letters, including French accents such as É, È, À, Ç, plus digits and normal punctuation. It does not mean Latin language.
+- Arabic labels may help locate a field, but do not return Arabic-script text in this benchmark.
+- Read the visible card directly. Do not translate, transliterate, infer, decode or guess.
+- Use null when a requested value is absent, incomplete, unreadable or ambiguous.
+- Preserve visible spelling, punctuation and accents. Convert a date to YYYY-MM-DD only when day, month and year are all unambiguous.
 - Ignore MRZ, QR codes and barcodes completely."""
 
 
@@ -155,6 +157,26 @@ def build_combined_cni_prompt(fields: dict[str, list[dict[str, str]]] | None = N
         "Markdown, prose, comments, code fences or extra keys.\n"
         "Required JSON object:\n"
         + json.dumps(schema, ensure_ascii=False)
+    )
+
+
+def build_cni_face_hint(side: str) -> str:
+    """Construit le seul texte USER utilisé avec un SYSTEM de Modelfile.
+
+    Le modèle reçoit ainsi la face sans répéter les règles métier déjà
+    incorporées dans son ``SYSTEM``. Le JSON Schema reste transmis séparément.
+    """
+    if side == "combined":
+        return (
+            "The attached image is a vertical composite: RECTO on top and "
+            "VERSO below. Extract the visible values using your SYSTEM "
+            "instructions and the supplied JSON schema."
+        )
+    if side not in {"recto", "verso"}:
+        raise ValueError("side must be 'recto', 'verso' or 'combined'.")
+    return (
+        f"The attached image is the {side.upper()} side. Extract the visible "
+        "values using your SYSTEM instructions and the supplied JSON schema."
     )
 
 

@@ -9,6 +9,7 @@ from PIL import Image, ImageDraw
 from ocr_benchmark.cni import (
     build_cni_global_json,
     build_cni_output_schema,
+    build_cni_face_hint,
     build_cni_prompt,
     crop_cni_from_a4,
     import_cni_zip,
@@ -137,10 +138,13 @@ def test_side_json_parser_and_global_preserve_both_cin_values():
 
 def test_cni_prompt_covers_old_new_layout_and_operator_instructions():
     prompt = build_cni_prompt("recto", instructions="Prioritize a sharp reading of the CIN identifier.")
-    assert "old or new layout" in prompt
+    assert "Old CNI clue" in prompt
+    assert "New CNI clue" in prompt
+    assert "Do not classify or return the CNI version" in prompt
+    assert "A-Z letters" in prompt
     assert "Prioritize a sharp reading" in prompt
     assert '"cin": null' in prompt
-    assert "upper large Latin line is usually prenom" in prompt
+    assert "first line is generally prenom" in prompt
     # Le contrat JSON doit rester la dernière information du prompt.
     assert prompt.rstrip().endswith('"date_validite": null}')
 
@@ -150,16 +154,16 @@ def test_cni_prompt_prevents_parent_name_and_identifier_confusion():
     recto_prompt = build_cni_prompt("recto")
     verso_prompt = build_cni_prompt("verso")
 
-    assert "main holder-name block is usually near the portrait" in recto_prompt
-    assert "Never use CAN" in recto_prompt
-    assert "plain 'N°'" in recto_prompt
-    assert "old fronts it is often below the photo" in recto_prompt
-    assert "'Fils de' or 'Et de' are the holder's parents" in verso_prompt
-    assert "top or top-left area" in verso_prompt
-    assert "join its lines with one space" in verso_prompt
+    assert "first name and family name" in recto_prompt
+    assert "labelled 'CAN'" in recto_prompt
+    assert "plain label 'N°'" in recto_prompt
+    assert "cin is often below the portrait" in recto_prompt
+    assert "'Fils de' and 'Et de' introduce the holder's parents" in verso_prompt
+    assert "cin may repeat near the top" in verso_prompt
+    assert "join multiple lines with one space" in verso_prompt
     # Garantie importante : aucune règle propre à l'autre face n'est injectée.
     assert "Fils de" not in recto_prompt
-    assert "holder-name block" not in verso_prompt
+    assert "first name and family name" not in verso_prompt
 
 
 def test_full_rule_prompt_keeps_both_contexts_but_current_face_schema():
@@ -171,6 +175,19 @@ def test_full_rule_prompt_keeps_both_contexts_but_current_face_schema():
     assert "current image is known to be the RECTO side" in prompt
     assert '"prenom": null' in prompt
     assert '"recto": {' not in prompt
+
+
+def test_modelfile_face_hint_is_short_and_explicit():
+    """Le mode Modelfile ne répète pas les règles, mais nomme bien la face."""
+
+    recto = build_cni_face_hint("recto")
+    verso = build_cni_face_hint("verso")
+    combined = build_cni_face_hint("combined")
+
+    assert "RECTO side" in recto
+    assert "VERSO side" in verso
+    assert "RECTO on top" in combined
+    assert "Old CNI" not in recto
 
 
 def test_cni_output_schema_is_strict_and_nullable():
@@ -395,6 +412,37 @@ def test_runner_image_only_keeps_both_images_and_omits_application_text(
     assert "--- SYSTEM SENT BY APPLICATION ---\n\n" in artifact
     assert "--- USER TEXT SENT BY APPLICATION ---\n" in artifact
     assert "ne doit pas partir" not in artifact
+
+
+def test_runner_modelfile_mode_sends_only_the_face_hint(tmp_path: Path):
+    """Le SYSTEM du lab est omis et chaque image reçoit seulement son rôle."""
+
+    client = tmp_path / "clients" / "folder-client"
+    client.mkdir(parents=True)
+    _write_pdf(client / "source_CIN_Recto.pdf")
+    _write_pdf(client / "source_CIN_Verso.pdf")
+    records = scan_cni_clients(tmp_path / "clients")
+    registry = _RecordingRegistry()
+
+    events = list(
+        iter_cni_benchmark(
+            registry,
+            ["fake:vision"],
+            records,
+            tmp_path / "runs",
+            system_prompt="SYSTEM applicatif qui ne doit pas partir",
+            prompt_instructions="règles qui ne doivent pas partir",
+            prompt_delivery_mode="image_with_side_hint",
+        )
+    )
+
+    assert len(registry.model.calls) == 2
+    assert registry.model.calls[0][1] == build_cni_face_hint("recto")
+    assert registry.model.calls[1][1] == build_cni_face_hint("verso")
+    result = events[-1]["result"]
+    artifact = Path(result["recto_prompt_path"]).read_text(encoding="utf-8")
+    assert "--- DELIVERY MODE ---\nimage_with_side_hint" in artifact
+    assert "SYSTEM applicatif qui ne doit pas partir" not in artifact
 
 
 def test_runner_sends_the_full_normalized_source_when_crop_is_uncertain(tmp_path: Path):

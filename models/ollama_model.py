@@ -32,6 +32,7 @@ class OllamaOCRModel(BaseOCRModel):
         unload_after_task: bool = True,
         request_timeout: float | None = None,
         ignore_environment_proxy: bool = False,
+        thinking_mode: str = "automatic",
     ):
         super().__init__(model_name)
         self.prompt = prompt.strip() if prompt and prompt.strip() else DEFAULT_OCR_PROMPT
@@ -47,6 +48,11 @@ class OllamaOCRModel(BaseOCRModel):
         # ignorer cet environnement évite qu'un proxy intermédiaire coupe une
         # réponse non-streaming après sa propre limite d'inactivité.
         self.trust_environment = not bool(ignore_environment_proxy)
+        self.thinking_mode = (
+            thinking_mode
+            if thinking_mode in {"disabled", "automatic", "enabled"}
+            else "automatic"
+        )
         # Le résultat de ``ollama.show`` reste valable pendant la vie de
         # l'adaptateur. Ce cache évite de répéter l'appel pour recto et verso.
         self._vision_capability: OllamaVisionCapability | None = None
@@ -63,11 +69,12 @@ class OllamaOCRModel(BaseOCRModel):
             )
             LOGGER.info(
                 "Ollama client configured | model=%s | host=%s | "
-                "request_timeout=%.1fs | trust_environment=%s",
+                "request_timeout=%.1fs | trust_environment=%s | thinking=%s",
                 self.model_name,
                 self.host,
                 self.request_timeout,
                 self.trust_environment,
+                self.thinking_mode,
             )
         except ImportError:
             self.client = None
@@ -82,6 +89,7 @@ class OllamaOCRModel(BaseOCRModel):
         output_format: str = "prompt",
         output_schema: dict | None = None,
         image_only: bool = False,
+        prompt_delivery_mode: str = "application_prompt",
     ) -> dict:
         """Exécute Ollama avec une contrainte JSON facultative.
 
@@ -137,8 +145,26 @@ class OllamaOCRModel(BaseOCRModel):
         # l'application ne doit masquer le SYSTEM embarqué dans le Modelfile.
         # Le message utilisateur reste présent avec un contenu vide car il
         # transporte l'image dans l'API chat d'Ollama.
+        allowed_delivery_modes = {
+            "application_prompt",
+            "image_only",
+            "image_with_side_hint",
+        }
         if image_only:
+            # Compatibilité avec les anciens appelants qui utilisaient
+            # uniquement ce booléen.
+            effective_delivery_mode = "image_only"
+        elif prompt_delivery_mode in allowed_delivery_modes:
+            effective_delivery_mode = prompt_delivery_mode
+        else:
+            effective_delivery_mode = "application_prompt"
+        if effective_delivery_mode == "image_only":
             effective_prompt = ""
+            effective_system = None
+        elif effective_delivery_mode == "image_with_side_hint":
+            # Le SYSTEM incorporé au Modelfile reste la seule règle métier.
+            # L'application ajoute uniquement le rôle de l'image.
+            effective_prompt = (prompt or "").strip()
             effective_system = None
         else:
             effective_prompt = (
@@ -152,12 +178,14 @@ class OllamaOCRModel(BaseOCRModel):
         start_time = time.time()
         LOGGER.info(
             "Ollama request started | model=%s | image=%s | "
-            "request_timeout=%.1fs | trust_environment=%s | image_only=%s",
+            "request_timeout=%.1fs | trust_environment=%s | "
+            "prompt_delivery=%s | thinking=%s",
             self.model_name,
             image_path,
             self.request_timeout,
             self.trust_environment,
-            bool(image_only),
+            effective_delivery_mode,
+            self.thinking_mode,
         )
         
         try:
@@ -178,6 +206,13 @@ class OllamaOCRModel(BaseOCRModel):
                 request["format"] = output_schema
             elif output_format == "json":
                 request["format"] = "json"
+            # ``automatic`` préserve exactement le défaut du modèle. Pour les
+            # extractions JSON, ``disabled`` évite une longue trace de
+            # raisonnement avant la réponse utile.
+            if self.thinking_mode == "disabled":
+                request["think"] = False
+            elif self.thinking_mode == "enabled":
+                request["think"] = True
             response = self.client.chat(
                 **request
             )
@@ -231,8 +266,9 @@ class OllamaOCRModel(BaseOCRModel):
                 "configured_timeout_seconds": self.request_timeout,
                 "trust_environment": self.trust_environment,
                 "prompt_delivery_mode": (
-                    "image_only" if image_only else "application_prompt"
+                    effective_delivery_mode
                 ),
+                "thinking_mode": self.thinking_mode,
             }
             
         except Exception as e:
