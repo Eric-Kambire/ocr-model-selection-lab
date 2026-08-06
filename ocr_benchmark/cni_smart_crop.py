@@ -8,6 +8,7 @@ quadrilatères candidats, les classe puis redresse le candidat retenu.
 from __future__ import annotations
 
 import argparse
+import logging
 import math
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -17,6 +18,8 @@ import cv2
 import numpy as np
 
 from .json_utils import dumps_json
+
+LOGGER = logging.getLogger(__name__)
 
 try:
     import fitz  # PyMuPDF
@@ -431,6 +434,39 @@ def contour_detector(maps: dict[str, np.ndarray], config: DetectorConfig) -> lis
     return results
 
 
+def _normalise_hough_segments(lines: Any) -> np.ndarray:
+    """Ramène la sortie de ``cv2.HoughLinesP`` à une matrice ``N × 4``.
+
+    Selon la version d'OpenCV et la plateforme, Python peut recevoir les
+    segments sous la forme ``(N, 1, 4)`` ou directement ``(N, 4)``. Le code de
+    détection ne doit donc pas indexer une dimension intermédiaire supposée.
+
+    Args:
+        lines: Valeur renvoyée par ``cv2.HoughLinesP`` ou ``None``.
+
+    Returns:
+        Une matrice contiguë d'entiers dont chaque ligne contient
+        ``x1, y1, x2, y2``. Une forme OpenCV inattendue produit une matrice
+        vide afin que Smart Crop puisse continuer avec ses autres détecteurs.
+    """
+    if lines is None:
+        return np.empty((0, 4), dtype=np.int32)
+
+    values = np.asarray(lines)
+    if values.size == 0:
+        return np.empty((0, 4), dtype=np.int32)
+
+    if values.size % 4 != 0:
+        LOGGER.warning(
+            "Sortie HoughLinesP ignorée : forme incompatible | shape=%s | size=%d",
+            values.shape,
+            values.size,
+        )
+        return np.empty((0, 4), dtype=np.int32)
+
+    return np.ascontiguousarray(values.reshape(-1, 4), dtype=np.int32)
+
+
 def line_detector(maps: dict[str, np.ndarray], config: DetectorConfig) -> list[Candidate]:
     """Line-based detector.
 
@@ -451,9 +487,10 @@ def line_detector(maps: dict[str, np.ndarray], config: DetectorConfig) -> list[C
     )
 
     line_mask = np.zeros_like(edges)
-    if lines is not None:
+    normalised_lines = _normalise_hough_segments(lines)
+    if normalised_lines.size:
         segments: list[tuple[float, tuple[int, int, int, int]]] = []
-        for item in lines[:, 0]:
+        for item in normalised_lines:
             x1, y1, x2, y2 = map(int, item)
             frame_margin = max(2, int(round(min(height, width) * config.frame_ignore_ratio)))
             on_frame = (

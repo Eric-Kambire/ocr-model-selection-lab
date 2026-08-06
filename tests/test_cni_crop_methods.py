@@ -9,6 +9,7 @@ from ocr_benchmark.cni_crop_methods import (
     run_crop_method,
 )
 from ocr_benchmark.cni_smart_crop import (
+    _normalise_hough_segments,
     detect_dark_frame_bands,
     foreground_leakage_penalty,
 )
@@ -157,3 +158,18 @@ def test_v4_penalises_a_candidate_that_cuts_nearby_content():
     truncated_penalty, _ = foreground_leakage_penalty(truncated, foreground)
 
     assert truncated_penalty > full_penalty
+
+
+def test_hough_segments_accepts_macos_and_standard_opencv_shapes():
+    """Les formes ``N×4`` et ``N×1×4`` doivent donner les mêmes segments."""
+    import numpy as np
+
+    compact = np.array([[10, 20, 30, 40], [50, 60, 70, 80]], dtype=np.int32)
+    standard = compact.reshape(-1, 1, 4)
+
+    compact_result = _normalise_hough_segments(compact)
+    standard_result = _normalise_hough_segments(standard)
+
+    assert compact_result.shape == (2, 4)
+    assert standard_result.shape == (2, 4)
+    assert np.array_equal(compact_result, standard_result)
