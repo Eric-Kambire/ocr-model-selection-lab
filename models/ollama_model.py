@@ -315,6 +315,128 @@ class OllamaOCRModel(BaseOCRModel):
             )
         return self._vision_capability
 
+    def perform_text(
+        self,
+        prompt: str,
+        *,
+        system_prompt: str | None = None,
+        output_format: str = "schema",
+        output_schema: dict | None = None,
+    ) -> dict:
+        """Structure un texte avec Ollama sans joindre d'image.
+
+        Cette méthode est volontairement distincte de ``perform_ocr`` : le
+        second modèle du pipeline peut être un LLM textuel et ne doit donc pas
+        être rejeté par le garde-fou de capacité vision.
+        """
+
+        if not self.client:
+            return {
+                "text": "",
+                "raw_response": "Error: Ollama library not installed.",
+                "latency": 0.0,
+                "status": "failed",
+                "error": "Ollama library not installed.",
+                "device": "ollama",
+            }
+
+        messages = []
+        cleaned_system = (system_prompt or "").strip()
+        if cleaned_system:
+            messages.append({"role": "system", "content": cleaned_system})
+        messages.append({"role": "user", "content": (prompt or "").strip()})
+        options = {"temperature": 0.0}
+        if self.cpu_threads:
+            options["num_thread"] = self.cpu_threads
+        request = {
+            "model": self.model_name,
+            "messages": messages,
+            "options": options,
+        }
+        if output_format == "schema" and output_schema:
+            request["format"] = output_schema
+        elif output_format == "json":
+            request["format"] = "json"
+        if self.thinking_mode == "disabled":
+            request["think"] = False
+        elif self.thinking_mode == "enabled":
+            request["think"] = True
+
+        started_at = time.time()
+        LOGGER.info(
+            "Ollama text request started | model=%s | request_timeout=%.1fs | "
+            "trust_environment=%s | output_format=%s | thinking=%s",
+            self.model_name,
+            self.request_timeout,
+            self.trust_environment,
+            output_format,
+            self.thinking_mode,
+        )
+        try:
+            response = self.client.chat(**request)
+            if isinstance(response, dict):
+                message = response.get("message", {})
+                text = str(message.get("content", "")).strip()
+                reasoning = message.get("thinking") or message.get("reasoning")
+                input_tokens = response.get("prompt_eval_count")
+                output_tokens = response.get("eval_count")
+                eval_duration = response.get("eval_duration")
+            else:
+                message = getattr(response, "message", None)
+                text = str(getattr(message, "content", "")).strip()
+                reasoning = (
+                    getattr(message, "thinking", None)
+                    or getattr(message, "reasoning", None)
+                )
+                input_tokens = getattr(response, "prompt_eval_count", None)
+                output_tokens = getattr(response, "eval_count", None)
+                eval_duration = getattr(response, "eval_duration", None)
+            latency = time.time() - started_at
+            tokens_per_second = None
+            if output_tokens is not None and eval_duration:
+                tokens_per_second = float(output_tokens) / (
+                    float(eval_duration) / 1_000_000_000
+                )
+            return {
+                "text": text,
+                "raw_response": str(response),
+                "reasoning": str(reasoning) if reasoning else None,
+                "latency": latency,
+                "status": "success",
+                "error": None,
+                "device": "ollama",
+                "input_tokens": input_tokens,
+                "output_tokens": output_tokens,
+                "tokens_per_second": tokens_per_second,
+                "configured_timeout_seconds": self.request_timeout,
+                "trust_environment": self.trust_environment,
+            }
+        except Exception as exc:
+            latency = time.time() - started_at
+            error = (
+                "Error during Ollama text inference "
+                f"after {latency:.1f}s (configured HTTP timeout: "
+                f"{self.request_timeout:.1f}s, exception: {type(exc).__name__}): {exc}"
+            )
+            LOGGER.exception(
+                "Ollama text request failed | model=%s | elapsed=%.1fs | "
+                "configured_timeout=%.1fs | exception=%s",
+                self.model_name,
+                latency,
+                self.request_timeout,
+                type(exc).__name__,
+            )
+            return {
+                "text": "",
+                "raw_response": error,
+                "latency": latency,
+                "status": "failed",
+                "error": error,
+                "device": "ollama",
+                "configured_timeout_seconds": self.request_timeout,
+                "trust_environment": self.trust_environment,
+            }
+
     def close(self) -> None:
         """Demande explicitement au serveur Ollama de libérer le modèle."""
         if not self.client or not self.unload_after_task:

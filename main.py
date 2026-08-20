@@ -1894,6 +1894,52 @@ def build_ui() -> gr.Blocks:
                                     buttons=[cni_refresh_models, cni_model_output_settings_button],
                                     elem_id="cni-model-selector",
                                 )
+                                cni_pipeline_mode = gr.Radio(
+                                    [
+                                        (
+                                            "VLM direct · image vers JSON",
+                                            "direct_vlm",
+                                        ),
+                                        (
+                                            "VLM lecture puis LLM structuration",
+                                            "vlm_llm",
+                                        ),
+                                    ],
+                                    value=cni_settings.get(
+                                        "pipeline_mode", "direct_vlm"
+                                    ),
+                                    label="Pipeline d'extraction",
+                                    info=(
+                                        "Le mode en deux étapes accepte exactement un VLM. "
+                                        "Il sauvegarde sa transcription, le libère, puis "
+                                        "charge le LLM pour produire le JSON."
+                                    ),
+                                )
+                                with gr.Group(
+                                    visible=(
+                                        cni_settings.get("pipeline_mode")
+                                        == "vlm_llm"
+                                    )
+                                ) as cni_llm_pipeline_controls:
+                                    cni_llm_model = gr.Dropdown(
+                                        [
+                                            choice for choice in model_choices
+                                            if choice.startswith("ollama:")
+                                        ],
+                                        value=(
+                                            cni_settings.get("llm_model")
+                                            if cni_settings.get("llm_model")
+                                            in model_choices
+                                            else None
+                                        ),
+                                        filterable=True,
+                                        label="LLM de structuration JSON",
+                                        info=(
+                                            "Ce modèle reçoit uniquement la transcription, "
+                                            "jamais l'image. Le JSON Schema exact lui est "
+                                            "fourni dans le prompt et dans format=... d'Ollama."
+                                        ),
+                                    )
                                 cni_model_output_modes_state = gr.State(
                                     cni_settings.get("model_output_modes", {})
                                 )
@@ -2124,6 +2170,12 @@ def build_ui() -> gr.Blocks:
                             cni_prompt_context_budget = cni_settings_view.prompt_context_budget
                             cni_prompt_token_indicator = cni_settings_view.prompt_token_indicator
                             cni_prompt_preview = cni_settings_view.prompt_preview
+                            cni_vlm_transcription_instructions = (
+                                cni_settings_view.vlm_transcription_instructions
+                            )
+                            cni_llm_system_prompt = (
+                                cni_settings_view.llm_system_prompt
+                            )
                             with gr.Tab("API QlickEER"):
                                 gr.Markdown(
                                     "La configuration est enregistrée localement dans `config/qlickeer_api.local.json` "
@@ -3375,10 +3427,22 @@ def build_ui() -> gr.Blocks:
                 LOGGER.exception("CNI scan failed")
                 return [], [], pd.DataFrame(), f"Scan CNI impossible : {type(exc).__name__}: {exc}", gr.update(choices=_cni_source_choices([]), value=None), "Aucune source chargée."
 
-        def refresh_cni_models(selected_models):
-            """Actualise les modèles Ollama en conservant les choix encore valides."""
+        def refresh_cni_models(selected_models, selected_llm):
+            """Actualise ensemble les choix VLM et LLM installés dans Ollama."""
             choices = [f"ollama:{name}" for name in get_installed_ollama_models()]
-            return gr.update(choices=choices, value=[name for name in (selected_models or []) if name in choices])
+            return (
+                gr.update(
+                    choices=choices,
+                    value=[
+                        name for name in (selected_models or [])
+                        if name in choices
+                    ],
+                ),
+                gr.update(
+                    choices=choices,
+                    value=selected_llm if selected_llm in choices else None,
+                ),
+            )
 
         def sync_model_output_settings(selected_models, overrides):
             """Retire les exceptions orphelines et actualise la liste cible."""
@@ -3454,6 +3518,25 @@ def build_ui() -> gr.Blocks:
             output_tokens = result.get("output_tokens")
             token_speed = result.get("tokens_per_second")
             token_speed_text = f"{float(token_speed):.2f}" if token_speed is not None else "N/A"
+            stage_metrics = ""
+            if result.get("pipeline") == "vlm_llm":
+                vlm_latency = float(result.get("vlm_latency") or 0)
+                llm_latency = float(result.get("llm_latency") or 0)
+                vlm_input = result.get("vlm_input_tokens")
+                vlm_output = result.get("vlm_output_tokens")
+                llm_input = result.get("llm_input_tokens")
+                llm_output = result.get("llm_output_tokens")
+                stage_metrics = (
+                    "\n\n**Pipeline :** `VLM → LLM` · "
+                    f"**VLM :** `{result.get('vlm_model')}` · "
+                    f"**LLM :** `{result.get('llm_model')}`\n\n"
+                    f"**VLM :** {vlm_latency:.3f} s, "
+                    f"{vlm_input if vlm_input is not None else 'N/A'} tokens entrée, "
+                    f"{vlm_output if vlm_output is not None else 'N/A'} tokens sortie · "
+                    f"**LLM :** {llm_latency:.3f} s, "
+                    f"{llm_input if llm_input is not None else 'N/A'} tokens entrée, "
+                    f"{llm_output if llm_output is not None else 'N/A'} tokens sortie"
+                )
             return (
                 "### Mesures principales\n\n"
                 f"**Temps total :** {float(result.get('latency') or 0):.3f} s · "
@@ -3462,7 +3545,9 @@ def build_ui() -> gr.Blocks:
                 f"**Tokens entrée :** {input_tokens if input_tokens is not None else 'N/A'} · "
                 f"**Tokens sortie :** {output_tokens if output_tokens is not None else 'N/A'} · "
                 f"**Tokens/s :** {token_speed_text}\n\n"
-                f"**CIN recto/verso cohérent :** {_cni_boolean(result.get('cin_coherent'))} · "
+                + stage_metrics
+                + ("\n\n" if stage_metrics else "")
+                + f"**CIN recto/verso cohérent :** {_cni_boolean(result.get('cin_coherent'))} · "
                 f"**Label :** `{result.get('label_status') or 'absent'}`"
                 + _cni_confidence_summary(result)
             )
@@ -3524,12 +3609,14 @@ def build_ui() -> gr.Blocks:
             return request_cni_cancel_handler(client_records, _cni_alert_html)
 
         def on_cni_run(
-            model_specs, client_records, strategy, dpi, timeout, threads, unload,
+            model_specs, llm_model_spec, pipeline_mode, client_records,
+            strategy, dpi, timeout, threads, unload,
             ollama_ignore_environment_proxy,
             crop_method, smart_crop_min_score, smart_crop_margin, rotation_method,
             perspective_correction, preprocessing, system_prompt,
             prompt_instructions, prompt_scope_mode, prompt_delivery_mode,
             ollama_thinking_mode,
+            vlm_transcription_instructions, llm_system_prompt,
             output_format_mode, model_output_modes,
             continue_without_label,
         ):
@@ -3578,6 +3665,19 @@ def build_ui() -> gr.Blocks:
                 LOGGER.warning("CNI launch rejected | reason=no_model")
                 yield view(message, message, 0, None, message, 0)
                 return
+            if pipeline_mode == "vlm_llm" and len(model_specs) != 1:
+                message = (
+                    "Le pipeline VLM + LLM exige exactement un VLM dans la "
+                    "liste Modèles Ollama."
+                )
+                yield view(message, message, 0, None, message, 0)
+                return
+            if pipeline_mode == "vlm_llm" and not llm_model_spec:
+                message = (
+                    "Le pipeline VLM + LLM exige un LLM de structuration JSON."
+                )
+                yield view(message, message, 0, None, message, 0)
+                return
             if not client_records:
                 message = "Pré-contrôle impossible : scannez d'abord un dossier clients valide."
                 LOGGER.warning("CNI launch rejected | reason=no_scan")
@@ -3608,7 +3708,8 @@ def build_ui() -> gr.Blocks:
                 f"{total_pairs} évaluation(s) séquentielle(s)."
             )
             LOGGER.info(
-                "CNI launch accepted | pairs=%d | models=%d | strategy=%s | "
+                "CNI launch accepted | pairs=%d | models=%d | pipeline=%s | "
+                "llm=%s | strategy=%s | "
                 "dpi=%s | timeout=%s | cpu_threads=%s | unload=%s | "
                 "ollama_trust_environment=%s | "
                 "crop_method=%s | smart_crop_min_score=%s | smart_crop_margin=%s | "
@@ -3619,6 +3720,8 @@ def build_ui() -> gr.Blocks:
                 "unlabeled=%d | invalid=%d",
                 len(ready_records),
                 len(model_specs),
+                pipeline_mode,
+                llm_model_spec,
                 strategy,
                 dpi,
                 timeout,
@@ -3660,6 +3763,14 @@ def build_ui() -> gr.Blocks:
                     ),
                     output_format_mode=output_format_mode,
                     model_output_modes=dict(model_output_modes or {}),
+                    pipeline_mode=str(pipeline_mode or "direct_vlm"),
+                    llm_model_spec=(
+                        str(llm_model_spec) if llm_model_spec else None
+                    ),
+                    vlm_transcription_instructions=(
+                        vlm_transcription_instructions
+                    ),
+                    llm_system_prompt=llm_system_prompt,
                     preprocessing={
                         **{str(value): True for value in (preprocessing or [])},
                         "crop_method": crop_method,
@@ -3676,6 +3787,9 @@ def build_ui() -> gr.Blocks:
                     model = event.get("model", "—")
                     if event.get("stage") == "processing":
                         side = event.get("side", "document")
+                        pipeline_stage = event.get(
+                            "pipeline_stage", "direct_extraction"
+                        )
                         substep = int(event.get("substep") or 1)
                         substeps = int(event.get("substeps") or 1)
                         side_label = (
@@ -3683,10 +3797,20 @@ def build_ui() -> gr.Blocks:
                             if side == "recto_verso"
                             else str(side).title()
                         )
-                        substep_label = f"{side_label} {substep}/{substeps}"
+                        stage_label = {
+                            "vlm_transcription": "VLM · transcription",
+                            "llm_structuring": "LLM · structuration JSON",
+                            "direct_extraction": "VLM · extraction directe",
+                        }.get(str(pipeline_stage), str(pipeline_stage))
+                        substep_label = (
+                            f"{stage_label} · {side_label} "
+                            f"{substep}/{substeps}"
+                        )
                         LOGGER.info(
-                            "CNI processing | client=%s | model=%s | side=%s | substep=%d/%d | completed=%d/%d",
-                            client_id, model, side, substep, substeps, completed, total,
+                            "CNI processing | client=%s | model=%s | stage=%s | "
+                            "side=%s | substep=%d/%d | completed=%d/%d",
+                            client_id, model, pipeline_stage, side, substep,
+                            substeps, completed, total,
                         )
                         live_text = (
                             "### Analyse CNI en direct\n\n"
@@ -4127,7 +4251,18 @@ def build_ui() -> gr.Blocks:
             outputs=[cni_source_preview, cni_source_preview_info],
             queue=False,
         )
-        cni_refresh_models.click(refresh_cni_models, inputs=[cni_models], outputs=[cni_models], queue=False)
+        cni_refresh_models.click(
+            refresh_cni_models,
+            inputs=[cni_models, cni_llm_model],
+            outputs=[cni_models, cni_llm_model],
+            queue=False,
+        )
+        cni_pipeline_mode.change(
+            lambda mode: gr.update(visible=mode == "vlm_llm"),
+            inputs=[cni_pipeline_mode],
+            outputs=[cni_llm_pipeline_controls],
+            queue=False,
+        )
         cni_model_output_settings_button.click(
             lambda opened: (
                 not bool(opened),
@@ -4261,7 +4396,8 @@ def build_ui() -> gr.Blocks:
         # Aucun bouton « Save » n'est nécessaire : chaque choix CNI est
         # conservé localement dès sa modification et restauré au redémarrage.
         cni_settings_inputs = [
-            cni_models, cni_strategy, cni_dpi, cni_timeout, cni_cpu_threads,
+            cni_models, cni_pipeline_mode, cni_llm_model,
+            cni_strategy, cni_dpi, cni_timeout, cni_cpu_threads,
             cni_unload, cni_ollama_ignore_environment_proxy,
             cni_continue_without_label, cni_recto_suffix,
             cni_verso_suffix, cni_crop_method, cni_smart_crop_min_score,
@@ -4273,9 +4409,12 @@ def build_ui() -> gr.Blocks:
             cni_prompt_delivery_mode,
             cni_ollama_thinking_mode,
             cni_prompt_context_budget,
+            cni_vlm_transcription_instructions,
+            cni_llm_system_prompt,
         ]
         for setting_component in (
-            cni_models, cni_strategy, cni_dpi, cni_timeout, cni_cpu_threads,
+            cni_models, cni_pipeline_mode, cni_llm_model,
+            cni_strategy, cni_dpi, cni_timeout, cni_cpu_threads,
             cni_unload, cni_ollama_ignore_environment_proxy,
             cni_continue_without_label, cni_recto_suffix,
             cni_verso_suffix, cni_crop_method, cni_smart_crop_min_score,
@@ -4287,6 +4426,8 @@ def build_ui() -> gr.Blocks:
             cni_prompt_delivery_mode,
             cni_ollama_thinking_mode,
             cni_prompt_context_budget,
+            cni_vlm_transcription_instructions,
+            cni_llm_system_prompt,
         ):
             setting_component.change(
                 persist_cni_settings,
@@ -4296,7 +4437,8 @@ def build_ui() -> gr.Blocks:
         cni_event = cni_launch.click(
             on_cni_run,
             inputs=[
-                cni_models, cni_clients_state, cni_strategy, cni_dpi, cni_timeout,
+                cni_models, cni_llm_model, cni_pipeline_mode,
+                cni_clients_state, cni_strategy, cni_dpi, cni_timeout,
                 cni_cpu_threads, cni_unload,
                 cni_ollama_ignore_environment_proxy, cni_crop_method,
                 cni_smart_crop_min_score, cni_smart_crop_margin,
@@ -4305,6 +4447,8 @@ def build_ui() -> gr.Blocks:
                 cni_prompt_instructions, cni_prompt_scope_mode,
                 cni_prompt_delivery_mode,
                 cni_ollama_thinking_mode,
+                cni_vlm_transcription_instructions,
+                cni_llm_system_prompt,
                 cni_output_format_mode,
                 cni_model_output_modes_state,
                 cni_continue_without_label,

@@ -38,6 +38,8 @@ class PromptSettings:
     prompt_context_budget: Any
     prompt_token_indicator: Any
     prompt_preview: Any
+    vlm_transcription_instructions: Any
+    llm_system_prompt: Any
 
 
 def build_prompt_settings(
@@ -210,6 +212,31 @@ def build_prompt_settings(
                     lines=18,
                     interactive=False,
                 )
+            with gr.Tab("④ VLM + LLM"):
+                gr.Markdown(
+                    "Ces deux textes sont utilisés uniquement avec le pipeline "
+                    "**VLM lecture puis LLM structuration**. Le VLM reçoit "
+                    "l'image et une consigne courte ; le LLM reçoit la "
+                    "transcription et le JSON Schema exact de la face."
+                )
+                vlm_transcription_instructions = gr.Textbox(
+                    value=settings.get("vlm_transcription_instructions", ""),
+                    label="Consigne courte envoyée au VLM",
+                    lines=4,
+                    info=(
+                        "Demandez une transcription fidèle, pas une description "
+                        "libre et pas encore un JSON."
+                    ),
+                )
+                llm_system_prompt = gr.Textbox(
+                    value=settings.get("llm_system_prompt", ""),
+                    label="Prompt système du LLM de structuration",
+                    lines=7,
+                    info=(
+                        "Le code ajoute ensuite la transcription, la face et le "
+                        "schéma JSON. Ce texte reste éditable."
+                    ),
+                )
     return PromptSettings(
         prompt_delivery_mode,
         ollama_thinking_mode,
@@ -222,4 +249,6 @@ def build_prompt_settings(
         prompt_context_budget,
         prompt_token_indicator,
         prompt_preview,
+        vlm_transcription_instructions,
+        llm_system_prompt,
     )

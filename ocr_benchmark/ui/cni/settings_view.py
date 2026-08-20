@@ -38,6 +38,8 @@ class CniSettingsView:
     prompt_context_budget: Any
     prompt_token_indicator: Any
     prompt_preview: Any
+    vlm_transcription_instructions: Any
+    llm_system_prompt: Any
 
 
 def build_cni_core_settings(
@@ -86,4 +88,8 @@ def build_cni_core_settings(
         prompt_context_budget=prompt.prompt_context_budget,
         prompt_token_indicator=prompt.prompt_token_indicator,
         prompt_preview=prompt.prompt_preview,
+        vlm_transcription_instructions=(
+            prompt.vlm_transcription_instructions
+        ),
+        llm_system_prompt=prompt.llm_system_prompt,
     )

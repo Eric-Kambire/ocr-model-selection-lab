@@ -16,6 +16,10 @@ from ..cni_crop_service import (
     SMART_CROP_V4,
     SUPPORTED_CROP_METHODS,
 )
+from ..cni_two_stage import (
+    DEFAULT_LLM_STRUCTURING_SYSTEM_PROMPT,
+    DEFAULT_VLM_TRANSCRIPTION_INSTRUCTIONS,
+)
 
 LEGACY_DEFAULT_SYSTEM_PROMPT = (
     "Extract Moroccan CNI fields exactly. Return only one valid JSON object "
@@ -47,6 +51,8 @@ def default_cni_settings(*, cpu_threads: int, system_prompt: str, prompt_instruc
     return {
         "schema_version": 1,
         "models": [],
+        "pipeline_mode": "direct_vlm",
+        "llm_model": "",
         "strategy": "separate_calls",
         "dpi": 300,
         "timeout_seconds": 300,
@@ -80,6 +86,8 @@ def default_cni_settings(*, cpu_threads: int, system_prompt: str, prompt_instruc
         # Ce seuil sert uniquement à surveiller la taille du prompt dans l'UI.
         # Il ne modifie pas le contexte réellement alloué par Ollama.
         "prompt_context_budget": 8192,
+        "vlm_transcription_instructions": DEFAULT_VLM_TRANSCRIPTION_INSTRUCTIONS,
+        "llm_system_prompt": DEFAULT_LLM_STRUCTURING_SYSTEM_PROMPT,
     }
 
 
@@ -130,11 +138,17 @@ def cni_settings_from_ui(
     prompt_delivery_mode: Any,
     ollama_thinking_mode: Any,
     prompt_context_budget: Any,
+    pipeline_mode: Any = "direct_vlm",
+    llm_model: Any = "",
+    vlm_transcription_instructions: Any = None,
+    llm_system_prompt: Any = None,
 ) -> dict[str, Any]:
     """Convertit les composants Gradio en données JSON simples."""
     return {
         "schema_version": 1,
         "models": [str(model) for model in (models or []) if str(model).strip()],
+        "pipeline_mode": str(pipeline_mode or ""),
+        "llm_model": str(llm_model or "").strip(),
         "strategy": str(strategy or ""),
         "dpi": _positive_integer(dpi, 300),
         "timeout_seconds": _positive_integer(timeout_seconds, 300),
@@ -164,6 +178,10 @@ def cni_settings_from_ui(
         "prompt_delivery_mode": str(prompt_delivery_mode or ""),
         "ollama_thinking_mode": str(ollama_thinking_mode or ""),
         "prompt_context_budget": _positive_integer(prompt_context_budget, 8192),
+        "vlm_transcription_instructions": str(
+            vlm_transcription_instructions or ""
+        ).strip(),
+        "llm_system_prompt": str(llm_system_prompt or "").strip(),
     }
 
 
@@ -173,6 +191,8 @@ def _normalise(value: Any, defaults: Mapping[str, Any]) -> dict[str, Any]:
     fallback = dict(defaults)
     result = cni_settings_from_ui(
         models=raw.get("models", fallback["models"]),
+        pipeline_mode=raw.get("pipeline_mode", fallback["pipeline_mode"]),
+        llm_model=raw.get("llm_model", fallback["llm_model"]),
         strategy=raw.get("strategy", fallback["strategy"]),
         dpi=raw.get("dpi", fallback["dpi"]),
         timeout_seconds=raw.get("timeout_seconds", fallback["timeout_seconds"]),
@@ -207,6 +227,18 @@ def _normalise(value: Any, defaults: Mapping[str, Any]) -> dict[str, Any]:
         prompt_context_budget=raw.get(
             "prompt_context_budget", fallback["prompt_context_budget"]
         ),
+        vlm_transcription_instructions=raw.get(
+            "vlm_transcription_instructions",
+            fallback["vlm_transcription_instructions"],
+        ),
+        llm_system_prompt=raw.get(
+            "llm_system_prompt", fallback["llm_system_prompt"]
+        ),
+    )
+    result["pipeline_mode"] = (
+        result["pipeline_mode"]
+        if result["pipeline_mode"] in {"direct_vlm", "vlm_llm"}
+        else fallback["pipeline_mode"]
     )
     result["strategy"] = result["strategy"] if result["strategy"] in {"separate_calls", "combined_vertical"} else fallback["strategy"]
     result["crop_method"] = (
@@ -247,6 +279,13 @@ def _normalise(value: Any, defaults: Mapping[str, Any]) -> dict[str, Any]:
         result["prompt_instructions"] = fallback["prompt_instructions"]
     result["system_prompt"] = result["system_prompt"] or fallback["system_prompt"]
     result["prompt_instructions"] = result["prompt_instructions"] or fallback["prompt_instructions"]
+    result["vlm_transcription_instructions"] = (
+        result["vlm_transcription_instructions"]
+        or fallback["vlm_transcription_instructions"]
+    )
+    result["llm_system_prompt"] = (
+        result["llm_system_prompt"] or fallback["llm_system_prompt"]
+    )
     return result
 
 

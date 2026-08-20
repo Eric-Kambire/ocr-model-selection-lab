@@ -269,6 +269,70 @@ class BenchmarkRunner:
             executor.shutdown(wait=False, cancel_futures=True)
 
     @staticmethod
+    def _perform_text_with_timeout(
+        model: Any,
+        prompt: str,
+        timeout_seconds: float | None,
+        *,
+        system_prompt: str | None = None,
+        output_format: str = "schema",
+        output_schema: dict[str, Any] | None = None,
+        late_result: Callable[[Any | None, str | None], None] | None = None,
+    ) -> Any:
+        """Applique le même garde de temps à un appel LLM sans image."""
+
+        call = getattr(model, "perform_text", None)
+        if not callable(call):
+            raise TypeError(
+                f"Le modèle {getattr(model, 'model_name', type(model).__name__)} "
+                "ne fournit pas perform_text()."
+            )
+        arguments = {
+            "system_prompt": system_prompt,
+            "output_format": output_format,
+            "output_schema": output_schema,
+        }
+        if timeout_seconds is None or timeout_seconds <= 0:
+            return call(prompt, **arguments)
+
+        executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+        future = executor.submit(call, prompt, **arguments)
+        started_at = time.monotonic()
+        LOGGER.info(
+            "Text model timeout guard started | model=%s | timeout=%s",
+            getattr(model, "model_name", type(model).__name__),
+            timeout_seconds,
+        )
+        try:
+            return future.result(timeout=timeout_seconds)
+        except concurrent.futures.TimeoutError:
+            elapsed = time.monotonic() - started_at
+            LOGGER.error(
+                "Application text model timeout reached | model=%s | "
+                "elapsed=%.1fs | configured_timeout=%.1fs",
+                getattr(model, "model_name", type(model).__name__),
+                elapsed,
+                timeout_seconds,
+            )
+            if late_result:
+                def capture_late(completed_future):
+                    try:
+                        late_result(completed_future.result(), None)
+                    except Exception as exc:
+                        late_result(None, f"{type(exc).__name__}: {exc}")
+
+                future.add_done_callback(capture_late)
+            return InferenceResult(
+                text="",
+                latency_seconds=float(timeout_seconds),
+                status=InferenceStatus.TIMEOUT,
+                error=f"Timeout after {timeout_seconds:.1f} seconds",
+                device=getattr(model, "device_name", "unknown"),
+            )
+        finally:
+            executor.shutdown(wait=False, cancel_futures=True)
+
+    @staticmethod
     def _emit_trace(
         trace: TraceCallback | None,
         run_id: str,

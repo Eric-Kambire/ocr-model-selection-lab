@@ -20,7 +20,8 @@ def test_cni_settings_round_trip_keeps_preprocessing_and_execution(tmp_path):
     """Les choix CNI restent identiques après un redémarrage de l'interface."""
     defaults = _defaults()
     value = cni_settings_from_ui(
-        models=["ollama:test"], strategy="combined_vertical", dpi=350,
+        models=["ollama:test"], pipeline_mode="vlm_llm",
+        llm_model="ollama:text", strategy="combined_vertical", dpi=350,
         timeout_seconds=600, cpu_threads=2, unload_after_task=False,
         ollama_ignore_environment_proxy=True,
         continue_without_label=True, recto_suffix="_CIN_recto",
@@ -35,6 +36,8 @@ def test_cni_settings_round_trip_keeps_preprocessing_and_execution(tmp_path):
         prompt_delivery_mode="image_only",
         ollama_thinking_mode="enabled",
         prompt_context_budget=16384,
+        vlm_transcription_instructions="transcrire sans inventer",
+        llm_system_prompt="structurer selon le schéma",
     )
     path = tmp_path / "cni_settings.local.json"
 
@@ -52,6 +55,10 @@ def test_cni_settings_round_trip_keeps_preprocessing_and_execution(tmp_path):
     assert loaded["output_format_mode"] == "json"
     assert loaded["model_output_modes"] == {"ollama:lightonocr": "prompt"}
     assert loaded["models"] == ["ollama:test"]
+    assert loaded["pipeline_mode"] == "vlm_llm"
+    assert loaded["llm_model"] == "ollama:text"
+    assert loaded["vlm_transcription_instructions"] == "transcrire sans inventer"
+    assert loaded["llm_system_prompt"] == "structurer selon le schéma"
     assert loaded["ollama_ignore_environment_proxy"] is True
     assert loaded["prompt_scope_mode"] == "full_rules"
     assert loaded["prompt_delivery_mode"] == "image_only"

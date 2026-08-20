@@ -459,3 +459,96 @@ def test_runner_sends_the_full_normalized_source_when_crop_is_uncertain(tmp_path
     assert len(registry.model.calls) == 2
     assert registry.model.calls[0][0].endswith("recto_page.png")
     assert registry.model.calls[1][0].endswith("verso_page.png")
+
+
+class _TwoStageRegistry:
+    """Vérifie que le VLM est fermé avant de construire le LLM textuel."""
+
+    def __init__(self) -> None:
+        self.vlm_closed = False
+        self.schemas: list[dict] = []
+
+    def create(self, model_spec, **kwargs):
+        registry = self
+        if model_spec == "fake:vlm":
+            class Vision:
+                model_name = "VLM"
+
+                def perform_ocr(self, image_path, *, prompt=None):
+                    face = "RECTO" if "RECTO" in (prompt or "") else "VERSO"
+                    return {
+                        "text": f"Transcription {face} AA1 CASA",
+                        "raw_response": f"raw {face}",
+                        "latency": 0.02,
+                        "status": "success",
+                    }
+
+                def close(self):
+                    registry.vlm_closed = True
+
+            return Vision()
+        assert model_spec == "fake:llm"
+        assert self.vlm_closed is True
+
+        class Text:
+            model_name = "LLM"
+
+            def perform_text(
+                self, prompt, *, system_prompt=None,
+                output_format="schema", output_schema=None,
+            ):
+                registry.schemas.append(output_schema)
+                if "Face à structurer : RECTO" in prompt:
+                    text = '{"cin":"AA1","prenom":"P","nom":"N","date_naissance":null,"ville_naissance":"CASA","date_validite":null}'
+                else:
+                    text = '{"cin":"AA1","date_validite":null,"adresse":"CASA"}'
+                return {
+                    "text": text, "raw_response": text,
+                    "latency": 0.01, "status": "success",
+                }
+
+            def close(self):
+                return None
+
+        return Text()
+
+
+def test_two_stage_pipeline_unloads_vlm_then_gives_exact_schema_to_llm(tmp_path: Path):
+    """Le LLM ne reçoit que le texte et le schéma propre à chaque face."""
+
+    client = tmp_path / "clients" / "folder-client"
+    client.mkdir(parents=True)
+    _write_pdf(client / "source_CIN_Recto.pdf")
+    _write_pdf(client / "source_CIN_Verso.pdf")
+    records = scan_cni_clients(tmp_path / "clients")
+    registry = _TwoStageRegistry()
+
+    events = list(
+        iter_cni_benchmark(
+            registry,
+            ["fake:vlm"],
+            records,
+            tmp_path / "runs",
+            pipeline_mode="vlm_llm",
+            llm_model_spec="fake:llm",
+        )
+    )
+
+    processing = [event for event in events if event["stage"] == "processing"]
+    assert [event["pipeline_stage"] for event in processing] == [
+        "vlm_transcription", "vlm_transcription",
+        "llm_structuring", "llm_structuring",
+    ]
+    assert registry.vlm_closed is True
+    assert registry.schemas[0]["required"] == [
+        "cin", "prenom", "nom", "date_naissance",
+        "ville_naissance", "date_validite",
+    ]
+    assert registry.schemas[1]["required"] == [
+        "cin", "date_validite", "adresse",
+    ]
+    result = events[-1]["result"]
+    assert result["status"] == "success"
+    assert result["pipeline"] == "vlm_llm"
+    recto = json.loads(Path(result["recto_json_path"]).read_text(encoding="utf-8"))
+    assert recto["pipeline"]["text"].startswith("Transcription RECTO")

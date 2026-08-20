@@ -164,6 +164,24 @@ Ollama (think)** permet d'envoyer `think=false`, de conserver le comportement
 automatique du modèle ou d'activer explicitement le raisonnement. Pour une
 extraction JSON rapide, la valeur par défaut est **Désactivé**.
 
+### Pipeline CNI VLM puis LLM
+
+Dans `8. Benchmark CNI → 1. Préparer`, le mode **VLM lecture puis LLM
+structuration** sépare la perception de la mise en forme :
+
+1. sélectionnez exactement un VLM dans `Modèles Ollama` ;
+2. sélectionnez un LLM de structuration JSON ;
+3. personnalisez au besoin les deux prompts dans
+   `4. Paramètres → Prompt et sortie → ④ VLM + LLM`.
+
+Le VLM reçoit chaque image avec une consigne courte de transcription. Toutes
+les transcriptions sont enregistrées, puis le VLM est explicitement libéré.
+Le LLM est seulement alors chargé et reçoit le texte, la face concernée et le
+JSON Schema exact. Le même schéma est aussi transmis dans le paramètre
+`format` d’Ollama. Les artefacts conservent séparément la transcription VLM,
+la réponse brute LLM et le JSON final ; les latences et tokens des deux étapes
+restent également séparés dans le détail du résultat.
+
 ## Utiliser l’interface
 
 Dans **Benchmark**, choisissez les modèles puis la quantité de documents :
